@@ -1,0 +1,3191 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  collection,
+  doc,
+  onSnapshot,
+  query,
+  orderBy,
+  limit,
+  addDoc,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  getDocs,
+  writeBatch,
+} from 'firebase/firestore';
+import {
+  signInWithEmailAndPassword,
+  updatePassword,
+  onAuthStateChanged,
+  signOut,
+  User as FirebaseUser,
+} from 'firebase/auth';
+import { auth, db, ADMIN_EMAIL, firebaseConfig } from '../firebase';
+import {
+  uploadFileToFirebaseStorage,
+  resolveFirestoreMediaUrl,
+  deleteFirestoreMediaChunks,
+  testCloudinaryConnection,
+} from '../androidBridge';
+import {
+  useSite,
+  DEFAULT_NAME_MEANINGS,
+  DEFAULT_POEMS,
+  DEFAULT_SAVED_SOUNDS,
+  NameLetterMeaning,
+  Poem,
+  PopupButtonAction,
+  PopupButtonItem,
+} from '../siteContent';
+import {
+  LayoutDashboard,
+  Activity,
+  Image as ImageIcon,
+  Inbox,
+  Bell,
+  Layers,
+  FolderKanban,
+  FileEdit,
+  Music,
+  Sliders,
+  Settings,
+  Menu,
+  X,
+  Sun,
+  Moon,
+  Trash2,
+  Plus,
+  Download,
+  Check,
+  Search,
+  Play,
+  Pause,
+  Send,
+  ArrowUp,
+  ArrowDown,
+  Eye,
+  EyeOff,
+  LogOut,
+  ExternalLink,
+  Copy,
+  RefreshCw,
+} from 'lucide-react';
+
+interface AdminPanelProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+type AdminSectionId =
+  | 'dashboard'
+  | 'activity'
+  | 'media'
+  | 'inbox'
+  | 'notifications'
+  | 'overlays'
+  | 'sections'
+  | 'content'
+  | 'music'
+  | 'control'
+  | 'settings';
+
+const SIDEBAR_ITEMS: { id: AdminSectionId; label: string; icon: React.FC<{ className?: string }> }[] = [
+  { id: 'dashboard', label: '1. Dashboard', icon: LayoutDashboard },
+  { id: 'activity', label: '2. Activity Tracker', icon: Activity },
+  { id: 'media', label: '3. Media Manager', icon: ImageIcon },
+  { id: 'inbox', label: '4. Inbox (From Her)', icon: Inbox },
+  { id: 'notifications', label: '5. Notification Sender', icon: Bell },
+  { id: 'overlays', label: '6. Overlay Popup Sender', icon: Layers },
+  { id: 'sections', label: '7. Sections Manager', icon: FolderKanban },
+  { id: 'content', label: '8. Content Editor', icon: FileEdit },
+  { id: 'music', label: '9. Music Manager', icon: Music },
+  { id: 'control', label: '10. App Control', icon: Sliders },
+  { id: 'settings', label: '11. Settings & Rules', icon: Settings },
+];
+
+const MEDIA_CATEGORIES = ['Gallery', 'Secret Photos', 'Open When', 'Home photo', 'Uploads From Her'] as const;
+
+export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
+  const site = useSite();
+
+  // Theme & Layout State
+  const [dark, setDark] = useState<boolean>(true);
+  const [activeSection, setActiveSection] = useState<AdminSectionId>('dashboard');
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
+
+  // Auth State
+  const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(() => auth.currentUser);
+  const [loginEmail, setLoginEmail] = useState<string>(ADMIN_EMAIL);
+  const [loginPass, setLoginPass] = useState<string>('');
+  const [authLoading, setAuthLoading] = useState<boolean>(false);
+  const [authError, setAuthError] = useState<string>('');
+
+  // Status & Confirmation Modal State
+  const [statusText, setStatusText] = useState<string>('');
+  const [errorText, setErrorText] = useState<string>('');
+  const [confirmDialog, setConfirmDialog] = useState<{
+    message: string;
+    onConfirm: () => Promise<void> | void;
+  } | null>(null);
+
+  // Real-time Firestore Data State
+  const [statsDoc, setStatsDoc] = useState<Record<string, any>>({});
+  const [activities, setActivities] = useState<any[]>([]);
+  const [mediaItems, setMediaItems] = useState<any[]>([]);
+  const [inboxItems, setInboxItems] = useState<any[]>([]);
+  const [notificationsList, setNotificationsList] = useState<any[]>([]);
+  const [overlaysList, setOverlaysList] = useState<any[]>([]);
+  const [sectionsList, setSectionsList] = useState<any[]>([]);
+  const [dataLoading, setDataLoading] = useState<boolean>(true);
+
+  // Section 2: Activity Filters
+  const [actDateFilter, setActDateFilter] = useState<string>('');
+  const [actTypeFilter, setActTypeFilter] = useState<string>('all');
+  const [actSearch, setActSearch] = useState<string>('');
+
+  // Section 3: Media Manager State
+  const [mediaViewMode, setMediaViewMode] = useState<'grid' | 'list'>('grid');
+  const [mediaCategoryFilter, setMediaCategoryFilter] = useState<string>('all');
+  const [uploadCategory, setUploadCategory] = useState<string>('Gallery');
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
+  const [isUploadingMedia, setIsUploadingMedia] = useState<boolean>(false);
+  const [selectedMediaIds, setSelectedMediaIds] = useState<string[]>([]);
+  const [previewMedia, setPreviewMedia] = useState<any | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState<string>('');
+  const [directMediaUrl, setDirectMediaUrl] = useState<string>('');
+  const [directMediaName, setDirectMediaName] = useState<string>('');
+  const [directMediaType, setDirectMediaType] = useState<'image' | 'video'>('image');
+
+  // Section 4: Inbox State
+  const [replyTarget, setReplyTarget] = useState<any | null>(null);
+  const [replyTitle, setReplyTitle] = useState<string>('Reply from Jay');
+  const [replyMessage, setReplyMessage] = useState<string>('');
+  const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
+  const [audioEl] = useState<HTMLAudioElement | null>(() =>
+    typeof Audio !== 'undefined' ? new Audio() : null
+  );
+
+  // Section 5: Notification Sender State
+  const [notifTitle, setNotifTitle] = useState<string>('');
+  const [notifMessage, setNotifMessage] = useState<string>('');
+  const [notifImage, setNotifImage] = useState<string>('');
+  const [notifSoundUrl, setNotifSoundUrl] = useState<string>(DEFAULT_SAVED_SOUNDS[0].url);
+  const [notifScheduleTime, setNotifScheduleTime] = useState<string>('');
+  const [customSounds, setCustomSounds] = useState<{ name: string; url: string }[]>([]);
+  const [uploadingSound, setUploadingSound] = useState<boolean>(false);
+
+  // Section 6: Overlay Popup Sender State
+  const [ovTitle, setOvTitle] = useState<string>('Incoming Call from Jay');
+  const [ovMessage, setOvMessage] = useState<string>('Hey Kashish, pick up or tap below to talk!');
+  const [ovImage, setOvImage] = useState<string>('');
+  const [ovScheduleTime, setOvScheduleTime] = useState<string>('');
+  const [ovButtons, setOvButtons] = useState<PopupButtonItem[]>([
+    { label: 'Call Now', action: 'call_now', payload: '9817905531' },
+    { label: 'Open Gallery', action: 'open_section', payload: 'gallery' },
+    { label: 'Dismiss', action: 'dismiss', payload: '' },
+  ]);
+
+  // Section 7: Sections Manager State
+  const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
+  const [secTitle, setSecTitle] = useState<string>('');
+  const [secIcon, setSecIcon] = useState<string>('💌');
+  const [secContent, setSecContent] = useState<string>('');
+  const [secImageUrl, setSecImageUrl] = useState<string>('');
+  const [secAudioUrl, setSecAudioUrl] = useState<string>('');
+  const [secVideoUrl, setSecVideoUrl] = useState<string>('');
+  const [secVisible, setSecVisible] = useState<boolean>(true);
+
+  // Section 8: Content Editor State
+  const [editRecipientName, setEditRecipientName] = useState<string>(site.name);
+  const [editCountdownDate, setEditCountdownDate] = useState<string>(site.birthday || '2026-12-17');
+  const [editHomeMessage, setEditHomeMessage] = useState<string>(site.homeMessage || '');
+  const [editSecretLetter, setEditSecretLetter] = useState<string>(site.personalMessage || '');
+  const [editNameMeanings, setEditNameMeanings] = useState<NameLetterMeaning[]>(
+    site.nameMeanings?.length ? site.nameMeanings : DEFAULT_NAME_MEANINGS
+  );
+  const [editPoems, setEditPoems] = useState<Poem[]>(site.poems?.length ? site.poems : DEFAULT_POEMS);
+  const [editCompliments, setEditCompliments] = useState<string[]>(site.compliments || []);
+  const [newCompliment, setNewCompliment] = useState<string>('');
+  const [newPoemTitle, setNewPoemTitle] = useState<string>('');
+  const [newPoemLines, setNewPoemLines] = useState<string>('');
+
+  // Section 9: Music Manager State
+  const [musicTracks, setMusicTracks] = useState<{ id: string; name: string; url: string }[]>([
+    {
+      id: 'default_saiyaara',
+      name: 'Saiyaara Sad BGM (Default)',
+      url: site.musicUrl,
+    },
+  ]);
+  const [selectedMusicUrl, setSelectedMusicUrl] = useState<string>(site.musicUrl);
+  const [musicVol, setMusicVol] = useState<number>(site.musicVolume ?? 0.9);
+  const [musicOn, setMusicOn] = useState<boolean>(site.musicEnabled !== false);
+  const [uploadingMusic, setUploadingMusic] = useState<boolean>(false);
+
+  // Section 10: App Control State
+  const [featGames, setFeatGames] = useState<boolean>(site.features?.games !== false);
+  const [featGalleryUpload, setFeatGalleryUpload] = useState<boolean>(site.features?.galleryUpload !== false);
+  const [featHug, setFeatHug] = useState<boolean>(site.features?.hug !== false);
+  const [featCall, setFeatCall] = useState<boolean>(site.features?.call !== false);
+  const [featVoiceNote, setFeatVoiceNote] = useState<boolean>(site.features?.voiceNote !== false);
+  const [lockPasswordInput, setLockPasswordInput] = useState<string>(site.entryPassword || '');
+  const [callNumberInput, setCallNumberInput] = useState<string>(site.callPhoneNumber || '9817905531');
+  const [maintMode, setMaintMode] = useState<boolean>(!!site.maintenanceMode);
+  const [maintMessage, setMaintMessage] = useState<string>(
+    site.maintenanceMessage || 'Currently updating your special world. Please check back soon.'
+  );
+  const [forceLockMode, setForceLockMode] = useState<boolean>(!!site.forceLock);
+
+  // Section 11 & Media Manager: Cloudinary Free Storage State
+  const [newAdminPassword, setNewAdminPassword] = useState<string>('');
+  const [cloudNameInput, setCloudNameInput] = useState<string>(site.cloudinaryCloudName || 'dsfcu9y1h');
+  const [uploadPresetInput, setUploadPresetInput] = useState<string>(
+    site.cloudinaryUploadPreset || 'Unsigned Upload Preset Name'
+  );
+  const [apiKeyInput, setApiKeyInput] = useState<string>(site.cloudinaryApiKey || '');
+  const [apiSecretInput, setApiSecretInput] = useState<string>(site.cloudinaryApiSecret || '');
+  const [testingCloudinary, setTestingCloudinary] = useState<boolean>(false);
+  const [cloudinaryStatusMsg, setCloudinaryStatusMsg] = useState<string>('');
+  const [showCloudinaryBox, setShowCloudinaryBox] = useState<boolean>(false);
+
+  // Auth listener
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setCurrentUser(u);
+    });
+    return () => unsub();
+  }, []);
+
+  // Sync local editor fields when site context updates
+  useEffect(() => {
+    setEditRecipientName(site.name);
+    setEditCountdownDate(site.birthday || '2026-12-17');
+    setEditHomeMessage(site.homeMessage || '');
+    setEditSecretLetter(site.personalMessage || '');
+    if (site.nameMeanings?.length) setEditNameMeanings(site.nameMeanings);
+    if (site.poems?.length) setEditPoems(site.poems);
+    if (site.compliments?.length) setEditCompliments(site.compliments);
+    setSelectedMusicUrl(site.musicUrl);
+    setMusicVol(site.musicVolume ?? 0.9);
+    setMusicOn(site.musicEnabled !== false);
+    setFeatGames(site.features?.games !== false);
+    setFeatGalleryUpload(site.features?.galleryUpload !== false);
+    setFeatHug(site.features?.hug !== false);
+    setFeatCall(site.features?.call !== false);
+    setFeatVoiceNote(site.features?.voiceNote !== false);
+    setLockPasswordInput(site.entryPassword || '');
+    setCallNumberInput(site.callPhoneNumber || '9817905531');
+    setMaintMode(!!site.maintenanceMode);
+    if (site.maintenanceMessage) setMaintMessage(site.maintenanceMessage);
+    setForceLockMode(!!site.forceLock);
+    if (site.cloudinaryCloudName) setCloudNameInput(site.cloudinaryCloudName);
+    if (site.cloudinaryUploadPreset !== undefined) setUploadPresetInput(site.cloudinaryUploadPreset);
+    if (site.cloudinaryApiKey !== undefined) setApiKeyInput(site.cloudinaryApiKey);
+    if (site.cloudinaryApiSecret !== undefined) setApiSecretInput(site.cloudinaryApiSecret);
+  }, [site]);
+
+  const isAdminAuthenticated =
+    !!currentUser && currentUser.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+
+  // Attach real-time Firestore listeners when admin panel is open & authenticated
+  useEffect(() => {
+    if (!isOpen || !isAdminAuthenticated) return;
+    setDataLoading(true);
+
+    const unsubStats = onSnapshot(
+      doc(db, 'settings', 'stats'),
+      (snap) => {
+        if (snap.exists()) setStatsDoc(snap.data());
+        setDataLoading(false);
+      },
+      (err) => {
+        setErrorText(`Stats sync notice: ${err.message}`);
+        setDataLoading(false);
+      }
+    );
+
+    const unsubActivity = onSnapshot(
+      query(collection(db, 'activity'), orderBy('timestamp', 'desc'), limit(250)),
+      (snap) => {
+        const list: any[] = [];
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+        setActivities(list);
+      },
+      () => {}
+    );
+
+    const unsubMedia = onSnapshot(
+      query(collection(db, 'media'), orderBy('createdAt', 'desc')),
+      (snap) => {
+        const list: any[] = [];
+        snap.forEach((d) => {
+          const data = d.data();
+          if (data.isChunk) return;
+          list.push({ id: d.id, ...data });
+        });
+        setMediaItems(list);
+      },
+      () => {}
+    );
+
+    const unsubInbox = onSnapshot(
+      query(collection(db, 'inbox'), orderBy('createdAt', 'desc')),
+      (snap) => {
+        const list: any[] = [];
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+        setInboxItems(list);
+      },
+      () => {}
+    );
+
+    const unsubNotifs = onSnapshot(
+      query(collection(db, 'notifications'), orderBy('createdAt', 'desc'), limit(100)),
+      (snap) => {
+        const list: any[] = [];
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+        setNotificationsList(list);
+      },
+      () => {}
+    );
+
+    const unsubOverlays = onSnapshot(
+      query(collection(db, 'overlays'), orderBy('createdAt', 'desc'), limit(100)),
+      (snap) => {
+        const list: any[] = [];
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+        setOverlaysList(list);
+      },
+      () => {}
+    );
+
+    const unsubSections = onSnapshot(
+      query(collection(db, 'sections'), orderBy('order', 'asc')),
+      (snap) => {
+        const list: any[] = [];
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+        setSectionsList(list);
+      },
+      () => {}
+    );
+
+    return () => {
+      unsubStats();
+      unsubActivity();
+      unsubMedia();
+      unsubInbox();
+      unsubNotifs();
+      unsubOverlays();
+      unsubSections();
+    };
+  }, [isOpen, isAdminAuthenticated]);
+
+  const notifyStatus = (msg: string, isErr = false) => {
+    if (isErr) {
+      setErrorText(msg);
+      setStatusText('');
+    } else {
+      setStatusText(msg);
+      setErrorText('');
+      setTimeout(() => setStatusText(''), 4000);
+    }
+  };
+
+  const askConfirm = (message: string, onConfirm: () => Promise<void> | void) => {
+    setConfirmDialog({ message, onConfirm });
+  };
+
+  // Admin Email/Password Login Handler
+  const handleAdminLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    if (loginEmail.trim().toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
+      setAuthError(`Access denied. Only ${ADMIN_EMAIL} is allowed.`);
+      return;
+    }
+    if (!loginPass.trim()) {
+      setAuthError('Enter your admin password.');
+      return;
+    }
+    setAuthLoading(true);
+    try {
+      await signInWithEmailAndPassword(auth, loginEmail.trim(), loginPass.trim());
+      setLoginPass('');
+    } catch (err: any) {
+      setAuthError(err?.message || 'Login failed. Verify email & password.');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  // Filtered Activity Logs
+  const filteredActivities = useMemo(() => {
+    return activities.filter((item) => {
+      if (actDateFilter && item.dateDay !== actDateFilter) return false;
+      if (actTypeFilter !== 'all' && item.type !== actTypeFilter) return false;
+      if (actSearch.trim()) {
+        const q = actSearch.toLowerCase();
+        const desc = String(item.description || '').toLowerCase();
+        const type = String(item.type || '').toLowerCase();
+        if (!desc.includes(q) && !type.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [activities, actDateFilter, actTypeFilter, actSearch]);
+
+  // Export Activity CSV
+  const exportActivityCsv = () => {
+    const headers = ['Timestamp', 'Date', 'Type', 'Description', 'UserEmail', 'DeviceId'];
+    const rows = filteredActivities.map((a) => [
+      a.timestamp || '',
+      a.dateIso || '',
+      a.type || '',
+      `"${String(a.description || '').replace(/"/g, '""')}"`,
+      a.userEmail || '',
+      a.deviceId || '',
+    ]);
+    const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `kashish_activity_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    notifyStatus('Exported CSV.');
+  };
+
+  // Section 3: Multiple Media Upload Handler
+  const handleMultipleMediaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    setIsUploadingMedia(true);
+    setUploadProgress(5);
+    notifyStatus(`Uploading ${files.length} file(s)...`);
+
+    try {
+      const total = files.length;
+      for (let i = 0; i < total; i++) {
+        const file = files[i];
+        const isVideo = file.type.startsWith('video/');
+        const res = await uploadFileToFirebaseStorage(file, 'media', file.name, (pct) => {
+          const overall = Math.round(((i + pct / 100) / total) * 100);
+          setUploadProgress(overall);
+        });
+
+        await addDoc(collection(db, 'media'), {
+          name: file.name,
+          url: res.url,
+          storagePath: res.storagePath,
+          type: isVideo ? 'video' : 'image',
+          category: uploadCategory,
+          uploadedBy: 'admin',
+          views: 0,
+          likes: 1,
+          createdAt: Date.now(),
+          dateIso: new Date().toISOString(),
+        });
+
+        if (uploadCategory === 'Home photo') {
+          await setDoc(doc(db, 'content', 'main'), { lockPhotoUrl: res.url }, { merge: true });
+        }
+      }
+      notifyStatus(`Uploaded ${files.length} item(s) to ${uploadCategory}.`);
+    } catch (err: any) {
+      notifyStatus(`Upload error: ${err?.message || 'Failed'}`, true);
+    } finally {
+      setIsUploadingMedia(false);
+      setUploadProgress(0);
+      e.target.value = '';
+    }
+  };
+
+  const handleAddDirectUrlMedia = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!directMediaUrl.trim()) return;
+    try {
+      const cleanUrl = directMediaUrl.trim();
+      const itemName = directMediaName.trim() || `Media_${Date.now()}`;
+      await addDoc(collection(db, 'media'), {
+        name: itemName,
+        url: cleanUrl,
+        storagePath: '',
+        type: directMediaType,
+        category: uploadCategory,
+        uploadedBy: 'admin',
+        views: 0,
+        likes: 1,
+        createdAt: Date.now(),
+        dateIso: new Date().toISOString(),
+      });
+      if (uploadCategory === 'Home photo') {
+        await setDoc(doc(db, 'content', 'main'), { lockPhotoUrl: cleanUrl }, { merge: true });
+      }
+      setDirectMediaUrl('');
+      setDirectMediaName('');
+      notifyStatus(`Added direct URL to ${uploadCategory}.`);
+    } catch (err: any) {
+      notifyStatus(`Error: ${err.message}`, true);
+    }
+  };
+
+  const handleDeleteSingleMedia = (item: any) => {
+    askConfirm(
+      `Delete media "${item.name || item.id}" permanently from App & Storage?`,
+      async () => {
+        try {
+          await deleteDoc(doc(db, 'media', item.id));
+          const delRes = await deleteFirestoreMediaChunks(
+            item.storagePath || item.url,
+            item.url,
+            item.type
+          );
+          if (delRes?.cloudinaryDeleted) {
+            notifyStatus('Deleted permanently from App & Cloudinary storage!');
+          } else if (delRes?.cloudinaryMessage) {
+            notifyStatus(`Deleted from App (${delRes.cloudinaryMessage})`);
+          } else {
+            notifyStatus('Media deleted permanently.');
+          }
+        } catch (err: any) {
+          notifyStatus(`Delete failed: ${err.message}`, true);
+        }
+      }
+    );
+  };
+
+  const handleBulkDeleteMedia = () => {
+    if (selectedMediaIds.length === 0) return;
+    askConfirm(`Delete ${selectedMediaIds.length} selected media items permanently?`, async () => {
+      try {
+        let cloudDeletedCount = 0;
+        for (const id of selectedMediaIds) {
+          const found = mediaItems.find((m) => m.id === id);
+          await deleteDoc(doc(db, 'media', id));
+          if (found) {
+            const delRes = await deleteFirestoreMediaChunks(
+              found.storagePath || found.url,
+              found.url,
+              found.type
+            );
+            if (delRes?.cloudinaryDeleted) cloudDeletedCount++;
+          }
+        }
+        setSelectedMediaIds([]);
+        notifyStatus(
+          cloudDeletedCount > 0
+            ? `Bulk delete completed (${cloudDeletedCount} also removed from Cloudinary).`
+            : 'Bulk delete completed.'
+        );
+      } catch (err: any) {
+        notifyStatus(`Bulk delete error: ${err.message}`, true);
+      }
+    });
+  };
+
+  // Section 4: Inbox Audio Playback & Reply
+  const togglePlayInboxAudio = async (item: any) => {
+    if (!audioEl || !item.mediaUrl) return;
+    if (playingAudioId === item.id) {
+      audioEl.pause();
+      setPlayingAudioId(null);
+    } else {
+      const playUrl = await resolveFirestoreMediaUrl(item.mediaUrl);
+      if (!playUrl) {
+        notifyStatus('Audio file unavailable', true);
+        return;
+      }
+      audioEl.src = playUrl;
+      audioEl.play().catch(() => notifyStatus('Could not play audio', true));
+      setPlayingAudioId(item.id);
+      audioEl.onended = () => setPlayingAudioId(null);
+    }
+  };
+
+  const handleSendInboxReply = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!replyMessage.trim()) return;
+    try {
+      await addDoc(collection(db, 'notifications'), {
+        title: replyTitle.trim() || 'Message from Jay',
+        message: replyMessage.trim(),
+        imageUrl: '',
+        soundUrl: DEFAULT_SAVED_SOUNDS[0].url,
+        createdAt: Date.now(),
+        scheduledFor: null,
+        status: 'sent',
+        seen: false,
+        replyToInboxId: replyTarget?.id || null,
+      });
+      if (replyTarget?.id) {
+        await updateDoc(doc(db, 'inbox', replyTarget.id), { read: true }).catch(() => {});
+      }
+      setReplyTarget(null);
+      setReplyMessage('');
+      notifyStatus('Reply notification sent to her app.');
+    } catch (err: any) {
+      notifyStatus(`Failed to send reply: ${err.message}`, true);
+    }
+  };
+
+  // Section 5: Send or Schedule Notification
+  const handleSendNotification = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!notifTitle.trim() || !notifMessage.trim()) {
+      notifyStatus('Title and message are required.', true);
+      return;
+    }
+    try {
+      const scheduledMs = notifScheduleTime ? new Date(notifScheduleTime).getTime() : null;
+      await addDoc(collection(db, 'notifications'), {
+        title: notifTitle.trim(),
+        message: notifMessage.trim(),
+        imageUrl: notifImage.trim(),
+        soundUrl: notifSoundUrl,
+        createdAt: Date.now(),
+        scheduledFor: scheduledMs,
+        status: scheduledMs && scheduledMs > Date.now() ? 'scheduled' : 'sent',
+        seen: false,
+      });
+      setNotifTitle('');
+      setNotifMessage('');
+      setNotifImage('');
+      setNotifScheduleTime('');
+      notifyStatus(scheduledMs ? 'Notification scheduled.' : 'Notification sent live.');
+    } catch (err: any) {
+      notifyStatus(`Error: ${err.message}`, true);
+    }
+  };
+
+  // Section 6: Send or Schedule Truecaller-Style Overlay
+  const handleSendOverlay = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!ovTitle.trim() || !ovMessage.trim()) {
+      notifyStatus('Overlay title and message are required.', true);
+      return;
+    }
+    try {
+      const scheduledMs = ovScheduleTime ? new Date(ovScheduleTime).getTime() : null;
+      await addDoc(collection(db, 'overlays'), {
+        title: ovTitle.trim(),
+        message: ovMessage.trim(),
+        imageUrl: ovImage.trim(),
+        buttons: ovButtons.slice(0, 3),
+        createdAt: Date.now(),
+        scheduledFor: scheduledMs,
+        status: scheduledMs && scheduledMs > Date.now() ? 'scheduled' : 'sent',
+        dismissed: false,
+      });
+      notifyStatus(scheduledMs ? 'Overlay scheduled.' : 'Overlay popup sent to her screen.');
+    } catch (err: any) {
+      notifyStatus(`Overlay error: ${err.message}`, true);
+    }
+  };
+
+  // Section 7: Save / Reorder Sections
+  const handleSaveSection = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!secTitle.trim()) {
+      notifyStatus('Section title is required.', true);
+      return;
+    }
+    try {
+      const payload = {
+        title: secTitle.trim(),
+        icon: secIcon.trim() || '💌',
+        content: secContent,
+        imageUrl: secImageUrl.trim(),
+        audioUrl: secAudioUrl.trim(),
+        videoUrl: secVideoUrl.trim(),
+        visible: secVisible,
+        updatedAt: Date.now(),
+      };
+      if (editingSectionId) {
+        await updateDoc(doc(db, 'sections', editingSectionId), payload);
+        notifyStatus('Section updated.');
+      } else {
+        await addDoc(collection(db, 'sections'), {
+          ...payload,
+          order: sectionsList.length,
+          createdAt: Date.now(),
+        });
+        notifyStatus('New section created.');
+      }
+      setEditingSectionId(null);
+      setSecTitle('');
+      setSecIcon('💌');
+      setSecContent('');
+      setSecImageUrl('');
+      setSecAudioUrl('');
+      setSecVideoUrl('');
+      setSecVisible(true);
+    } catch (err: any) {
+      notifyStatus(`Save section error: ${err.message}`, true);
+    }
+  };
+
+  const handleMoveSection = async (index: number, direction: -1 | 1) => {
+    const targetIdx = index + direction;
+    if (targetIdx < 0 || targetIdx >= sectionsList.length) return;
+    const itemA = sectionsList[index];
+    const itemB = sectionsList[targetIdx];
+    try {
+      await Promise.all([
+        updateDoc(doc(db, 'sections', itemA.id), { order: targetIdx }),
+        updateDoc(doc(db, 'sections', itemB.id), { order: index }),
+      ]);
+      notifyStatus('Order updated.');
+    } catch (err: any) {
+      notifyStatus(`Reorder failed: ${err.message}`, true);
+    }
+  };
+
+  // Section 8: Save Live Content Editor
+  const handleSaveContentEditor = async () => {
+    try {
+      await setDoc(
+        doc(db, 'content', 'main'),
+        {
+          name: editRecipientName.trim() || 'Kashish',
+          birthday: editCountdownDate.trim() || '2026-12-17',
+          homeMessage: editHomeMessage,
+          personalMessage: editSecretLetter,
+          nameMeanings: editNameMeanings,
+          poems: editPoems,
+          compliments: editCompliments,
+          updatedAt: Date.now(),
+        },
+        { merge: true }
+      );
+      notifyStatus('Live content saved to Firestore. Reflected in app immediately.');
+    } catch (err: any) {
+      notifyStatus(`Save content failed: ${err.message}`, true);
+    }
+  };
+
+  // Section 9: Save Music Settings
+  const handleSaveMusicSettings = async () => {
+    try {
+      await setDoc(
+        doc(db, 'settings', 'config'),
+        {
+          musicUrl: selectedMusicUrl,
+          musicVolume: musicVol,
+          musicEnabled: musicOn,
+          updatedAt: Date.now(),
+        },
+        { merge: true }
+      );
+      notifyStatus('Music settings updated in real time.');
+    } catch (err: any) {
+      notifyStatus(`Music save error: ${err.message}`, true);
+    }
+  };
+
+  // Section 10: Save App Control Settings
+  const handleSaveAppControl = async () => {
+    try {
+      await setDoc(
+        doc(db, 'settings', 'config'),
+        {
+          features: {
+            games: featGames,
+            galleryUpload: featGalleryUpload,
+            hug: featHug,
+            call: featCall,
+            voiceNote: featVoiceNote,
+          },
+          entryPassword: lockPasswordInput.trim(),
+          callPhoneNumber: callNumberInput.trim() || '9817905531',
+          maintenanceMode: maintMode,
+          maintenanceMessage: maintMessage.trim(),
+          forceLock: forceLockMode,
+          updatedAt: Date.now(),
+        },
+        { merge: true }
+      );
+      notifyStatus('App Control settings saved and applied live.');
+    } catch (err: any) {
+      notifyStatus(`App Control error: ${err.message}`, true);
+    }
+  };
+
+  // Section 11: Backup JSON & Clear Logs
+  const handleExportFullBackupJson = async () => {
+    try {
+      notifyStatus('Generating JSON backup...');
+      const collectionsToBackup = [
+        'media',
+        'sections',
+        'content',
+        'inbox',
+        'activity',
+        'notifications',
+        'overlays',
+        'settings',
+      ];
+      const backup: Record<string, any> = {
+        exportedAt: new Date().toISOString(),
+        projectId: firebaseConfig.projectId,
+        collections: {},
+      };
+      for (const colName of collectionsToBackup) {
+        const snap = await getDocs(collection(db, colName));
+        backup.collections[colName] = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      }
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `kashish_backup_${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      notifyStatus('Full JSON backup downloaded.');
+    } catch (err: any) {
+      notifyStatus(`Backup failed: ${err.message}`, true);
+    }
+  };
+
+  const handleClearActivityLogs = () => {
+    askConfirm('Delete all activity logs from Firestore permanently?', async () => {
+      try {
+        const snap = await getDocs(collection(db, 'activity'));
+        const batch = writeBatch(db);
+        snap.docs.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+        notifyStatus('All activity logs cleared.');
+      } catch (err: any) {
+        notifyStatus(`Clear logs failed: ${err.message}`, true);
+      }
+    });
+  };
+
+  const handleSaveAndTestCloudinary = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const cName = cloudNameInput.trim() || 'dsfcu9y1h';
+    const cPreset = uploadPresetInput.trim();
+    const cKey = apiKeyInput.trim();
+    const cSecret = apiSecretInput.trim();
+    setTestingCloudinary(true);
+    setCloudinaryStatusMsg('Saving to Firestore...');
+
+    try {
+      await setDoc(
+        doc(db, 'settings', 'config'),
+        {
+          cloudinaryCloudName: cName,
+          cloudinaryUploadPreset: cPreset,
+          cloudinaryApiKey: cKey,
+          cloudinaryApiSecret: cSecret,
+          updatedAt: Date.now(),
+        },
+        { merge: true }
+      );
+
+      // Immediately sync localStorage so uploads & deletes in this tab use it right away
+      try {
+        const raw = window.localStorage.getItem('kashish_site_overrides');
+        const parsed = raw ? JSON.parse(raw) : {};
+        parsed.cloudinaryCloudName = cName;
+        parsed.cloudinaryUploadPreset = cPreset;
+        parsed.cloudinaryApiKey = cKey;
+        parsed.cloudinaryApiSecret = cSecret;
+        window.localStorage.setItem('kashish_site_overrides', JSON.stringify(parsed));
+      } catch {
+        // ignore
+      }
+
+      if (!cPreset) {
+        setCloudinaryStatusMsg('Saved! (Upload Preset empty -> using Firestore Free Fallback mode).');
+        notifyStatus('Cloudinary settings saved (Firestore fallback mode).');
+        setTestingCloudinary(false);
+        return;
+      }
+
+      setCloudinaryStatusMsg('Testing unsigned upload to Cloudinary...');
+      const testRes = await testCloudinaryConnection(cName, cPreset);
+      if (testRes.ok) {
+        const deleteNote =
+          cKey && cSecret
+            ? 'Auto-Delete from Cloudinary is also ACTIVE!'
+            : 'Tip: Add API Key & Secret below if you also want Delete to remove files from Cloudinary.';
+        setCloudinaryStatusMsg(
+          `✓ Connected! All Photos, HD Videos, Voice Notes & Songs upload to Cloudinary (${cName}). ${deleteNote}`
+        );
+        notifyStatus('Cloudinary Connected & Verified!');
+      } else {
+        setCloudinaryStatusMsg(
+          `Saved, but test failed: ${testRes.error}. Make sure preset "${cPreset}" has Signing Mode = Unsigned.`
+        );
+        notifyStatus(`Cloudinary test error: ${testRes.error}`, true);
+      }
+    } catch (err: any) {
+      setCloudinaryStatusMsg(`Error: ${err.message}`);
+      notifyStatus(`Failed to save Cloudinary config: ${err.message}`, true);
+    } finally {
+      setTestingCloudinary(false);
+    }
+  };
+
+  const isCloudinaryReady = Boolean(cloudNameInput.trim() && uploadPresetInput.trim());
+  const isCloudinaryDeleteReady = Boolean(
+    cloudNameInput.trim() && apiKeyInput.trim() && apiSecretInput.trim()
+  );
+
+  if (!isOpen) return null;
+
+  // Strictly minimal monochrome palette (white / black / grey only, 1px borders, no glow/gradients/shadows/animations)
+  const bgMain = dark ? 'bg-black text-neutral-100' : 'bg-white text-neutral-900';
+  const bgSubtle = dark ? 'bg-neutral-950' : 'bg-neutral-50';
+  const borderCol = dark ? 'border-neutral-800' : 'border-neutral-300';
+  const textMuted = dark ? 'text-neutral-400' : 'text-neutral-500';
+  const inputCls = `w-full px-2.5 py-1.5 text-[12px] rounded-[10px] border ${borderCol} ${
+    dark ? 'bg-neutral-950 text-neutral-100' : 'bg-white text-neutral-900'
+  } focus:outline-none focus:border-neutral-500`;
+  const btnPrimary = `px-3 py-1.5 text-[12px] font-medium rounded-[10px] border cursor-pointer whitespace-nowrap ${
+    dark
+      ? 'bg-white text-black border-white hover:bg-neutral-200'
+      : 'bg-black text-white border-black hover:bg-neutral-800'
+  }`;
+  const btnSecondary = `px-2.5 py-1 text-[12px] rounded-[10px] border ${borderCol} ${
+    dark ? 'bg-neutral-950 text-neutral-200 hover:bg-neutral-900' : 'bg-white text-neutral-800 hover:bg-neutral-100'
+  } cursor-pointer whitespace-nowrap`;
+  const btnDanger = `px-2.5 py-1 text-[12px] rounded-[10px] border ${borderCol} ${
+    dark ? 'text-neutral-300 hover:bg-neutral-900' : 'text-neutral-700 hover:bg-neutral-100'
+  } cursor-pointer whitespace-nowrap`;
+
+  const adminScopedCss = `
+    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
+    .kashish-admin-panel,
+    .kashish-admin-panel *,
+    .kashish-admin-panel button,
+    .kashish-admin-panel input,
+    .kashish-admin-panel select,
+    .kashish-admin-panel textarea,
+    .kashish-admin-panel table,
+    .kashish-admin-panel th,
+    .kashish-admin-panel td,
+    .kashish-admin-panel aside,
+    .kashish-admin-panel h1,
+    .kashish-admin-panel h2,
+    .kashish-admin-panel h3,
+    .kashish-admin-panel pre,
+    .kashish-admin-panel code {
+      font-family: 'Poppins', system-ui, sans-serif !important;
+    }
+    .kashish-admin-panel button {
+      border-radius: 10px;
+    }
+    .kashish-admin-panel input:not([type="checkbox"]):not([type="range"]),
+    .kashish-admin-panel select,
+    .kashish-admin-panel textarea {
+      border-radius: 10px;
+    }
+    .kashish-admin-panel img:not(.rounded-full),
+    .kashish-admin-panel video {
+      border-radius: 12px;
+    }
+    .kashish-admin-panel input[type="checkbox"] {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 28px;
+      height: 16px;
+      border-radius: 999px !important;
+      border: 1px solid currentColor;
+      position: relative;
+      cursor: pointer;
+      vertical-align: middle;
+      flex-shrink: 0;
+    }
+    .kashish-admin-panel input[type="checkbox"]::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: currentColor;
+      opacity: 0.45;
+    }
+    .kashish-admin-panel input[type="checkbox"]:checked::after {
+      left: 14px;
+      opacity: 1;
+    }
+    .kashish-admin-panel input[type="range"] {
+      border-radius: 999px !important;
+    }
+    .kashish-admin-panel *::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .kashish-admin-panel *::-webkit-scrollbar-track {
+      border-radius: 999px;
+    }
+    .kashish-admin-panel *::-webkit-scrollbar-thumb {
+      background: rgba(128, 128, 128, 0.45);
+      border-radius: 999px;
+    }
+  `;
+
+  // Login Gate if not signed in as jayshankar431@gmail.com
+  if (!isAdminAuthenticated) {
+    return (
+      <div
+        style={{ fontFamily: "'Poppins', system-ui, sans-serif", fontSize: '12px' }}
+        className={`kashish-admin-panel fixed inset-0 z-[2000] ${bgMain} flex flex-col justify-between p-4 select-none`}
+      >
+        <style>{adminScopedCss}</style>
+        <div className={`flex items-center justify-between pb-3 border-b ${borderCol}`}>
+          <span className="font-bold tracking-tight text-[13px]">KASHISH CONTROL CENTER</span>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setDark(!dark)} className={btnSecondary}>
+              {dark ? 'Light' : 'Dark'}
+            </button>
+            <button onClick={onClose} className={btnSecondary}>
+              Exit to App
+            </button>
+          </div>
+        </div>
+
+        <div className={`w-full max-w-xs mx-auto rounded-[14px] border ${borderCol} ${bgSubtle} p-5 space-y-4`}>
+          <div>
+            <h1 className="text-[13px] font-bold">Admin Authentication</h1>
+            <p className={`text-[11px] ${textMuted} mt-0.5`}>
+              Restricted to single owner ({ADMIN_EMAIL})
+            </p>
+          </div>
+
+          <form onSubmit={handleAdminLogin} className="space-y-3">
+            <div>
+              <label className={`block text-[11px] ${textMuted} mb-1`}>Admin Email</label>
+              <input
+                type="email"
+                required
+                value={loginEmail}
+                onChange={(e) => setLoginEmail(e.target.value)}
+                className={inputCls}
+              />
+            </div>
+            <div>
+              <label className={`block text-[11px] ${textMuted} mb-1`}>Password</label>
+              <input
+                type="password"
+                required
+                value={loginPass}
+                onChange={(e) => setLoginPass(e.target.value)}
+                placeholder="Enter password"
+                className={inputCls}
+              />
+            </div>
+            {authError && <p className="text-[11px] font-medium underline">{authError}</p>}
+            <button type="submit" disabled={authLoading} className={`${btnPrimary} w-full`}>
+              {authLoading ? 'Signing in...' : 'Sign In with Email/Password'}
+            </button>
+          </form>
+        </div>
+
+        <div className={`text-[11px] ${textMuted} text-center pt-3 border-t ${borderCol}`}>
+          Firebase Free Tier · Single-Admin Security Mode
+        </div>
+      </div>
+    );
+  }
+
+  // Derived Dashboard Counts
+  const totalOpens = statsDoc.app_opens || statsDoc.unlocks || 1;
+  const lastOpenedStr = statsDoc.lastOpenedIso
+    ? new Date(statsDoc.lastOpenedIso).toLocaleString()
+    : activities[0]?.dateIso
+    ? new Date(activities[0].dateIso).toLocaleString()
+    : 'Just now';
+  const lastActiveScreen = statsDoc.lastActiveScreen || 'home';
+  const hugsCount = statsDoc.hugs || inboxItems.filter((i) => i.type === 'hug').length;
+  const callsTapped = statsDoc.calls_tapped || activities.filter((a) => a.type === 'call_tapped').length;
+  const voiceReceivedCount = inboxItems.filter((i) => i.type === 'voice').length;
+  const photosReceivedCount =
+    inboxItems.filter((i) => i.type === 'photo').length +
+    mediaItems.filter((m) => m.uploadedBy === 'her').length;
+
+  return (
+    <div
+      style={{ fontFamily: "'Poppins', system-ui, sans-serif", fontSize: '12px' }}
+      className={`kashish-admin-panel fixed inset-0 z-[2000] ${bgMain} flex flex-col overflow-hidden`}
+    >
+      <style>{adminScopedCss}</style>
+      {/* Top Header Bar (1px border, flat minimal) */}
+      <header className={`h-11 shrink-0 px-3 border-b ${borderCol} flex items-center justify-between gap-2`}>
+        <div className="flex items-center gap-2 min-w-0">
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className={`md:hidden p-1.5 rounded-[10px] border ${borderCol} cursor-pointer`}
+            aria-label="Toggle Menu"
+          >
+            {sidebarOpen ? <X className="w-3.5 h-3.5" /> : <Menu className="w-3.5 h-3.5" />}
+          </button>
+          <span className="font-bold text-[13px] tracking-tight truncate">KASHISH CONTROL CENTER</span>
+          <span className={`hidden sm:inline text-[11px] ${textMuted}`}>
+            · { currentUser?.email }
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          {statusText && <span className="text-[11px] font-medium truncate max-w-[200px]">{statusText}</span>}
+          {errorText && <span className="text-[11px] font-bold underline truncate max-w-[220px]">{errorText}</span>}
+          {dataLoading && <span className={`text-[11px] ${textMuted}`}>Loading...</span>}
+
+          <button
+            onClick={() => setDark(!dark)}
+            className={btnSecondary}
+            title="Toggle Dark/Light"
+          >
+            {dark ? <Sun className="w-3.5 h-3.5 inline mr-1" /> : <Moon className="w-3.5 h-3.5 inline mr-1" />}
+            <span>{dark ? 'Light' : 'Dark'}</span>
+          </button>
+
+          <button onClick={onClose} className={btnPrimary}>
+            Back to App
+          </button>
+        </div>
+      </header>
+
+      {/* Main Workspace: Collapsible Left Sidebar + Content Viewport */}
+      <div className="flex-1 flex min-h-0 relative">
+        {/* Left Sidebar */}
+        <aside
+          className={`${
+            sidebarOpen ? 'block absolute inset-y-0 left-0 z-40 w-56 rounded-r-[14px]' : 'hidden'
+          } md:block md:static md:w-56 shrink-0 border-r ${borderCol} ${bgSubtle} overflow-y-auto flex flex-col justify-between`}
+        >
+          <nav className="p-2 space-y-0.5">
+            {SIDEBAR_ITEMS.map((item) => {
+              const Icon = item.icon;
+              const isActive = activeSection === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => {
+                    setActiveSection(item.id);
+                    setSidebarOpen(false);
+                  }}
+                  className={`w-full flex items-center gap-2 px-2.5 py-2 text-left text-[12px] rounded-[10px] border cursor-pointer ${
+                    isActive
+                      ? dark
+                        ? 'bg-white text-black border-white font-semibold'
+                        : 'bg-black text-white border-black font-semibold'
+                      : `border-transparent ${textMuted} hover:text-current`
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">{item.label}</span>
+                </button>
+              );
+            })}
+          </nav>
+
+          <div className={`p-2.5 border-t ${borderCol} space-y-1.5`}>
+            <div className={`text-[11px] ${textMuted} truncate`}>Project: {firebaseConfig.projectId}</div>
+            <button
+              onClick={async () => {
+                await signOut(auth);
+                onClose();
+              }}
+              className={`${btnSecondary} w-full flex items-center justify-center gap-1.5`}
+            >
+              <LogOut className="w-3 h-3" />
+              <span>Sign Out</span>
+            </button>
+          </div>
+        </aside>
+
+        {/* Main Content Viewport */}
+        <main className="flex-1 overflow-y-auto p-3 sm:p-5 space-y-4">
+          {/* 1. DASHBOARD */}
+          {activeSection === 'dashboard' && (
+            <div className="space-y-4">
+              <div className={`flex items-center justify-between border-b ${borderCol} pb-2`}>
+                <h2 className="text-[13px] font-bold uppercase tracking-wider">1. Dashboard Overview</h2>
+                <span className={`text-[11px] ${textMuted}`}>Real-Time Firestore Sync</span>
+              </div>
+
+              {/* Compact Metric Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+                {[
+                  { label: 'Last Opened', val: lastOpenedStr },
+                  { label: 'Total Opens', val: String(totalOpens) },
+                  { label: 'Active Screen', val: String(lastActiveScreen).toUpperCase() },
+                  { label: 'Hugs Count', val: String(hugsCount) },
+                  { label: 'Calls Tapped', val: String(callsTapped) },
+                  { label: 'Voice Notes', val: String(voiceReceivedCount) },
+                  { label: 'Photos Received', val: String(photosReceivedCount) },
+                ].map((m, i) => (
+                  <div key={i} className={`p-2.5 rounded-[14px] border ${borderCol} ${bgSubtle}`}>
+                    <div className={`text-[11px] ${textMuted} truncate`}>{m.label}</div>
+                    <div className="text-[13px] font-bold tabular-nums mt-1 truncate" title={m.val}>
+                      {m.val}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Recent Activity Feed (Latest 20 Events) */}
+              <div className={`rounded-[14px] overflow-hidden border ${borderCol}`}>
+                <div className={`px-3 py-2 border-b ${borderCol} ${bgSubtle} flex items-center justify-between`}>
+                  <span className="font-bold text-[12px]">Recent Activity Feed (Latest 20 Events)</span>
+                  <button onClick={() => setActiveSection('activity')} className={btnSecondary}>
+                    View All ({activities.length})
+                  </button>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-[12px]">
+                    <thead>
+                      <tr className={`border-b ${borderCol} ${textMuted}`}>
+                        <th className="py-1.5 px-2.5 font-medium">Time</th>
+                        <th className="py-1.5 px-2.5 font-medium">Type</th>
+                        <th className="py-1.5 px-2.5 font-medium">Event Description</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activities.slice(0, 20).map((ev) => (
+                        <tr key={ev.id} className={`border-b ${borderCol}`}>
+                          <td className={`py-1.5 px-2.5 tabular-nums whitespace-nowrap ${textMuted}`}>
+                            {ev.timestamp ? new Date(ev.timestamp).toLocaleString() : ev.dateIso || '-'}
+                          </td>
+                          <td className="py-1.5 px-2.5 whitespace-nowrap text-[11px]">
+                            <span className={`px-2 py-0.5 rounded-full border ${borderCol}`}>
+                              {ev.type || 'general'}
+                            </span>
+                          </td>
+                          <td className="py-1.5 px-2.5">{ev.description}</td>
+                        </tr>
+                      ))}
+                      {activities.length === 0 && (
+                        <tr>
+                          <td colSpan={3} className={`py-4 text-center ${textMuted}`}>
+                            No activity events logged yet.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 2. ACTIVITY TRACKER */}
+          {activeSection === 'activity' && (
+            <div className="space-y-3">
+              <div className={`flex flex-wrap items-center justify-between gap-2 border-b ${borderCol} pb-2`}>
+                <h2 className="text-[13px] font-bold uppercase tracking-wider">2. Activity Tracker</h2>
+                <div className="flex items-center gap-2">
+                  <button onClick={exportActivityCsv} className={btnPrimary}>
+                    <Download className="w-3 h-3 inline mr-1" />
+                    Export CSV ({filteredActivities.length})
+                  </button>
+                </div>
+              </div>
+
+              {/* Filter Bar */}
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                <div>
+                  <label className={`block text-[11px] ${textMuted} mb-1`}>Filter by Date</label>
+                  <input
+                    type="date"
+                    value={actDateFilter}
+                    onChange={(e) => setActDateFilter(e.target.value)}
+                    className={inputCls}
+                  />
+                </div>
+                <div>
+                  <label className={`block text-[11px] ${textMuted} mb-1`}>Filter by Type</label>
+                  <select
+                    value={actTypeFilter}
+                    onChange={(e) => setActTypeFilter(e.target.value)}
+                    className={inputCls}
+                  >
+                    <option value="all">All Event Types</option>
+                    <option value="app_opened">App Opened</option>
+                    <option value="section_visited">Section Visited</option>
+                    <option value="media_viewed">Photo / Video Viewed</option>
+                    <option value="game_played">Game Played</option>
+                    <option value="hug_sent">Hug Sent</option>
+                    <option value="call_tapped">Call Tapped</option>
+                    <option value="voice_note">Voice Note</option>
+                    <option value="letter_opened">Letter Opened</option>
+                  </select>
+                </div>
+                <div className="sm:col-span-2">
+                  <label className={`block text-[11px] ${textMuted} mb-1`}>Search Events</label>
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      placeholder="Search description or type..."
+                      value={actSearch}
+                      onChange={(e) => setActSearch(e.target.value)}
+                      className={inputCls}
+                    />
+                    {(actDateFilter || actTypeFilter !== 'all' || actSearch) && (
+                      <button
+                        onClick={() => {
+                          setActDateFilter('');
+                          setActTypeFilter('all');
+                          setActSearch('');
+                        }}
+                        className={btnSecondary}
+                      >
+                        Reset
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Log Table */}
+              <div className={`rounded-[14px] overflow-hidden border ${borderCol} overflow-x-auto`}>
+                <table className="w-full text-left border-collapse text-[12px]">
+                  <thead>
+                    <tr className={`border-b ${borderCol} ${bgSubtle} ${textMuted}`}>
+                      <th className="py-1.5 px-2.5 font-medium">Timestamp</th>
+                      <th className="py-1.5 px-2.5 font-medium">Type</th>
+                      <th className="py-1.5 px-2.5 font-medium">Description</th>
+                      <th className="py-1.5 px-2.5 font-medium">Device</th>
+                      <th className="py-1.5 px-2.5 font-medium text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredActivities.map((ev) => (
+                      <tr key={ev.id} className={`border-b ${borderCol}`}>
+                        <td className={`py-1.5 px-2.5 tabular-nums whitespace-nowrap ${textMuted}`}>
+                          {ev.timestamp ? new Date(ev.timestamp).toLocaleString() : ev.dateIso || '-'}
+                        </td>
+                        <td className="py-1.5 px-2.5 text-[11px] whitespace-nowrap">
+                          <span className={`px-2 py-0.5 rounded-full border ${borderCol}`}>{ev.type}</span>
+                        </td>
+                        <td className="py-1.5 px-2.5">{ev.description}</td>
+                        <td className={`py-1.5 px-2.5 text-[11px] ${textMuted}`}>
+                          {ev.deviceId || '-'}
+                        </td>
+                        <td className="py-1.5 px-2.5 text-right">
+                          <button
+                            onClick={() =>
+                              askConfirm('Delete this log entry?', async () => {
+                                await deleteDoc(doc(db, 'activity', ev.id));
+                              })
+                            }
+                            className={btnDanger}
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {filteredActivities.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className={`py-6 text-center ${textMuted}`}>
+                          No matching activity logs.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* 3. MEDIA MANAGER */}
+          {activeSection === 'media' && (
+            <div className="space-y-4">
+              <div className={`flex flex-wrap items-center justify-between gap-2 border-b ${borderCol} pb-2`}>
+                <h2 className="text-[13px] font-bold uppercase tracking-wider">3. Media Manager</h2>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setMediaViewMode('grid')}
+                    className={mediaViewMode === 'grid' ? btnPrimary : btnSecondary}
+                  >
+                    Grid View
+                  </button>
+                  <button
+                    onClick={() => setMediaViewMode('list')}
+                    className={mediaViewMode === 'list' ? btnPrimary : btnSecondary}
+                  >
+                    List View
+                  </button>
+                  {selectedMediaIds.length > 0 && (
+                    <button onClick={handleBulkDeleteMedia} className={btnDanger}>
+                      Delete Selected ({selectedMediaIds.length})
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Upload Bar (Cloudinary 25GB Free Storage + Firestore Fallback + Direct URL) */}
+              <div className={`p-3 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-3`}>
+                {/* Storage Engine Status & Quick Cloudinary Setup Toggle */}
+                <div className={`flex flex-wrap items-center justify-between gap-2 pb-2 border-b ${borderCol}`}>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${borderCol}`}>
+                      {isCloudinaryReady
+                        ? `CLOUDINARY ACTIVE (${cloudNameInput.trim()})`
+                        : 'FIRESTORE FREE MODE (ADD CLOUDINARY PRESET FOR HD VIDEOS)'}
+                    </span>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] border ${borderCol}`}>
+                      {isCloudinaryDeleteReady
+                        ? 'AUTO-DELETE FROM CLOUDINARY: ON'
+                        : 'AUTO-DELETE FROM CLOUDINARY: ADD API KEY/SECRET'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowCloudinaryBox(!showCloudinaryBox)}
+                    className={btnSecondary}
+                  >
+                    {showCloudinaryBox ? 'Hide Cloudinary Setup' : '⚡ Cloudinary & Auto-Delete Setup'}
+                  </button>
+                </div>
+
+                {/* Collapsible Cloudinary Config Box right inside Media Manager */}
+                {(showCloudinaryBox || !isCloudinaryReady) && (
+                  <form
+                    onSubmit={handleSaveAndTestCloudinary}
+                    className={`p-2.5 rounded-[14px] border ${borderCol} ${bgMain} space-y-2`}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-1">
+                      <span className="font-bold text-[11px]">
+                        Cloudinary Free Storage + Permanent Auto-Delete Setup
+                      </span>
+                      <span className={`text-[10px] ${textMuted}`}>
+                        For Auto-Delete from Cloudinary: Copy <b>API Key</b> & <b>API Secret</b> from Cloudinary Dashboard → Settings → API Keys
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2 items-end">
+                      <div>
+                        <label className={`block text-[10px] ${textMuted} mb-0.5`}>
+                          Cloud Name
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="dsfcu9y1h"
+                          value={cloudNameInput}
+                          onChange={(e) => setCloudNameInput(e.target.value)}
+                          className={inputCls}
+                        />
+                      </div>
+                      <div>
+                        <label className={`block text-[10px] ${textMuted} mb-0.5`}>
+                          Unsigned Upload Preset
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="Unsigned Upload Preset Name"
+                          value={uploadPresetInput}
+                          onChange={(e) => setUploadPresetInput(e.target.value)}
+                          className={inputCls}
+                        />
+                      </div>
+                      <div>
+                        <label className={`block text-[10px] ${textMuted} mb-0.5`}>
+                          API Key (For Cloudinary Delete)
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. 123456789012345"
+                          value={apiKeyInput}
+                          onChange={(e) => setApiKeyInput(e.target.value)}
+                          className={inputCls}
+                        />
+                      </div>
+                      <div>
+                        <label className={`block text-[10px] ${textMuted} mb-0.5`}>
+                          API Secret (For Cloudinary Delete)
+                        </label>
+                        <input
+                          type="password"
+                          placeholder="Your Cloudinary API Secret"
+                          value={apiSecretInput}
+                          onChange={(e) => setApiSecretInput(e.target.value)}
+                          className={inputCls}
+                        />
+                      </div>
+                      <button type="submit" disabled={testingCloudinary} className={btnPrimary}>
+                        {testingCloudinary ? 'Testing & Saving...' : 'Save & Test'}
+                      </button>
+                    </div>
+                    {cloudinaryStatusMsg && (
+                      <div className={`text-[11px] pt-1 ${textMuted}`}>{cloudinaryStatusMsg}</div>
+                    )}
+                  </form>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
+                  <div>
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>Assign Category</label>
+                    <select
+                      value={uploadCategory}
+                      onChange={(e) => setUploadCategory(e.target.value)}
+                      className={inputCls}
+                    >
+                      {MEDIA_CATEGORIES.map((c) => (
+                        <option key={c} value={c}>
+                          {c}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>
+                      Upload Photos / Videos (Multiple · {isCloudinaryReady ? 'Uploads to Cloudinary CDN' : 'Uploads to Free Firestore Storage'})
+                    </label>
+                    <input
+                      type="file"
+                      multiple
+                      accept="image/*,video/*"
+                      disabled={isUploadingMedia}
+                      onChange={handleMultipleMediaUpload}
+                      className={inputCls}
+                    />
+                  </div>
+                </div>
+
+                {/* Or Add Direct Link */}
+                <form onSubmit={handleAddDirectUrlMedia} className={`pt-2 border-t ${borderCol} grid grid-cols-1 sm:grid-cols-5 gap-2 items-end`}>
+                  <div className="sm:col-span-2">
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>Or Paste Direct Image/Video URL (Cloudinary / Link)</label>
+                    <input
+                      type="text"
+                      placeholder="https://..."
+                      value={directMediaUrl}
+                      onChange={(e) => setDirectMediaUrl(e.target.value)}
+                      className={inputCls}
+                    />
+                  </div>
+                  <div>
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>Title / Caption</label>
+                    <input
+                      type="text"
+                      placeholder="Memory title"
+                      value={directMediaName}
+                      onChange={(e) => setDirectMediaName(e.target.value)}
+                      className={inputCls}
+                    />
+                  </div>
+                  <div>
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>Media Type</label>
+                    <select
+                      value={directMediaType}
+                      onChange={(e) => setDirectMediaType(e.target.value as 'image' | 'video')}
+                      className={inputCls}
+                    >
+                      <option value="image">Photo / Image</option>
+                      <option value="video">Video</option>
+                    </select>
+                  </div>
+                  <button type="submit" className={btnPrimary}>
+                    + Add URL
+                  </button>
+                </form>
+
+                {isUploadingMedia && (
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-[11px]">
+                      <span>
+                        {isCloudinaryReady
+                          ? `Uploading directly to Cloudinary (${cloudNameInput.trim()})...`
+                          : 'Compressing & saving to Firestore...'}
+                      </span>
+                      <span className="tabular-nums">{uploadProgress}%</span>
+                    </div>
+                    <div className={`w-full h-1.5 rounded-full overflow-hidden border ${borderCol}`}>
+                      <div
+                        style={{ width: `${uploadProgress}%` }}
+                        className={`h-full rounded-full ${dark ? 'bg-white' : 'bg-black'}`}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Filter Tabs (including Her Uploads) */}
+              <div className="flex flex-wrap gap-1.5">
+                {['all', ...MEDIA_CATEGORIES, 'her_only'].map((cat) => (
+                  <button
+                    key={cat}
+                    onClick={() => setMediaCategoryFilter(cat)}
+                    className={`${mediaCategoryFilter === cat ? btnPrimary : btnSecondary} !rounded-full`}
+                  >
+                    {cat === 'all'
+                      ? `All (${mediaItems.length})`
+                      : cat === 'her_only'
+                      ? `Uploaded By Her (${mediaItems.filter((m) => m.uploadedBy === 'her').length})`
+                      : cat}
+                  </button>
+                ))}
+              </div>
+
+              {/* Media Items Display */}
+              {(() => {
+                const filtered = mediaItems.filter((m) => {
+                  if (mediaCategoryFilter === 'all') return true;
+                  if (mediaCategoryFilter === 'her_only') return m.uploadedBy === 'her';
+                  return m.category === mediaCategoryFilter;
+                });
+
+                if (filtered.length === 0) {
+                  return <div className={`p-6 rounded-[14px] border ${borderCol} text-center ${textMuted}`}>No media items in this filter.</div>;
+                }
+
+                if (mediaViewMode === 'grid') {
+                  return (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
+                      {filtered.map((item) => {
+                        const checked = selectedMediaIds.includes(item.id);
+                        return (
+                          <div key={item.id} className={`rounded-[12px] border ${borderCol} p-2 flex flex-col justify-between gap-2`}>
+                            <div className="space-y-1.5">
+                              <div className="flex items-center justify-between gap-1">
+                                <label className="flex items-center gap-1.5 text-[11px] truncate cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(e) => {
+                                      if (e.target.checked) setSelectedMediaIds([...selectedMediaIds, item.id]);
+                                      else setSelectedMediaIds(selectedMediaIds.filter((id) => id !== item.id));
+                                    }}
+                                  />
+                                  <span className="truncate font-medium" title={item.name}>
+                                    {item.name || 'Untitled'}
+                                  </span>
+                                </label>
+                                <span className={`px-2 py-0.5 rounded-full border ${borderCol} text-[10px] ${textMuted} shrink-0`}>
+                                  {item.views || 0} views
+                                </span>
+                              </div>
+
+                              <div
+                                onClick={() => setPreviewMedia(item)}
+                                className={`aspect-video w-full rounded-[12px] border ${borderCol} overflow-hidden flex items-center justify-center cursor-pointer ${bgSubtle}`}
+                              >
+                                {item.type === 'video' ? (
+                                  <video src={item.url} className="w-full h-full object-cover rounded-[12px]" />
+                                ) : (
+                                  <img src={item.url} alt={item.name} className="w-full h-full object-cover rounded-[12px]" />
+                                )}
+                              </div>
+
+                              {renamingId === item.id ? (
+                                <div className="flex gap-1">
+                                  <input
+                                    type="text"
+                                    value={renameValue}
+                                    onChange={(e) => setRenameValue(e.target.value)}
+                                    className={inputCls}
+                                  />
+                                  <button
+                                    onClick={async () => {
+                                      await updateDoc(doc(db, 'media', item.id), { name: renameValue.trim() });
+                                      setRenamingId(null);
+                                      notifyStatus('Renamed.');
+                                    }}
+                                    className={btnPrimary}
+                                  >
+                                    Save
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center justify-between text-[11px]">
+                                  <span className={`px-2 py-0.5 rounded-full border ${borderCol} text-[10px] ${textMuted}`}>
+                                    {item.uploadedBy === 'her' ? 'Her Upload' : item.category || 'Gallery'}
+                                  </span>
+                                  <button
+                                    onClick={() => {
+                                      setRenamingId(item.id);
+                                      setRenameValue(item.name || '');
+                                    }}
+                                    className="underline cursor-pointer"
+                                  >
+                                    Rename
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="flex items-center justify-between gap-1 pt-1 border-t border-neutral-800/40">
+                              <select
+                                value={item.category || 'Gallery'}
+                                onChange={async (e) => {
+                                  const newCat = e.target.value;
+                                  await updateDoc(doc(db, 'media', item.id), { category: newCat });
+                                  if (newCat === 'Home photo') {
+                                    await setDoc(doc(db, 'content', 'main'), { lockPhotoUrl: item.url }, { merge: true });
+                                  }
+                                  notifyStatus(`Moved to ${newCat}`);
+                                }}
+                                className={`text-[11px] px-1.5 py-0.5 rounded-[10px] border ${borderCol} bg-transparent`}
+                              >
+                                {MEDIA_CATEGORIES.map((c) => (
+                                  <option key={c} value={c} className="bg-black text-white">
+                                    {c}
+                                  </option>
+                                ))}
+                              </select>
+                              <button onClick={() => handleDeleteSingleMedia(item)} className={btnDanger}>
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className={`rounded-[14px] overflow-hidden border ${borderCol} overflow-x-auto`}>
+                    <table className="w-full text-left border-collapse text-[12px]">
+                      <thead>
+                        <tr className={`border-b ${borderCol} ${bgSubtle} ${textMuted}`}>
+                          <th className="py-1.5 px-2.5">Sel</th>
+                          <th className="py-1.5 px-2.5">Name</th>
+                          <th className="py-1.5 px-2.5">Category</th>
+                          <th className="py-1.5 px-2.5">Source</th>
+                          <th className="py-1.5 px-2.5">Views</th>
+                          <th className="py-1.5 px-2.5 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filtered.map((item) => (
+                          <tr key={item.id} className={`border-b ${borderCol}`}>
+                            <td className="py-1.5 px-2.5">
+                              <input
+                                type="checkbox"
+                                checked={selectedMediaIds.includes(item.id)}
+                                onChange={(e) => {
+                                  if (e.target.checked) setSelectedMediaIds([...selectedMediaIds, item.id]);
+                                  else setSelectedMediaIds(selectedMediaIds.filter((id) => id !== item.id));
+                                }}
+                              />
+                            </td>
+                            <td className="py-1.5 px-2.5 font-medium">{item.name}</td>
+                            <td className="py-1.5 px-2.5">
+                              <span className={`px-2 py-0.5 rounded-full border ${borderCol} text-[10px]`}>
+                                {item.category}
+                              </span>
+                            </td>
+                            <td className="py-1.5 px-2.5">
+                              <span className={`px-2 py-0.5 rounded-full border ${borderCol} text-[10px]`}>
+                                {item.uploadedBy === 'her' ? 'Her' : 'Admin'}
+                              </span>
+                            </td>
+                            <td className="py-1.5 px-2.5 tabular-nums">{item.views || 0}</td>
+                            <td className="py-1.5 px-2.5 text-right space-x-1">
+                              <button onClick={() => setPreviewMedia(item)} className={btnSecondary}>
+                                Preview
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setRenamingId(item.id);
+                                  setRenameValue(item.name || '');
+                                  setMediaViewMode('grid');
+                                }}
+                                className={btnSecondary}
+                              >
+                                Rename
+                              </button>
+                              <button onClick={() => handleDeleteSingleMedia(item)} className={btnDanger}>
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
+          {/* 4. INBOX (FROM HER) */}
+          {activeSection === 'inbox' && (
+            <div className="space-y-4">
+              <div className={`flex items-center justify-between border-b ${borderCol} pb-2`}>
+                <h2 className="text-[13px] font-bold uppercase tracking-wider">
+                  4. Inbox From Her ({inboxItems.length})
+                </h2>
+                <span className={`text-[11px] ${textMuted}`}>Voice notes, photos, and hugs</span>
+              </div>
+
+              {replyTarget && (
+                <form onSubmit={handleSendInboxReply} className={`p-3 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-2`}>
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-[12px]">
+                      Reply to {replyTarget.type} ({new Date(replyTarget.createdAt).toLocaleString()})
+                    </span>
+                    <button type="button" onClick={() => setReplyTarget(null)} className={btnSecondary}>
+                      Cancel
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Notification Title"
+                    value={replyTitle}
+                    onChange={(e) => setReplyTitle(e.target.value)}
+                    className={inputCls}
+                  />
+                  <textarea
+                    rows={2}
+                    placeholder="Write your reply notification message..."
+                    value={replyMessage}
+                    onChange={(e) => setReplyMessage(e.target.value)}
+                    className={inputCls}
+                  />
+                  <button type="submit" className={btnPrimary}>
+                    Send Reply Notification
+                  </button>
+                </form>
+              )}
+
+              <div className={`rounded-[14px] overflow-hidden border ${borderCol} overflow-x-auto`}>
+                <table className="w-full text-left border-collapse text-[12px]">
+                  <thead>
+                    <tr className={`border-b ${borderCol} ${bgSubtle} ${textMuted}`}>
+                      <th className="py-1.5 px-2.5">Status</th>
+                      <th className="py-1.5 px-2.5">Type</th>
+                      <th className="py-1.5 px-2.5">Time</th>
+                      <th className="py-1.5 px-2.5">Content / Media</th>
+                      <th className="py-1.5 px-2.5 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {inboxItems.map((item) => (
+                      <tr key={item.id} className={`border-b ${borderCol}`}>
+                        <td className="py-1.5 px-2.5 text-[11px]">
+                          <span className={`px-2 py-0.5 rounded-full border ${borderCol}`}>
+                            {item.read ? 'READ' : 'UNREAD'}
+                          </span>
+                        </td>
+                        <td className="py-1.5 px-2.5 font-bold uppercase text-[11px]">
+                          <span className={`px-2 py-0.5 rounded-full border ${borderCol}`}>
+                            {item.type}
+                          </span>
+                        </td>
+                        <td className={`py-1.5 px-2.5 tabular-nums whitespace-nowrap ${textMuted}`}>
+                          {item.createdAt ? new Date(item.createdAt).toLocaleString() : '-'}
+                        </td>
+                        <td className="py-1.5 px-2.5">
+                          <div className="flex items-center gap-2">
+                            <span>{item.caption}</span>
+                            {item.type === 'voice' && item.mediaUrl && (
+                              <button onClick={() => togglePlayInboxAudio(item)} className={btnSecondary}>
+                                {playingAudioId === item.id ? 'Pause Audio' : 'Play Voice'}
+                              </button>
+                            )}
+                            {item.type === 'photo' && item.mediaUrl && (
+                              <button
+                                onClick={() => setPreviewMedia({ url: item.mediaUrl, name: item.caption, type: 'image' })}
+                                className={btnSecondary}
+                              >
+                                View Photo
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-1.5 px-2.5 text-right whitespace-nowrap space-x-1">
+                          <button
+                            onClick={() => updateDoc(doc(db, 'inbox', item.id), { read: !item.read })}
+                            className={btnSecondary}
+                          >
+                            {item.read ? 'Mark Unread' : 'Mark Read'}
+                          </button>
+                          {item.mediaUrl && (
+                            <a
+                              href={item.mediaUrl}
+                              download={`kashish_${item.type}_${item.id}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className={`${btnSecondary} inline-block`}
+                            >
+                              Download
+                            </a>
+                          )}
+                          <button onClick={() => setReplyTarget(item)} className={btnPrimary}>
+                            Reply
+                          </button>
+                          <button
+                            onClick={() =>
+                              askConfirm('Delete this inbox item permanently from App & Storage?', async () => {
+                                await deleteDoc(doc(db, 'inbox', item.id));
+                                if (item.mediaUrl || item.storagePath) {
+                                  const delRes = await deleteFirestoreMediaChunks(
+                                    item.storagePath || item.mediaUrl,
+                                    item.mediaUrl,
+                                    item.type
+                                  );
+                                  if (delRes?.cloudinaryDeleted) {
+                                    notifyStatus('Inbox item deleted from App & Cloudinary!');
+                                  } else {
+                                    notifyStatus('Inbox item deleted.');
+                                  }
+                                }
+                              })
+                            }
+                            className={btnDanger}
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {inboxItems.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className={`py-6 text-center ${textMuted}`}>
+                          Inbox is empty. Voice notes, photos, and hugs from her appear here live.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* 5. NOTIFICATION SENDER */}
+          {activeSection === 'notifications' && (
+            <div className="space-y-4">
+              <div className={`border-b ${borderCol} pb-2`}>
+                <h2 className="text-[13px] font-bold uppercase tracking-wider">5. Notification Sender</h2>
+              </div>
+
+              <form onSubmit={handleSendNotification} className={`p-3 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-3`}>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div>
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>Title *</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Thinking of you"
+                      value={notifTitle}
+                      onChange={(e) => setNotifTitle(e.target.value)}
+                      className={inputCls}
+                    />
+                  </div>
+                  <div>
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>Optional Image URL</label>
+                    <input
+                      type="text"
+                      placeholder="https://..."
+                      value={notifImage}
+                      onChange={(e) => setNotifImage(e.target.value)}
+                      className={inputCls}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className={`block text-[11px] ${textMuted} mb-1`}>Message *</label>
+                  <textarea
+                    rows={2}
+                    required
+                    placeholder="Notification body text..."
+                    value={notifMessage}
+                    onChange={(e) => setNotifMessage(e.target.value)}
+                    className={inputCls}
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 items-end">
+                  <div>
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>Notification Sound</label>
+                    <select
+                      value={notifSoundUrl}
+                      onChange={(e) => setNotifSoundUrl(e.target.value)}
+                      className={inputCls}
+                    >
+                      {[...DEFAULT_SAVED_SOUNDS, ...customSounds].map((s, i) => (
+                        <option key={i} value={s.url}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>Upload Custom Sound (/sounds)</label>
+                    <input
+                      type="file"
+                      accept="audio/*"
+                      disabled={uploadingSound}
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        setUploadingSound(true);
+                        try {
+                          const res = await uploadFileToFirebaseStorage(file, 'sounds', file.name);
+                          setCustomSounds((prev) => [...prev, { name: file.name, url: res.url }]);
+                          setNotifSoundUrl(res.url);
+                          notifyStatus('Custom sound uploaded.');
+                        } catch (err: any) {
+                          notifyStatus(`Sound upload error: ${err.message}`, true);
+                        } finally {
+                          setUploadingSound(false);
+                          e.target.value = '';
+                        }
+                      }}
+                      className={inputCls}
+                    />
+                  </div>
+
+                  <div>
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>Schedule (Leave blank to Send Now)</label>
+                    <input
+                      type="datetime-local"
+                      value={notifScheduleTime}
+                      onChange={(e) => setNotifScheduleTime(e.target.value)}
+                      className={inputCls}
+                    />
+                  </div>
+                </div>
+
+                <button type="submit" className={btnPrimary}>
+                  {notifScheduleTime ? 'Schedule Notification' : 'Send Notification Now'}
+                </button>
+              </form>
+
+              {/* Notification History */}
+              <div className={`rounded-[14px] overflow-hidden border ${borderCol} overflow-x-auto`}>
+                <div className={`px-3 py-1.5 border-b ${borderCol} ${bgSubtle} font-bold text-[12px]`}>
+                  Notification History ({notificationsList.length})
+                </div>
+                <table className="w-full text-left border-collapse text-[12px]">
+                  <thead>
+                    <tr className={`border-b ${borderCol} ${textMuted}`}>
+                      <th className="py-1.5 px-2.5">Time</th>
+                      <th className="py-1.5 px-2.5">Title & Message</th>
+                      <th className="py-1.5 px-2.5">Status</th>
+                      <th className="py-1.5 px-2.5 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {notificationsList.map((n) => (
+                      <tr key={n.id} className={`border-b ${borderCol}`}>
+                        <td className={`py-1.5 px-2.5 tabular-nums whitespace-nowrap ${textMuted}`}>
+                          {n.createdAt ? new Date(n.createdAt).toLocaleString() : '-'}
+                        </td>
+                        <td className="py-1.5 px-2.5">
+                          <div className="font-bold">{n.title}</div>
+                          <div className={textMuted}>{n.message}</div>
+                        </td>
+                        <td className="py-1.5 px-2.5 text-[11px]">
+                          <span className={`px-2 py-0.5 rounded-full border ${borderCol}`}>
+                            {n.seen ? 'SEEN' : n.status?.toUpperCase() || 'SENT'}
+                          </span>
+                        </td>
+                        <td className="py-1.5 px-2.5 text-right space-x-1 whitespace-nowrap">
+                          <button
+                            onClick={async () => {
+                              await addDoc(collection(db, 'notifications'), {
+                                title: n.title,
+                                message: n.message,
+                                imageUrl: n.imageUrl || '',
+                                soundUrl: n.soundUrl || '',
+                                createdAt: Date.now(),
+                                status: 'sent',
+                                seen: false,
+                              });
+                              notifyStatus('Notification resent.');
+                            }}
+                            className={btnSecondary}
+                          >
+                            Resend
+                          </button>
+                          <button
+                            onClick={() =>
+                              askConfirm('Delete notification from history?', async () => {
+                                await deleteDoc(doc(db, 'notifications', n.id));
+                              })
+                            }
+                            className={btnDanger}
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* 6. OVERLAY POPUP SENDER (Truecaller Style) */}
+          {activeSection === 'overlays' && (
+            <div className="space-y-4">
+              <div className={`border-b ${borderCol} pb-2`}>
+                <h2 className="text-[13px] font-bold uppercase tracking-wider">
+                  6. Overlay Popup Sender (Truecaller Style)
+                </h2>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <form onSubmit={handleSendOverlay} className={`lg:col-span-2 p-3 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-3`}>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                      <label className={`block text-[11px] ${textMuted} mb-1`}>Popup Title *</label>
+                      <input
+                        type="text"
+                        required
+                        value={ovTitle}
+                        onChange={(e) => setOvTitle(e.target.value)}
+                        className={inputCls}
+                      />
+                    </div>
+                    <div>
+                      <label className={`block text-[11px] ${textMuted} mb-1`}>Optional Image / Avatar URL</label>
+                      <input
+                        type="text"
+                        placeholder="https://..."
+                        value={ovImage}
+                        onChange={(e) => setOvImage(e.target.value)}
+                        className={inputCls}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>Message Text *</label>
+                    <textarea
+                      rows={2}
+                      required
+                      value={ovMessage}
+                      onChange={(e) => setOvMessage(e.target.value)}
+                      className={inputCls}
+                    />
+                  </div>
+
+                  {/* Configurable Buttons (Up to 3) */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className={`text-[11px] font-bold ${textMuted}`}>
+                        Configurable Buttons (Up to 3)
+                      </label>
+                      {ovButtons.length < 3 && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setOvButtons([...ovButtons, { label: 'Dismiss', action: 'dismiss', payload: '' }])
+                          }
+                          className={btnSecondary}
+                        >
+                          + Add Button
+                        </button>
+                      )}
+                    </div>
+
+                    {ovButtons.map((btn, idx) => (
+                      <div key={idx} className="grid grid-cols-1 sm:grid-cols-3 gap-1.5 items-center">
+                        <input
+                          type="text"
+                          placeholder="Button Label"
+                          value={btn.label}
+                          onChange={(e) => {
+                            const next = [...ovButtons];
+                            next[idx] = { ...next[idx], label: e.target.value };
+                            setOvButtons(next);
+                          }}
+                          className={inputCls}
+                        />
+                        <select
+                          value={btn.action}
+                          onChange={(e) => {
+                            const next = [...ovButtons];
+                            next[idx] = { ...next[idx], action: e.target.value as PopupButtonAction };
+                            setOvButtons(next);
+                          }}
+                          className={inputCls}
+                        >
+                          <option value="call_now">Call Now</option>
+                          <option value="dismiss">Dismiss</option>
+                          <option value="open_section">Open Section</option>
+                          <option value="open_url">Open Link</option>
+                        </select>
+                        <div className="flex gap-1">
+                          <input
+                            type="text"
+                            placeholder={
+                              btn.action === 'call_now'
+                                ? 'Phone number'
+                                : btn.action === 'open_section'
+                                ? 'gallery / poetry / games'
+                                : btn.action === 'open_url'
+                                ? 'https://...'
+                                : 'No payload needed'
+                            }
+                            value={btn.payload || ''}
+                            onChange={(e) => {
+                              const next = [...ovButtons];
+                              next[idx] = { ...next[idx], payload: e.target.value };
+                              setOvButtons(next);
+                            }}
+                            className={inputCls}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setOvButtons(ovButtons.filter((_, i) => i !== idx))}
+                            className={btnDanger}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 items-end">
+                    <div>
+                      <label className={`block text-[11px] ${textMuted} mb-1`}>Schedule (Optional)</label>
+                      <input
+                        type="datetime-local"
+                        value={ovScheduleTime}
+                        onChange={(e) => setOvScheduleTime(e.target.value)}
+                        className={inputCls}
+                      />
+                    </div>
+                    <button type="submit" className={btnPrimary}>
+                      {ovScheduleTime ? 'Schedule Overlay Popup' : 'Send Live Overlay Now'}
+                    </button>
+                  </div>
+                </form>
+
+                {/* Live Preview Box */}
+                <div className={`p-3 rounded-[14px] border ${borderCol} flex flex-col justify-between`}>
+                  <div className={`text-[11px] font-bold uppercase ${textMuted} mb-2`}>
+                    Live Truecaller Overlay Preview
+                  </div>
+                  <div className={`rounded-[14px] border ${borderCol} p-3 space-y-2.5 my-auto`}>
+                    <div className={`text-[10px] uppercase tracking-wider ${textMuted} border-b ${borderCol} pb-1`}>
+                      Incoming Alert · Kashish World
+                    </div>
+                    {ovImage && (
+                      <img src={ovImage} alt="" className="w-12 h-12 rounded-full object-cover mx-auto border" />
+                    )}
+                    <div className="font-bold text-[13px] text-center">{ovTitle || 'Title'}</div>
+                    <div className={`text-[11px] ${textMuted} text-center whitespace-pre-wrap`}>
+                      {ovMessage || 'Message'}
+                    </div>
+                    <div className="space-y-1 pt-1">
+                      {ovButtons.map((b, i) => (
+                        <div
+                          key={i}
+                          className={`py-1 px-2 text-center text-[11px] rounded-[10px] border ${borderCol} ${
+                            i === 0 ? (dark ? 'bg-white text-black' : 'bg-black text-white') : ''
+                          }`}
+                        >
+                          {b.label} ({b.action})
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className={`text-[10px] ${textMuted} mt-2`}>
+                    Triggers immediately on her screen via Firestore listener.
+                  </div>
+                </div>
+              </div>
+
+              {/* Overlay History */}
+              <div className={`rounded-[14px] overflow-hidden border ${borderCol} overflow-x-auto`}>
+                <div className={`px-3 py-1.5 border-b ${borderCol} ${bgSubtle} font-bold text-[12px]`}>
+                  Overlay History ({overlaysList.length})
+                </div>
+                <table className="w-full text-left border-collapse text-[12px]">
+                  <thead>
+                    <tr className={`border-b ${borderCol} ${textMuted}`}>
+                      <th className="py-1.5 px-2.5">Created</th>
+                      <th className="py-1.5 px-2.5">Title & Message</th>
+                      <th className="py-1.5 px-2.5">Response</th>
+                      <th className="py-1.5 px-2.5 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {overlaysList.map((o) => (
+                      <tr key={o.id} className={`border-b ${borderCol}`}>
+                        <td className={`py-1.5 px-2.5 tabular-nums whitespace-nowrap ${textMuted}`}>
+                          {o.createdAt ? new Date(o.createdAt).toLocaleString() : '-'}
+                        </td>
+                        <td className="py-1.5 px-2.5">
+                          <div className="font-bold">{o.title}</div>
+                          <div className={textMuted}>{o.message}</div>
+                        </td>
+                        <td className="py-1.5 px-2.5 text-[11px]">
+                          <span className={`px-2 py-0.5 rounded-full border ${borderCol}`}>
+                            {o.clickedAction
+                              ? `CLICKED: ${o.clickedAction}`
+                              : o.dismissed
+                              ? 'DISMISSED'
+                              : 'ACTIVE'}
+                          </span>
+                        </td>
+                        <td className="py-1.5 px-2.5 text-right space-x-1">
+                          <button
+                            onClick={async () => {
+                              await addDoc(collection(db, 'overlays'), {
+                                title: o.title,
+                                message: o.message,
+                                imageUrl: o.imageUrl || '',
+                                buttons: o.buttons || [],
+                                createdAt: Date.now(),
+                                status: 'sent',
+                                dismissed: false,
+                              });
+                              notifyStatus('Overlay resent.');
+                            }}
+                            className={btnSecondary}
+                          >
+                            Resend
+                          </button>
+                          <button
+                            onClick={() =>
+                              askConfirm('Delete this overlay record?', async () => {
+                                await deleteDoc(doc(db, 'overlays', o.id));
+                              })
+                            }
+                            className={btnDanger}
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* 7. SECTIONS MANAGER */}
+          {activeSection === 'sections' && (
+            <div className="space-y-4">
+              <div className={`flex items-center justify-between border-b ${borderCol} pb-2`}>
+                <h2 className="text-[13px] font-bold uppercase tracking-wider">
+                  7. Sections Manager (Open When Cards & Dynamic Cards)
+                </h2>
+                <span className={`text-[11px] ${textMuted}`}>
+                  Empty or hidden sections stay hidden in app automatically
+                </span>
+              </div>
+
+              <form onSubmit={handleSaveSection} className={`p-3 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-2.5`}>
+                <div className="font-bold text-[12px]">
+                  {editingSectionId ? 'Edit Section' : 'Add New Section'}
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                  <div className="sm:col-span-2">
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>Title (e.g. Open When You Miss Me)</label>
+                    <input
+                      type="text"
+                      required
+                      value={secTitle}
+                      onChange={(e) => setSecTitle(e.target.value)}
+                      className={inputCls}
+                    />
+                  </div>
+                  <div>
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>Icon / Emoji</label>
+                    <input
+                      type="text"
+                      value={secIcon}
+                      onChange={(e) => setSecIcon(e.target.value)}
+                      className={inputCls}
+                    />
+                  </div>
+                  <div className="flex items-end pb-1">
+                    <label className="flex items-center gap-2 cursor-pointer text-[12px]">
+                      <input
+                        type="checkbox"
+                        checked={secVisible}
+                        onChange={(e) => setSecVisible(e.target.checked)}
+                      />
+                      <span>Visible in App</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div>
+                  <label className={`block text-[11px] ${textMuted} mb-1`}>Text Content / Letter</label>
+                  <textarea
+                    rows={3}
+                    value={secContent}
+                    onChange={(e) => setSecContent(e.target.value)}
+                    placeholder="Write letter or section text..."
+                    className={inputCls}
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div>
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>Image URL (Optional)</label>
+                    <input
+                      type="text"
+                      value={secImageUrl}
+                      onChange={(e) => setSecImageUrl(e.target.value)}
+                      className={inputCls}
+                    />
+                  </div>
+                  <div>
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>Audio URL (Optional)</label>
+                    <input
+                      type="text"
+                      value={secAudioUrl}
+                      onChange={(e) => setSecAudioUrl(e.target.value)}
+                      className={inputCls}
+                    />
+                  </div>
+                  <div>
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>Video URL (Optional)</label>
+                    <input
+                      type="text"
+                      value={secVideoUrl}
+                      onChange={(e) => setSecVideoUrl(e.target.value)}
+                      className={inputCls}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <button type="submit" className={btnPrimary}>
+                    {editingSectionId ? 'Update Section' : 'Create Section'}
+                  </button>
+                  {editingSectionId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingSectionId(null);
+                        setSecTitle('');
+                        setSecContent('');
+                      }}
+                      className={btnSecondary}
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </form>
+
+              <div className={`rounded-[14px] overflow-hidden border ${borderCol} overflow-x-auto`}>
+                <table className="w-full text-left border-collapse text-[12px]">
+                  <thead>
+                    <tr className={`border-b ${borderCol} ${bgSubtle} ${textMuted}`}>
+                      <th className="py-1.5 px-2.5">Order</th>
+                      <th className="py-1.5 px-2.5">Icon</th>
+                      <th className="py-1.5 px-2.5">Title</th>
+                      <th className="py-1.5 px-2.5">Status</th>
+                      <th className="py-1.5 px-2.5 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sectionsList.map((s, idx) => {
+                      const isEmpty = !s.content?.trim() && !s.imageUrl && !s.audioUrl && !s.videoUrl;
+                      return (
+                        <tr key={s.id} className={`border-b ${borderCol}`}>
+                          <td className="py-1.5 px-2.5 whitespace-nowrap space-x-1">
+                            <button onClick={() => handleMoveSection(idx, -1)} className={btnSecondary}>
+                              ↑
+                            </button>
+                            <button onClick={() => handleMoveSection(idx, 1)} className={btnSecondary}>
+                              ↓
+                            </button>
+                          </td>
+                          <td className="py-1.5 px-2.5">{s.icon || '💌'}</td>
+                          <td className="py-1.5 px-2.5 font-medium">{s.title}</td>
+                          <td className="py-1.5 px-2.5 text-[11px]">
+                            <span className={`px-2 py-0.5 rounded-full border ${borderCol}`}>
+                              {isEmpty ? 'HIDDEN (EMPTY)' : s.visible === false ? 'HIDDEN' : 'VISIBLE'}
+                            </span>
+                          </td>
+                          <td className="py-1.5 px-2.5 text-right space-x-1">
+                            <button
+                              onClick={() =>
+                                updateDoc(doc(db, 'sections', s.id), { visible: s.visible === false })
+                              }
+                              className={btnSecondary}
+                            >
+                              {s.visible === false ? 'Show' : 'Hide'}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setEditingSectionId(s.id);
+                                setSecTitle(s.title || '');
+                                setSecIcon(s.icon || '💌');
+                                setSecContent(s.content || '');
+                                setSecImageUrl(s.imageUrl || '');
+                                setSecAudioUrl(s.audioUrl || '');
+                                setSecVideoUrl(s.videoUrl || '');
+                                setSecVisible(s.visible !== false);
+                              }}
+                              className={btnSecondary}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() =>
+                                askConfirm(`Delete section "${s.title}"?`, async () => {
+                                  await deleteDoc(doc(db, 'sections', s.id));
+                                })
+                              }
+                              className={btnDanger}
+                            >
+                              Delete
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {sectionsList.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className={`py-6 text-center ${textMuted}`}>
+                          No custom sections added yet.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* 8. CONTENT EDITOR */}
+          {activeSection === 'content' && (
+            <div className="space-y-4">
+              <div className={`flex items-center justify-between border-b ${borderCol} pb-2`}>
+                <h2 className="text-[13px] font-bold uppercase tracking-wider">8. Live Content Editor</h2>
+                <button onClick={handleSaveContentEditor} className={btnPrimary}>
+                  Save All Content Live
+                </button>
+              </div>
+
+              {/* Core Info & Countdown Date */}
+              <div className={`p-3 rounded-[14px] border ${borderCol} ${bgSubtle} grid grid-cols-1 sm:grid-cols-3 gap-2.5`}>
+                <div>
+                  <label className={`block text-[11px] ${textMuted} mb-1`}>Recipient Name</label>
+                  <input
+                    type="text"
+                    value={editRecipientName}
+                    onChange={(e) => setEditRecipientName(e.target.value)}
+                    className={inputCls}
+                  />
+                </div>
+                <div>
+                  <label className={`block text-[11px] ${textMuted} mb-1`}>
+                    Countdown Date (17 December · YYYY-MM-DD)
+                  </label>
+                  <input
+                    type="date"
+                    value={editCountdownDate}
+                    onChange={(e) => setEditCountdownDate(e.target.value)}
+                    className={inputCls}
+                  />
+                </div>
+                <div>
+                  <label className={`block text-[11px] ${textMuted} mb-1`}>Home Welcome Message</label>
+                  <input
+                    type="text"
+                    value={editHomeMessage}
+                    onChange={(e) => setEditHomeMessage(e.target.value)}
+                    className={inputCls}
+                  />
+                </div>
+              </div>
+
+              {/* Secret Letter */}
+              <div className={`p-3 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-1.5`}>
+                <label className="block font-bold text-[12px]">Secret Letter Content</label>
+                <textarea
+                  rows={4}
+                  value={editSecretLetter}
+                  onChange={(e) => setEditSecretLetter(e.target.value)}
+                  placeholder="Write her secret letter message..."
+                  className={inputCls}
+                />
+              </div>
+
+              {/* Name Meanings (K-A-S-H-I-S-H) */}
+              <div className={`p-3 rounded-[14px] border ${borderCol} space-y-2`}>
+                <div className="font-bold text-[12px]">Name Meanings (K-A-S-H-I-S-H)</div>
+                <div className="space-y-1.5">
+                  {editNameMeanings.map((nm, idx) => (
+                    <div key={idx} className="grid grid-cols-12 gap-1.5 items-center">
+                      <input
+                        type="text"
+                        value={nm.char}
+                        onChange={(e) => {
+                          const next = [...editNameMeanings];
+                          next[idx] = { ...next[idx], char: e.target.value };
+                          setEditNameMeanings(next);
+                        }}
+                        className={`${inputCls} col-span-2 sm:col-span-1 text-center font-bold`}
+                      />
+                      <input
+                        type="text"
+                        value={nm.title}
+                        onChange={(e) => {
+                          const next = [...editNameMeanings];
+                          next[idx] = { ...next[idx], title: e.target.value };
+                          setEditNameMeanings(next);
+                        }}
+                        className={`${inputCls} col-span-4 sm:col-span-3`}
+                      />
+                      <input
+                        type="text"
+                        value={nm.desc}
+                        onChange={(e) => {
+                          const next = [...editNameMeanings];
+                          next[idx] = { ...next[idx], desc: e.target.value };
+                          setEditNameMeanings(next);
+                        }}
+                        className={`${inputCls} col-span-6 sm:col-span-8`}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Poems Editor */}
+              <div className={`p-3 rounded-[14px] border ${borderCol} space-y-3`}>
+                <div className="font-bold text-[12px]">Poems ({editPoems.length})</div>
+                <div className="space-y-2">
+                  {editPoems.map((p, idx) => (
+                    <div key={idx} className={`p-2.5 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-1.5`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <input
+                          type="text"
+                          value={p.title}
+                          onChange={(e) => {
+                            const next = [...editPoems];
+                            next[idx] = { ...next[idx], title: e.target.value };
+                            setEditPoems(next);
+                          }}
+                          className={inputCls}
+                        />
+                        <button
+                          onClick={() =>
+                            askConfirm(`Delete poem "${p.title}"?`, () => {
+                              setEditPoems(editPoems.filter((_, i) => i !== idx));
+                            })
+                          }
+                          className={btnDanger}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                      <textarea
+                        rows={3}
+                        value={p.lines.join('\n')}
+                        onChange={(e) => {
+                          const next = [...editPoems];
+                          next[idx] = { ...next[idx], lines: e.target.value.split('\n') };
+                          setEditPoems(next);
+                        }}
+                        className={inputCls}
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                <div className={`p-2.5 rounded-[14px] border ${borderCol} space-y-2`}>
+                  <div className="text-[11px] font-bold">Add New Poem</div>
+                  <input
+                    type="text"
+                    placeholder="Poem Title"
+                    value={newPoemTitle}
+                    onChange={(e) => setNewPoemTitle(e.target.value)}
+                    className={inputCls}
+                  />
+                  <textarea
+                    rows={3}
+                    placeholder="Poem lines (one per line)..."
+                    value={newPoemLines}
+                    onChange={(e) => setNewPoemLines(e.target.value)}
+                    className={inputCls}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!newPoemTitle.trim() || !newPoemLines.trim()) return;
+                      setEditPoems([
+                        ...editPoems,
+                        { title: newPoemTitle.trim(), lines: newPoemLines.split('\n') },
+                      ]);
+                      setNewPoemTitle('');
+                      setNewPoemLines('');
+                    }}
+                    className={btnSecondary}
+                  >
+                    + Add Poem to List
+                  </button>
+                </div>
+              </div>
+
+              {/* Game Compliments / Wheel Content */}
+              <div className={`p-3 rounded-[14px] border ${borderCol} space-y-2`}>
+                <div className="font-bold text-[12px]">
+                  Game Content / Spin Wheel Compliments ({editCompliments.length})
+                </div>
+                <div className="space-y-1">
+                  {editCompliments.map((c, idx) => (
+                    <div key={idx} className="flex gap-1.5">
+                      <input
+                        type="text"
+                        value={c}
+                        onChange={(e) => {
+                          const next = [...editCompliments];
+                          next[idx] = e.target.value;
+                          setEditCompliments(next);
+                        }}
+                        className={inputCls}
+                      />
+                      <button
+                        onClick={() => setEditCompliments(editCompliments.filter((_, i) => i !== idx))}
+                        className={btnDanger}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-1.5 pt-1">
+                  <input
+                    type="text"
+                    placeholder="Add new game compliment / prompt..."
+                    value={newCompliment}
+                    onChange={(e) => setNewCompliment(e.target.value)}
+                    className={inputCls}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!newCompliment.trim()) return;
+                      setEditCompliments([...editCompliments, newCompliment.trim()]);
+                      setNewCompliment('');
+                    }}
+                    className={btnSecondary}
+                  >
+                    + Add
+                  </button>
+                </div>
+              </div>
+
+              <button onClick={handleSaveContentEditor} className={btnPrimary}>
+                Save All Content Changes
+              </button>
+            </div>
+          )}
+
+          {/* 9. MUSIC MANAGER */}
+          {activeSection === 'music' && (
+            <div className="space-y-4">
+              <div className={`border-b ${borderCol} pb-2`}>
+                <h2 className="text-[13px] font-bold uppercase tracking-wider">9. Music Manager</h2>
+              </div>
+
+              <div className={`p-3 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-3`}>
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 font-bold cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={musicOn}
+                      onChange={(e) => setMusicOn(e.target.checked)}
+                    />
+                    <span>Background Music Enabled ({musicOn ? 'ON' : 'OFF'})</span>
+                  </label>
+                  <span className={`px-2.5 py-0.5 rounded-full border ${borderCol} text-[11px]`}>
+                    Volume: {Math.round(musicVol * 100)}%
+                  </span>
+                </div>
+
+                <div>
+                  <label className={`block text-[11px] ${textMuted} mb-1`}>Default Volume</label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={musicVol}
+                    onChange={(e) => setMusicVol(parseFloat(e.target.value))}
+                    className="w-full"
+                  />
+                </div>
+
+                <div>
+                  <label className={`block text-[11px] ${textMuted} mb-1`}>Active Background Music URL</label>
+                  <input
+                    type="text"
+                    value={selectedMusicUrl}
+                    onChange={(e) => setSelectedMusicUrl(e.target.value)}
+                    className={inputCls}
+                  />
+                </div>
+
+                <div>
+                  <label className={`block text-[11px] ${textMuted} mb-1`}>Select Preset / Uploaded Track</label>
+                  <select
+                    value={selectedMusicUrl}
+                    onChange={(e) => setSelectedMusicUrl(e.target.value)}
+                    className={inputCls}
+                  >
+                    {musicTracks.map((t) => (
+                      <option key={t.id} value={t.url}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className={`block text-[11px] ${textMuted} mb-1`}>
+                    Upload New Music File (/music in Firebase Storage)
+                  </label>
+                  <input
+                    type="file"
+                    accept="audio/*"
+                    disabled={uploadingMusic}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      setUploadingMusic(true);
+                      try {
+                        const res = await uploadFileToFirebaseStorage(file, 'music', file.name);
+                        setMusicTracks((prev) => [
+                          ...prev,
+                          { id: `track_${Date.now()}`, name: file.name, url: res.url },
+                        ]);
+                        setSelectedMusicUrl(res.url);
+                        notifyStatus('Music uploaded and selected.');
+                      } catch (err: any) {
+                        notifyStatus(`Music upload error: ${err.message}`, true);
+                      } finally {
+                        setUploadingMusic(false);
+                        e.target.value = '';
+                      }
+                    }}
+                    className={inputCls}
+                  />
+                </div>
+
+                <button onClick={handleSaveMusicSettings} className={btnPrimary}>
+                  Save & Apply Music Settings Live
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* 10. APP CONTROL */}
+          {activeSection === 'control' && (
+            <div className="space-y-4">
+              <div className={`border-b ${borderCol} pb-2`}>
+                <h2 className="text-[13px] font-bold uppercase tracking-wider">10. Remote App Control</h2>
+              </div>
+
+              <div className={`p-3 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-3`}>
+                <div className="font-bold text-[12px]">Toggle App Features On / Off Remotely</div>
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                  {[
+                    { label: 'Games Section', val: featGames, set: setFeatGames },
+                    { label: 'Gallery Upload', val: featGalleryUpload, set: setFeatGalleryUpload },
+                    { label: 'Send Hug Button', val: featHug, set: setFeatHug },
+                    { label: 'Direct Call Button', val: featCall, set: setFeatCall },
+                    { label: 'Voice Note Button', val: featVoiceNote, set: setFeatVoiceNote },
+                  ].map((f, i) => (
+                    <label
+                      key={i}
+                      className={`p-2 rounded-[12px] border ${borderCol} flex items-center justify-between cursor-pointer`}
+                    >
+                      <span>{f.label}</span>
+                      <input
+                        type="checkbox"
+                        checked={f.val}
+                        onChange={(e) => f.set(e.target.checked)}
+                      />
+                    </label>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2">
+                  <div>
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>
+                      Direct Call Phone Number
+                    </label>
+                    <input
+                      type="text"
+                      value={callNumberInput}
+                      onChange={(e) => setCallNumberInput(e.target.value)}
+                      className={inputCls}
+                    />
+                  </div>
+                  <div>
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>
+                      Entry Lock Password (Optional Override)
+                    </label>
+                    <input
+                      type="text"
+                      value={lockPasswordInput}
+                      onChange={(e) => setLockPasswordInput(e.target.value)}
+                      placeholder="Leave empty for Firebase Auth"
+                      className={inputCls}
+                    />
+                  </div>
+                </div>
+
+                <div className={`pt-2 border-t ${borderCol} space-y-2`}>
+                  <div className="flex flex-wrap gap-4">
+                    <label className="flex items-center gap-2 font-bold cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={maintMode}
+                        onChange={(e) => setMaintMode(e.target.checked)}
+                      />
+                      <span>Maintenance Mode (Shows maintenance screen to her)</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 font-bold cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={forceLockMode}
+                        onChange={(e) => setForceLockMode(e.target.checked)}
+                      />
+                      <span>Force Lock Screen Immediately</span>
+                    </label>
+                  </div>
+
+                  <div>
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>Maintenance Message</label>
+                    <input
+                      type="text"
+                      value={maintMessage}
+                      onChange={(e) => setMaintMessage(e.target.value)}
+                      className={inputCls}
+                    />
+                  </div>
+                </div>
+
+                <button onClick={handleSaveAppControl} className={btnPrimary}>
+                  Save App Control Settings
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* 11. SETTINGS & SETUP */}
+          {activeSection === 'settings' && (
+            <div className="space-y-4">
+              <div className={`border-b ${borderCol} pb-2`}>
+                <h2 className="text-[13px] font-bold uppercase tracking-wider">
+                  11. Settings, Backup & Firebase Rules
+                </h2>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {/* Change Admin Password */}
+                <div className={`p-3 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-2`}>
+                  <div className="font-bold text-[12px]">Change Admin Password</div>
+                  <input
+                    type="password"
+                    placeholder="New password (min 6 chars)"
+                    value={newAdminPassword}
+                    onChange={(e) => setNewAdminPassword(e.target.value)}
+                    className={inputCls}
+                  />
+                  <button
+                    onClick={async () => {
+                      if (!auth.currentUser || newAdminPassword.length < 6) {
+                        notifyStatus('Password must be at least 6 characters.', true);
+                        return;
+                      }
+                      try {
+                        await updatePassword(auth.currentUser, newAdminPassword);
+                        setNewAdminPassword('');
+                        notifyStatus('Admin password updated.');
+                      } catch (err: any) {
+                        notifyStatus(`Password error: ${err.message}`, true);
+                      }
+                    }}
+                    className={btnPrimary}
+                  >
+                    Update Password
+                  </button>
+                </div>
+
+                {/* Data Backup & Clear Logs */}
+                <div className={`p-3 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-2`}>
+                  <div className="font-bold text-[12px]">Backup & Maintenance</div>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <button onClick={handleExportFullBackupJson} className={btnPrimary}>
+                      <Download className="w-3 h-3 inline mr-1" />
+                      Backup All Data (JSON Export)
+                    </button>
+                    <button onClick={handleClearActivityLogs} className={btnDanger}>
+                      Clear All Activity Logs
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Cloudinary Free Storage Configuration in Settings */}
+              <form
+                onSubmit={handleSaveAndTestCloudinary}
+                className={`p-3 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-2.5`}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-bold text-[12px]">
+                    Cloudinary Free Storage (25 GB Free Tier · Upload + Permanent Delete)
+                  </div>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${borderCol}`}>
+                    {isCloudinaryReady
+                      ? `CONNECTED: ${cloudNameInput.trim()} (${isCloudinaryDeleteReady ? 'UPLOAD + DELETE' : 'UPLOAD ONLY'})`
+                      : 'FIRESTORE FALLBACK MODE'}
+                  </span>
+                </div>
+                <p className={`text-[11px] ${textMuted}`}>
+                  <b>Upload</b> uses your Unsigned Upload Preset (`Unsigned Upload Preset Name`). To also <b>permanently delete files from Cloudinary</b> when you click Delete in the Admin Panel, paste your <b>API Key</b> and <b>API Secret</b> (found in <b>Cloudinary Dashboard → Settings ⚙️ → API Keys</b>).
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2 items-end">
+                  <div>
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>Cloudinary Cloud Name</label>
+                    <input
+                      type="text"
+                      value={cloudNameInput}
+                      onChange={(e) => setCloudNameInput(e.target.value)}
+                      placeholder="dsfcu9y1h"
+                      className={inputCls}
+                    />
+                  </div>
+                  <div>
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>Unsigned Upload Preset</label>
+                    <input
+                      type="text"
+                      value={uploadPresetInput}
+                      onChange={(e) => setUploadPresetInput(e.target.value)}
+                      placeholder="Unsigned Upload Preset Name"
+                      className={inputCls}
+                    />
+                  </div>
+                  <div>
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>API Key (For Delete)</label>
+                    <input
+                      type="text"
+                      value={apiKeyInput}
+                      onChange={(e) => setApiKeyInput(e.target.value)}
+                      placeholder="e.g. 123456789012345"
+                      className={inputCls}
+                    />
+                  </div>
+                  <div>
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>API Secret (For Delete)</label>
+                    <input
+                      type="password"
+                      value={apiSecretInput}
+                      onChange={(e) => setApiSecretInput(e.target.value)}
+                      placeholder="Your Cloudinary API Secret"
+                      className={inputCls}
+                    />
+                  </div>
+                  <button type="submit" disabled={testingCloudinary} className={btnPrimary}>
+                    {testingCloudinary ? 'Testing & Saving...' : 'Save & Test'}
+                  </button>
+                </div>
+                {cloudinaryStatusMsg && (
+                  <div className={`text-[11px] ${textMuted}`}>{cloudinaryStatusMsg}</div>
+                )}
+              </form>
+
+              {/* Complete Setup & Security Rules Reference */}
+              <div className={`p-3 rounded-[14px] border ${borderCol} space-y-2`}>
+                <div className="font-bold text-[12px]">
+                  Firebase Configuration & 100% Free-Tier (Firestore + Cloudinary) Setup
+                </div>
+                <p className={`text-[11px] ${textMuted}`}>
+                  Config keys are located in <code>src/firebase.ts</code> (Project: <b>{firebaseConfig.projectId}</b>, Admin: <b>{ADMIN_EMAIL}</b>).
+                  Firebase Storage is <b>NOT required</b> — all photos, voice notes, and sounds are automatically compressed/chunked and stored 100% free inside Firestore!
+                </p>
+                <pre className={`p-2.5 rounded-[14px] border ${borderCol} ${bgSubtle} text-[11px] overflow-x-auto`}>
+{`// firestore.rules (Paste in Firebase Console -> Firestore -> Rules)
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAdmin() {
+      return request.auth != null && request.auth.token.email == '${ADMIN_EMAIL}';
+    }
+    function isSignedIn() { return request.auth != null; }
+
+    match /media/{id} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() || (isSignedIn() && request.resource.data.uploadedBy == 'her');
+      allow update: if isAdmin() || (isSignedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['views', 'likes']));
+      allow delete: if isAdmin();
+    }
+    match /sections/{id} { allow read: if isSignedIn(); allow write: if isAdmin(); }
+    match /content/{id} { allow read: if isSignedIn(); allow write: if isAdmin(); }
+    match /inbox/{id} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.senderUid == request.auth.uid);
+      allow create: if isSignedIn();
+      allow update, delete: if isAdmin();
+    }
+    match /activity/{id} { allow read, update, delete: if isAdmin(); allow create: if isSignedIn(); }
+    match /notifications/{id} { allow read: if isSignedIn(); allow update: if isSignedIn(); allow create, delete: if isAdmin(); }
+    match /overlays/{id} { allow read: if isSignedIn(); allow update: if isSignedIn(); allow create, delete: if isAdmin(); }
+    match /settings/{id} { allow read: if isSignedIn(); allow create, update: if isAdmin() || id == 'stats'; allow delete: if isAdmin(); }
+  }
+}`}
+                </pre>
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
+
+      {/* Media Preview Modal */}
+      {previewMedia && (
+        <div className="fixed inset-0 z-[2100] bg-black/80 flex items-center justify-center p-4">
+          <div className={`max-w-lg w-full rounded-[14px] border ${borderCol} ${bgMain} p-3 space-y-2`}>
+            <div className="flex items-center justify-between">
+              <span className="font-bold truncate">{previewMedia.name || 'Preview'}</span>
+              <button onClick={() => setPreviewMedia(null)} className={btnSecondary}>
+                Close
+              </button>
+            </div>
+            <div className="max-h-[70vh] rounded-[12px] overflow-hidden flex items-center justify-center bg-black">
+              {previewMedia.type === 'video' ? (
+                <video src={previewMedia.url} controls autoPlay className="max-h-[68vh] w-auto rounded-[12px]" />
+              ) : (
+                <img src={previewMedia.url} alt="" className="max-h-[68vh] w-auto object-contain rounded-[12px]" />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Dialog Modal before any Delete */}
+      {confirmDialog && (
+        <div className="fixed inset-0 z-[2200] bg-black/75 flex items-center justify-center p-4">
+          <div className={`max-w-xs w-full rounded-[14px] border ${borderCol} ${bgMain} p-4 space-y-3`}>
+            <div className="font-bold text-[13px]">Confirm Action</div>
+            <p className={`text-[12px] ${textMuted}`}>{confirmDialog.message}</p>
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={() => setConfirmDialog(null)} className={btnSecondary}>
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  const fn = confirmDialog.onConfirm;
+                  setConfirmDialog(null);
+                  await fn();
+                }}
+                className={btnPrimary}
+              >
+                Confirm Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

@@ -1,0 +1,77 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Only the single designated admin email has full write & read privileges
+    function isAdmin() {
+      return request.auth != null &&
+        request.auth.token.email == 'jayshankar431@gmail.com';
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // 1. MEDIA COLLECTION (Gallery, Secret Photos, Open When, Home photo, Uploads from her)
+    match /media/{mediaId} {
+      allow read: if isSignedIn();
+      // App user can increment viewCount or upload to her category; Admin has full control
+      allow create: if isAdmin() || (isSignedIn() && request.resource.data.uploadedBy == 'her');
+      allow update: if isAdmin() || (isSignedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['views', 'likes']));
+      allow delete: if isAdmin();
+    }
+
+    // 2. SECTIONS COLLECTION (Open When cards & dynamic sections)
+    match /sections/{sectionId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // 3. CONTENT COLLECTION (Name meanings, poems, letters, home messages, countdown date, games)
+    match /content/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // 4. INBOX COLLECTION (Voice notes, photos, hugs from her)
+    match /inbox/{itemId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.senderUid == request.auth.uid);
+      allow create: if isSignedIn();
+      allow update, delete: if isAdmin();
+    }
+
+    // 5. ACTIVITY COLLECTION (App opened, section visited, photo/video viewed, game played, hug, call)
+    match /activity/{eventId} {
+      allow read: if isAdmin();
+      allow create: if isSignedIn();
+      allow update, delete: if isAdmin();
+    }
+
+    // 6. NOTIFICATIONS COLLECTION (Push & real-time in-app notifications)
+    match /notifications/{notifId} {
+      allow read: if isSignedIn();
+      allow update: if isAdmin() || (isSignedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['seen', 'seenAt']));
+      allow create, delete: if isAdmin();
+    }
+
+    // 7. OVERLAYS COLLECTION (Truecaller-style full-screen / floating overlay popups)
+    match /overlays/{overlayId} {
+      allow read: if isSignedIn();
+      allow update: if isAdmin() || (isSignedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['dismissed', 'clickedAction', 'seenAt']));
+      allow create, delete: if isAdmin();
+    }
+
+    // 8. SETTINGS COLLECTION (Feature toggles, lock password, call number, maintenance, music, stats)
+    match /settings/{docId} {
+      allow read: if isSignedIn();
+      allow create, update: if isAdmin() || (isSignedIn() && docId == 'stats');
+      allow delete: if isAdmin();
+    }
+
+    // 9. USERS COLLECTION
+    match /users/{userId} {
+      allow read: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+      allow write: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+    }
+  }
+}

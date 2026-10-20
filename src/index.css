@@ -1,0 +1,705 @@
+@import "tailwindcss";
+@import "./lucy-font.css";
+
+:root {
+  --font-main: 'Poppins', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-handwriting: 'Caveat', cursive;
+  --font-romantic: 'Cormorant Garamond', 'Playfair Display', Georgia, serif;
+  --font-gothic: 'Century Gothic', 'Gothic A1', sans-serif;
+  --font-sunshine: 'My Sunshine', cursive, sans-serif;
+  --font-lucy: 'Lucy Said Ok', 'Lucy Said Ok Personal Use', cursive, serif;
+
+  /* DEFAULT THEME: DARK MODE (Nostalgic Night Diary) */
+  --bg: #140c1e;
+  --card: rgba(30, 16, 46, 0.94);
+  --card-solid: #1e102f;
+  --card-border: rgba(244, 114, 182, 0.25);
+  --text: #fdf2f4;
+  --text-soft: #f9a8d4;
+  --accent: #f43f5e;
+  --accent-hover: #e11d48;
+  --accent-text: #ffffff;
+  --card-subtle: #29143d;
+  --nav-bg: rgba(21, 10, 34, 0.96);
+  --shadow-color: rgba(0, 0, 0, 0.4);
+}
+
+[data-theme="dark"] {
+  --bg: #140c1e;
+  --card: rgba(30, 16, 46, 0.94);
+  --card-solid: #1e102f;
+  --card-border: rgba(244, 114, 182, 0.25);
+  --text: #fdf2f4;
+  --text-soft: #f9a8d4;
+  --accent: #f43f5e;
+  --accent-hover: #e11d48;
+  --accent-text: #ffffff;
+  --card-subtle: #29143d;
+  --nav-bg: rgba(21, 10, 34, 0.96);
+  --shadow-color: rgba(0, 0, 0, 0.4);
+}
+
+[data-theme="light"] {
+  --bg: #fff5f8;
+  --card: rgba(255, 255, 255, 0.95);
+  --card-solid: #ffffff;
+  --card-border: #f3c6d6;
+  --text: #3a1226;
+  --text-soft: #6b3a52;
+  --accent: #d6336c;
+  --accent-hover: #b82558;
+  --accent-text: #ffffff;
+  --card-subtle: #fff0f4;
+  --nav-bg: rgba(255, 255, 255, 0.96);
+  --shadow-color: rgba(58, 18, 38, 0.08);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent !important;
+}
+
+html {
+  font-family: var(--font-main);
+  font-size: clamp(1rem, 0.95rem + 0.25vw, 1.125rem);
+  line-height: 1.6;
+  letter-spacing: 0.2px;
+  font-weight: 600;
+  background-color: var(--bg);
+  color: var(--text);
+  -webkit-tap-highlight-color: transparent !important;
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: background-color 0.3s ease, color 0.3s ease;
+  overflow-x: clip;
+}
+
+body {
+  font-family: var(--font-main);
+  font-size: clamp(1rem, 0.95rem + 0.25vw, 1.125rem);
+  line-height: 1.6;
+  letter-spacing: 0.2px;
+  font-weight: 600;
+  background-color: var(--bg);
+  color: var(--text);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  overflow-x: clip;
+  min-height: 100vh;
+  min-height: 100dvh;
+  -webkit-tap-highlight-color: transparent !important;
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Allow text selection inside editable inputs, textareas, and code containers */
+input,
+textarea,
+[contenteditable="true"],
+.allow-select,
+.user-select-text {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}
+
+#root {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+/* Notch & Status-Bar Safe Area Support */
+.safe-area-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.safe-area-inset {
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+/* Prevent pull-to-refresh on mobile touchscreen devices without affecting desktop mouse wheel */
+@media (hover: none) and (pointer: coarse) {
+  body {
+    overscroll-behavior-y: contain;
+  }
+}
+
+/* Prevent unwanted sideways overflow */
+img,
+video,
+canvas,
+svg,
+iframe {
+  max-width: 100%;
+  height: auto;
+  box-sizing: border-box;
+}
+
+/* Touch manipulation on interactive elements to prevent double-tap zoom delay */
+button,
+a,
+input,
+select,
+textarea,
+[role="button"] {
+  touch-action: manipulation;
+}
+
+/* Ensure inputs on phones never trigger auto-zoom (min 16px) */
+input,
+select,
+textarea {
+  font-size: 16px !important;
+}
+
+/* Headings with proper wrapping and fluid sizing */
+h1, h2, h3, h4, h5, h6 {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
+}
+
+/* Handwriting font ONLY for big titles, hero text & short signatures */
+.font-decorative,
+.font-handwriting,
+.font-serif {
+  font-family: 'Caveat', cursive, sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  overflow-wrap: anywhere;
+}
+
+/* Modern, crisp, bold Gothic font for titles */
+.font-gothic {
+  font-family: 'Century Gothic', 'Gothic A1', sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  overflow-wrap: anywhere;
+}
+
+/* My Sunshine contemporary calligraphy script font */
+@font-face {
+  font-family: 'My Sunshine';
+  font-style: normal;
+  font-weight: 400;
+  src: local('My Sunshine'), url('https://fonts.cdnfonts.com/s/42823/MySunshine.woff') format('woff');
+  font-display: swap;
+}
+
+.font-my-sunshine {
+  font-family: 'My Sunshine', cursive, sans-serif;
+  letter-spacing: 0.5px;
+  overflow-wrap: anywhere;
+}
+
+/* Normal readable text: Poppins 600/700 */
+.font-sans,
+.font-script,
+p,
+span,
+button,
+input,
+label,
+li {
+  font-family: 'Poppins', system-ui, -apple-system, sans-serif;
+  overflow-wrap: anywhere;
+}
+
+/* Common High Contrast Utility Classes */
+.theme-card {
+  background-color: var(--card);
+  border: 1px solid var(--card-border);
+  color: var(--text);
+  box-shadow: 0 4px 20px var(--shadow-color);
+  backdrop-filter: blur(12px);
+}
+
+.theme-card-solid {
+  background-color: var(--card-solid);
+  border: 1px solid var(--card-border);
+  color: var(--text);
+  box-shadow: 0 4px 20px var(--shadow-color);
+}
+
+.theme-subtle {
+  background-color: var(--card-subtle);
+  border: 1px solid var(--card-border);
+}
+
+.theme-btn-accent {
+  background-color: var(--accent);
+  color: var(--accent-text) !important;
+  font-weight: 700;
+  box-shadow: 0 4px 14px rgba(214, 51, 108, 0.3);
+  transition: background-color 0.2s ease, transform 0.15s ease;
+}
+
+.theme-btn-accent:hover {
+  background-color: var(--accent-hover);
+}
+
+.theme-text-main {
+  color: var(--text);
+}
+
+.theme-text-soft {
+  color: var(--text-soft);
+}
+
+.theme-text-accent {
+  color: var(--accent);
+}
+
+/* Animations */
+@keyframes heartPulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  15% {
+    transform: scale(1.18);
+  }
+  30% {
+    transform: scale(1.05);
+  }
+  45% {
+    transform: scale(1.24);
+  }
+  60% {
+    transform: scale(1);
+  }
+}
+
+.animate-heartbeat {
+  animation: heartPulse 1.8s ease-in-out infinite;
+  will-change: transform;
+}
+
+@keyframes floatGentle {
+  0%, 100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-8px) rotate(2deg);
+  }
+}
+
+.animate-float {
+  animation: floatGentle 4s ease-in-out infinite;
+  will-change: transform;
+}
+
+@keyframes sparkleTwinkle {
+  0%, 100% {
+    opacity: 0.3;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+.animate-sparkle {
+  animation: sparkleTwinkle 2.5s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+@keyframes planeFly {
+  0% {
+    transform: translate(-100px, 30px) rotate(15deg);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(calc(100vw + 120px), -40px) rotate(5deg);
+    opacity: 0;
+  }
+}
+
+.animate-plane-fly {
+  animation: planeFly 2.8s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+  will-change: transform, opacity;
+}
+
+@keyframes shake {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  20%, 60% {
+    transform: translateX(-6px);
+  }
+  40%, 80% {
+    transform: translateX(6px);
+  }
+}
+
+.animate-shake {
+  animation: shake 0.45s ease-in-out;
+  will-change: transform;
+}
+
+@keyframes swayGentle {
+  0%, 100% {
+    transform: rotate(-2deg);
+  }
+  50% {
+    transform: rotate(2deg);
+  }
+}
+
+@keyframes swayGentleAlt {
+  0%, 100% {
+    transform: rotate(2deg);
+  }
+  50% {
+    transform: rotate(-2deg);
+  }
+}
+
+.animate-sway {
+  transform-origin: top center;
+  animation: swayGentle 4.5s ease-in-out infinite;
+  will-change: transform;
+}
+
+.animate-sway-alt {
+  transform-origin: top center;
+  animation: swayGentleAlt 5.2s ease-in-out infinite;
+  will-change: transform;
+}
+
+/* Dynamic Viewport Unit Helpers */
+.min-h-screen-dvh {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.h-screen-dvh {
+  height: 100vh;
+  height: 100dvh;
+}
+
+.max-h-modal {
+  max-height: 90vh;
+  max-height: 90dvh;
+}
+
+/* Safe area padding utilities */
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.pl-safe {
+  padding-left: env(safe-area-inset-left, 0px);
+}
+
+.pr-safe {
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+/* Accessibility: Respect prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .section-fade-slide {
+    animation: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+    will-change: auto !important;
+  }
+}
+
+/* Smooth 60fps performance on small mobile screens */
+@media (max-width: 640px) {
+  /* Reduce heavy backdrop-blur filters on phone GPUs to prevent frame drops */
+  .backdrop-blur-md,
+  .backdrop-blur-lg,
+  .backdrop-blur-xl {
+    backdrop-filter: blur(5px) !important;
+    -webkit-backdrop-filter: blur(5px) !important;
+  }
+
+  .animate-sparkle,
+  .animate-float {
+    animation-duration: 4s;
+  }
+}
+
+/* Telegram-style hardware-accelerated short slide + fade transition (220ms) */
+.section-fade-slide {
+  animation: sectionSlideFade 220ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+  will-change: transform, opacity;
+  transform: translateZ(0);
+}
+
+.no-slide {
+  animation: none !important;
+  transform: none !important;
+}
+
+@keyframes sectionSlideFade {
+  0% {
+    opacity: 0;
+    transform: translate3d(12px, 0, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+/* Off-screen rendering containment */
+.content-visibility-auto {
+  content-visibility: auto;
+  contain-intrinsic-size: 1px 400px;
+}
+
+/* Cinematic Love Letter Font & Scroll Transitions - One Line at a Time */
+.font-romantic {
+  font-family: var(--font-romantic), Georgia, 'Times New Roman', serif;
+}
+
+.cinematic-line-wrapper {
+  position: relative;
+  will-change: transform, opacity;
+  transform: translateZ(0);
+}
+
+.cinematic-line {
+  transition: opacity 0.35s cubic-bezier(0.16, 1, 0.3, 1), transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform;
+  transform: translateZ(0);
+  text-wrap: balance;
+}
+
+.cinematic-thought-card {
+  transition: opacity 0.45s cubic-bezier(0.16, 1, 0.3, 1), transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform;
+  transform: translateZ(0);
+}
+
+/* Golden Love Letter Typography */
+.text-golden-letter {
+  color: #fbbf24;
+  text-shadow: 0 0 24px rgba(251, 191, 36, 0.35), 0 2px 6px rgba(0, 0, 0, 0.5);
+}
+
+@supports (-webkit-background-clip: text) {
+  .text-golden-letter {
+    background: linear-gradient(135deg, #fffbeb 0%, #fde68a 25%, #f59e0b 60%, #fbbf24 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0 2px 14px rgba(245, 158, 11, 0.4));
+  }
+}
+
+[data-theme="light"] .text-golden-letter {
+  color: #b45309;
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.9), 0 0 16px rgba(217, 119, 6, 0.25);
+}
+
+@supports (-webkit-background-clip: text) {
+  [data-theme="light"] .text-golden-letter {
+    background: linear-gradient(135deg, #78350f 0%, #b45309 35%, #d97706 70%, #92400e 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0 1px 2px rgba(180, 83, 9, 0.25));
+  }
+}
+
+.text-golden-glow {
+  color: #fde68a;
+  text-shadow: 0 0 28px rgba(251, 191, 36, 0.55), 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+[data-theme="light"] .text-golden-glow {
+  color: #92400e;
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.9);
+}
+
+.font-heart-script {
+  font-family: 'Great Vibes', 'Dancing Script', 'Sacramento', 'Caveat', cursive, serif;
+}
+
+.font-lucy-said-ok {
+  font-family: 'Lucy Said Ok', 'Lucy Said Ok Personal Use', 'Pinyon Script', 'Alex Brush', cursive, serif;
+}
+
+/* Whimsical Love Handwriting Font with playful "tede mede" dancing angles */
+.font-love-handwriting {
+  font-family: 'Indie Flower', 'Caveat', 'Kalam', 'Gochi Hand', 'Shadows Into Light', cursive, sans-serif;
+}
+
+.font-luxury-calligraphy {
+  font-family: 'Indie Flower', 'Caveat', 'Kalam', 'Lucy Said Ok', 'Pinyon Script', cursive, serif;
+  font-feature-settings: 'swsh' 1, 'calt' 1, 'liga' 1;
+}
+
+/* Polished Silver-Chrome Typography */
+.text-silver-chrome {
+  color: #f8fafc;
+  text-shadow:
+    0 0 1px rgba(255, 255, 255, 0.95),
+    0 0 14px rgba(226, 232, 240, 0.45),
+    0 0 28px rgba(186, 230, 253, 0.18);
+}
+
+@supports (-webkit-background-clip: text) {
+  .text-silver-chrome {
+    background: linear-gradient(
+      175deg,
+      #ffffff 0%,
+      #f8fafc 18%,
+      #e2e8f0 38%,
+      #94a3b8 50%,
+      #cbd5e1 52%,
+      #f8fafc 72%,
+      #e0e7ff 88%,
+      #ffffff 100%
+    );
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45))
+            drop-shadow(0 0 16px rgba(241, 245, 249, 0.4));
+  }
+}
+
+[data-theme="light"] .text-silver-chrome {
+  color: #1e293b;
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.9);
+}
+
+@supports (-webkit-background-clip: text) {
+  [data-theme="light"] .text-silver-chrome {
+    background: linear-gradient(
+      175deg,
+      #0f172a 0%,
+      #334155 28%,
+      #64748b 48%,
+      #94a3b8 52%,
+      #1e293b 72%,
+      #475569 100%
+    );
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0 1px 1px rgba(255, 255, 255, 0.6))
+            drop-shadow(0 0 8px rgba(148, 163, 184, 0.3));
+  }
+}
+
+.text-silver-subtle {
+  color: #cbd5e1;
+  text-shadow: 0 0 12px rgba(226, 232, 240, 0.3);
+}
+
+[data-theme="light"] .text-silver-subtle {
+  color: #475569;
+  text-shadow: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cinematic-line-wrapper,
+  .cinematic-line,
+  .cinematic-thought-card,
+  .animate-amazon-float,
+  .animate-sheen-sweep,
+  .animate-needle-chatter,
+  .animate-wind-vortex-fast,
+  .animate-wind-vortex-slow {
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* 3D Amazon Gift Card Animations */
+@keyframes amazonCardFloat {
+  0%, 100% {
+    transform: translateY(0px) rotateX(1deg) rotateY(-1deg);
+  }
+  50% {
+    transform: translateY(-5px) rotateX(-1deg) rotateY(1deg);
+  }
+}
+
+.animate-amazon-float {
+  animation: amazonCardFloat 4.5s ease-in-out infinite;
+}
+
+@keyframes sheenSweep {
+  0% {
+    transform: translateX(-150%) skewX(-20deg);
+  }
+  20%, 100% {
+    transform: translateX(200%) skewX(-20deg);
+  }
+}
+
+.animate-sheen-sweep {
+  animation: sheenSweep 6s ease-in-out infinite;
+}
+
+/* 🎡 Super High-RPM Spinner: Realistic Needle Flutter & 3D Wind Effects */
+@keyframes needleChatterFast {
+  0% {
+    transform: rotate(-13deg);
+  }
+  50% {
+    transform: rotate(11deg);
+  }
+  100% {
+    transform: rotate(-9deg);
+  }
+}
+
+.animate-needle-chatter {
+  transform-origin: 18px 4px;
+  animation: needleChatterFast 0.08s infinite alternate ease-in-out;
+}
+
+@keyframes windVortexSpin {
+  0% {
+    transform: rotate(0deg);
+    opacity: 0.6;
+  }
+  100% {
+    transform: rotate(360deg);
+    opacity: 0.6;
+  }
+}
+
+.animate-wind-vortex-fast {
+  animation: windVortexSpin 0.5s linear infinite;
+}
+
+.animate-wind-vortex-slow {
+  animation: windVortexSpin 1s linear infinite reverse;
+}
+

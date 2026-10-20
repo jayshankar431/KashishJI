@@ -1,0 +1,39 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isAdmin() {
+      return request.auth != null &&
+        request.auth.token.email == 'jayshankar431@gmail.com';
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Admin media folder
+    match /media/{allPaths=**} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Her uploads (voice notes, selfies, gallery uploads)
+    match /uploads_from_her/{allPaths=**} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.size < 25 * 1024 * 1024;
+      allow update, delete: if isAdmin();
+    }
+
+    // Background music tracks
+    match /music/{allPaths=**} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Notification sounds
+    match /sounds/{allPaths=**} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+  }
+}
