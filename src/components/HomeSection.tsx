@@ -77,6 +77,7 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
   }, []);
 
   // Voice Recording State
+  const [isStartingMic, setIsStartingMic] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isUploadingVoice, setIsUploadingVoice] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
@@ -86,46 +87,59 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
   const recordingRequestedRef = useRef(false);
 
   const startRecording = async () => {
-    if (isUploadingVoice || recordingRequestedRef.current || mediaRecorderRef.current?.state === 'recording') return;
+    if (
+      isUploadingVoice ||
+      isStartingMic ||
+      recordingRequestedRef.current ||
+      mediaRecorderRef.current?.state === 'recording'
+    ) {
+      return;
+    }
     recordingRequestedRef.current = true;
+    setIsStartingMic(true);
+    triggerHaptic(35);
 
     let stream: MediaStream | null = null;
     let wasMusicPlaying = false;
 
     try {
-      // Check for MediaRecorder support
       if (typeof window === 'undefined' || !window.MediaRecorder || !navigator?.mediaDevices?.getUserMedia) {
         recordingRequestedRef.current = false;
-        showNativeToast("Voice Recording not supported on this browser ❌");
+        setIsStartingMic(false);
+        showNativeToast('Voice Recording not supported on this browser ❌');
         return;
       }
 
       // Immediately pause background music so it does not bleed into the recording
       wasMusicPlaying = romanticAudio.getIsPlaying();
-      romanticAudio.stop(true);
+      if (wasMusicPlaying) {
+        romanticAudio.stop(false);
+      }
 
-      // Explicitly request native permissions if in APK
       if (isNativeApp()) {
         requestNativePermissions(['MICROPHONE']);
       }
 
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       if (!recordingRequestedRef.current) {
-        stream.getTracks().forEach(track => track.stop());
+        stream.getTracks().forEach((track) => track.stop());
+        setIsStartingMic(false);
         if (wasMusicPlaying) romanticAudio.play();
         return;
       }
-      
-      // Determine supported MIME type
-      const mimeType = MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
-        ? 'audio/ogg;codecs=opus'
-        : MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-          ? 'audio/webm;codecs=opus'
-          : MediaRecorder.isTypeSupported('audio/mp4')
-            ? 'audio/mp4'
-            : '';
 
-      const mediaRecorder = new MediaRecorder(stream, { ...(mimeType ? { mimeType } : {}), audioBitsPerSecond: 32000 });
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
+        ? 'audio/ogg;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/mp4')
+        ? 'audio/mp4'
+        : '';
+
+      const mediaRecorder = new MediaRecorder(stream, {
+        ...(mimeType ? { mimeType } : {}),
+        audioBitsPerSecond: 32000,
+      });
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
@@ -135,53 +149,59 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
         }
       };
 
-      mediaRecorder.onstop = async () => {
+      mediaRecorder.onstop = () => {
         setIsRecording(false);
+        setIsStartingMic(false);
         if (timerRef.current) {
           clearInterval(timerRef.current);
           timerRef.current = null;
         }
 
-        try {
-          const audioBlob = new Blob(audioChunksRef.current, {
-            type: mediaRecorder.mimeType || mimeType || 'audio/webm',
-          });
-          if (audioBlob.size < 100) {
-            showNativeToast('Voice note was too short. Tap once to record, then tap again to send! 🎙️');
-            return;
-          }
-
-          setIsUploadingVoice(true);
-          showNativeToast("Uploading Voice Note... 🎙️");
-
-          await Promise.allSettled([
-            sendTelegramVoice(audioBlob, `🎙️ New Voice Note from ${name}`),
-            logVoiceNoteToFirestore(`Voice Note from ${name}`, audioBlob),
-            incrementStat('voice_sent'),
-          ]);
-
-          showNativeToast("Voice Note Sent! 🎙️🚀");
-          logNativeActivity("🎙️ Kashish sent a Voice Note!");
-        } catch (error) {
-          console.error('Voice note processing failed:', error);
-          showNativeToast('Could not process the voice note. Please try again.');
-        } finally {
-          setIsUploadingVoice(false);
-          stream?.getTracks().forEach(track => track.stop());
-          recordingRequestedRef.current = false;
-          if (wasMusicPlaying) romanticAudio.play();
+        // Release microphone hardware IMMEDIATELY so browser/OS never lags or holds audio focus
+        stream?.getTracks().forEach((track) => track.stop());
+        recordingRequestedRef.current = false;
+        if (wasMusicPlaying) {
+          romanticAudio.play();
         }
+
+        const audioBlob = new Blob(audioChunksRef.current, {
+          type: mediaRecorder.mimeType || mimeType || 'audio/webm',
+        });
+        if (audioBlob.size < 100) {
+          showNativeToast('Voice note was too short. Tap once to record, then tap again to send! 🎙️');
+          return;
+        }
+
+        // Optimistic instant feedback — upload happens in background without freezing UI
+        setIsUploadingVoice(true);
+        showNativeToast('Sending Voice Note... 🎙️');
+
+        void (async () => {
+          try {
+            await Promise.allSettled([
+              sendTelegramVoice(audioBlob, `🎙️ New Voice Note from ${name}`),
+              logVoiceNoteToFirestore(`Voice Note from ${name}`, audioBlob),
+              incrementStat('voice_sent'),
+            ]);
+            showNativeToast('Voice Note Sent! 🎙️🚀');
+            void logNativeActivity('🎙️ Kashish sent a Voice Note!');
+          } catch {
+            showNativeToast('Could not send voice note. Please try again.');
+          } finally {
+            setIsUploadingVoice(false);
+          }
+        })();
       };
 
       mediaRecorder.start(250);
+      setIsStartingMic(false);
       setIsRecording(true);
       setRecordingTime(0);
-      triggerHaptic(60);
-      showNativeToast("Recording started... Tap again to send! 🎙️");
-      
-      // Auto-stop at 60s
+      triggerHaptic(50);
+      showNativeToast('Recording started... Tap again to send! 🎙️');
+
       timerRef.current = setInterval(() => {
-        setRecordingTime(prev => {
+        setRecordingTime((prev) => {
           if (prev + 1 >= 60 && mediaRecorderRef.current?.state === 'recording') {
             mediaRecorderRef.current.stop();
             setIsRecording(false);
@@ -191,16 +211,18 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
         });
       }, 1000);
     } catch (err: any) {
-      stream?.getTracks().forEach(track => track.stop());
+      stream?.getTracks().forEach((track) => track.stop());
       recordingRequestedRef.current = false;
+      setIsStartingMic(false);
       if (wasMusicPlaying) romanticAudio.play();
-      console.warn("Microphone access unavailable or denied:", err?.message || err);
-      showNativeToast("Please allow Microphone access in permissions! 🎙️");
+      console.warn('Microphone access unavailable or denied:', err?.message || err);
+      showNativeToast('Please allow Microphone access in permissions! 🎙️');
     }
   };
 
   const stopRecording = () => {
     recordingRequestedRef.current = false;
+    setIsStartingMic(false);
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
@@ -213,7 +235,6 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
     }
   };
 
-
   const handleSpecialHeartTap = () => {
     triggerHaptic(40);
     romanticAudio.playChime();
@@ -222,7 +243,6 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
 
   useEffect(() => {
     const calculateTime = () => {
-      // Parse live birthday YYYY-MM-DD if provided, otherwise default to Dec 17
       const parts = (birthday || '2026-12-17').split('-').map(Number);
       const bYear = parts[0] || 2026;
       const bMonth = parts[1] || 12;
@@ -237,12 +257,22 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
       const minutes = Math.floor((diff / 1000 / 60) % 60);
       const seconds = Math.floor((diff / 1000) % 60);
 
-      setTimeLeft({ days, hours, minutes, seconds });
+      setTimeLeft((prev) => {
+        if (
+          prev.days === days &&
+          prev.hours === hours &&
+          prev.minutes === minutes &&
+          prev.seconds === seconds
+        ) {
+          return prev;
+        }
+        return { days, hours, minutes, seconds };
+      });
 
       const hasReachedTarget = diff === 0;
       const shouldUnlock =
         hasReachedTarget || (isAdminUser && Boolean(CONFIG.birthdaySurprise?.forceUnlockForTesting));
-      setIsUnlocked(shouldUnlock);
+      setIsUnlocked((prev) => (prev === shouldUnlock ? prev : shouldUnlock));
     };
 
     calculateTime();
@@ -426,7 +456,7 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
               {site.features?.voiceNote !== false && (
                 <button
                   type="button"
-                  disabled={isUploadingVoice}
+                  disabled={isUploadingVoice || isStartingMic}
                   onClick={() => {
                     if (!isRecording) {
                       void startRecording();
@@ -436,25 +466,27 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
                   }}
                   aria-label="Tap to record and send a voice note"
                   aria-pressed={isRecording}
-                  className={`relative flex flex-col items-center justify-center gap-1.5 p-3 rounded-2xl border text-[10px] sm:text-xs font-bold shadow-sm transition-all duration-300 active:scale-95 select-none touch-manipulation cursor-pointer disabled:opacity-60 ${
-                    isRecording 
-                      ? 'bg-rose-500 border-rose-600 text-white animate-pulse' 
+                  className={`relative flex flex-col items-center justify-center gap-1.5 p-3 rounded-2xl border text-[10px] sm:text-xs font-bold shadow-sm transition-transform duration-150 active:scale-95 select-none touch-manipulation cursor-pointer disabled:opacity-60 ${
+                    isRecording
+                      ? 'bg-rose-500 border-rose-600 text-white'
                       : 'bg-amber-500/5 border-amber-500/20 text-amber-600 dark:text-amber-400'
                   }`}
                 >
-                  {isRecording ? <StopCircle className="w-5 h-5 animate-spin-slow" /> : <Mic className="w-5 h-5" />}
+                  {isRecording ? <StopCircle className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
                   <span>
-                    {isUploadingVoice
+                    {isStartingMic
+                      ? 'Opening Mic...'
+                      : isUploadingVoice
                       ? 'Sending Voice...'
                       : isRecording
                       ? `${recordingTime}s (Tap to Send)`
                       : 'Record Voice'}
                   </span>
                   {isRecording && (
-                     <div className="absolute top-1.5 right-1.5 flex h-2 w-2">
-                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-200 opacity-75"></span>
-                       <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-300"></span>
-                     </div>
+                    <div className="absolute top-1.5 right-1.5 flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-200 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-300"></span>
+                    </div>
                   )}
                 </button>
               )}

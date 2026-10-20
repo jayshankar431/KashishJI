@@ -10,6 +10,7 @@ import {
   setDoc,
   updateDoc,
   deleteDoc,
+  deleteField,
   getDocs,
   writeBatch,
 } from 'firebase/firestore';
@@ -265,8 +266,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     return () => unsub();
   }, []);
 
-  // Sync local editor fields when site context updates
+  // Sync local editor fields ONCE when Admin Panel opens (prevents 22-state re-render storms on every live save)
   useEffect(() => {
+    if (!isOpen) return;
     setEditRecipientName(site.name);
     setEditCountdownDate(site.birthday || '2026-12-17');
     setEditHomeMessage(site.homeMessage || '');
@@ -291,7 +293,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     if (site.cloudinaryUploadPreset !== undefined) setUploadPresetInput(site.cloudinaryUploadPreset);
     if (site.cloudinaryApiKey !== undefined) setApiKeyInput(site.cloudinaryApiKey);
     if (site.cloudinaryApiSecret !== undefined) setApiSecretInput(site.cloudinaryApiSecret);
-  }, [site]);
+  }, [isOpen]);
 
   const isAdminAuthenticated =
     !!currentUser && currentUser.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
@@ -314,7 +316,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     );
 
     const unsubActivity = onSnapshot(
-      query(collection(db, 'activity'), orderBy('timestamp', 'desc'), limit(250)),
+      query(collection(db, 'activity'), orderBy('timestamp', 'desc'), limit(100)),
       (snap) => {
         const list: any[] = [];
         snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
@@ -324,12 +326,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     );
 
     const unsubMedia = onSnapshot(
-      query(collection(db, 'media'), orderBy('createdAt', 'desc')),
+      query(collection(db, 'media'), orderBy('createdAt', 'desc'), limit(80)),
       (snap) => {
         const list: any[] = [];
         snap.forEach((d) => {
           const data = d.data();
-          if (data.isChunk) return;
+          if (data.isChunk) {
+            // Auto-strip `createdAt` from legacy 600KB chunk docs so they never slow down media queries again
+            if (data.createdAt !== undefined) {
+              void updateDoc(doc(db, 'media', d.id), {
+                createdAt: deleteField(),
+                chunkCreatedAt: data.createdAt,
+              }).catch(() => {});
+            }
+            return;
+          }
           list.push({ id: d.id, ...data });
         });
         setMediaItems(list);
@@ -338,7 +349,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     );
 
     const unsubInbox = onSnapshot(
-      query(collection(db, 'inbox'), orderBy('createdAt', 'desc')),
+      query(collection(db, 'inbox'), orderBy('createdAt', 'desc'), limit(80)),
       (snap) => {
         const list: any[] = [];
         snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
@@ -348,7 +359,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     );
 
     const unsubNotifs = onSnapshot(
-      query(collection(db, 'notifications'), orderBy('createdAt', 'desc'), limit(100)),
+      query(collection(db, 'notifications'), orderBy('createdAt', 'desc'), limit(60)),
       (snap) => {
         const list: any[] = [];
         snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
@@ -358,7 +369,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     );
 
     const unsubOverlays = onSnapshot(
-      query(collection(db, 'overlays'), orderBy('createdAt', 'desc'), limit(100)),
+      query(collection(db, 'overlays'), orderBy('createdAt', 'desc'), limit(60)),
       (snap) => {
         const list: any[] = [];
         snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
@@ -508,69 +519,76 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     }
   };
 
-  const handleAddDirectUrlMedia = async (e: React.FormEvent) => {
+  const handleAddDirectUrlMedia = (e: React.FormEvent) => {
     e.preventDefault();
     if (!directMediaUrl.trim()) return;
-    try {
-      const cleanUrl = directMediaUrl.trim();
-      const itemName = directMediaName.trim() || `Media_${Date.now()}`;
-      await addDoc(collection(db, 'media'), {
-        name: itemName,
-        url: cleanUrl,
-        storagePath: '',
-        type: directMediaType,
-        category: uploadCategory,
-        uploadedBy: 'admin',
-        views: 0,
-        likes: 1,
-        createdAt: Date.now(),
-        dateIso: new Date().toISOString(),
-      });
-      if (uploadCategory === 'Home photo') {
-        await setDoc(doc(db, 'content', 'main'), { lockPhotoUrl: cleanUrl }, { merge: true });
-      }
-      setDirectMediaUrl('');
-      setDirectMediaName('');
-      notifyStatus(`Added direct URL to ${uploadCategory}.`);
-    } catch (err: any) {
-      notifyStatus(`Error: ${err.message}`, true);
+    const cleanUrl = directMediaUrl.trim();
+    const itemName = directMediaName.trim() || `Media_${Date.now()}`;
+    setDirectMediaUrl('');
+    setDirectMediaName('');
+    notifyStatus(`Added direct URL to ${uploadCategory}.`);
+
+    void addDoc(collection(db, 'media'), {
+      name: itemName,
+      url: cleanUrl,
+      storagePath: '',
+      type: directMediaType,
+      category: uploadCategory,
+      uploadedBy: 'admin',
+      views: 0,
+      likes: 1,
+      createdAt: Date.now(),
+      dateIso: new Date().toISOString(),
+    }).catch((err: any) => notifyStatus(`Error: ${err.message}`, true));
+
+    if (uploadCategory === 'Home photo') {
+      void setDoc(doc(db, 'content', 'main'), { lockPhotoUrl: cleanUrl }, { merge: true });
     }
   };
 
   const handleDeleteSingleMedia = (item: any) => {
     askConfirm(
       `Delete media "${item.name || item.id}" permanently from App & Storage?`,
-      async () => {
-        try {
-          await deleteDoc(doc(db, 'media', item.id));
-          const delRes = await deleteFirestoreMediaChunks(
-            item.storagePath || item.url,
-            item.url,
-            item.type
-          );
-          if (delRes?.cloudinaryDeleted) {
-            notifyStatus('Deleted permanently from App & Cloudinary storage!');
-          } else if (delRes?.cloudinaryMessage) {
-            notifyStatus(`Deleted from App (${delRes.cloudinaryMessage})`);
-          } else {
-            notifyStatus('Media deleted permanently.');
+      () => {
+        // Optimistic instant removal from UI
+        setMediaItems((prev) => prev.filter((m) => m.id !== item.id));
+        notifyStatus('Deleting media...');
+        void (async () => {
+          try {
+            await deleteDoc(doc(db, 'media', item.id));
+            const delRes = await deleteFirestoreMediaChunks(
+              item.storagePath || item.url,
+              item.url,
+              item.type
+            );
+            if (delRes?.cloudinaryDeleted) {
+              notifyStatus('Deleted permanently from App & Cloudinary storage!');
+            } else {
+              notifyStatus('Media deleted permanently.');
+            }
+          } catch (err: any) {
+            notifyStatus(`Delete failed: ${err.message}`, true);
           }
-        } catch (err: any) {
-          notifyStatus(`Delete failed: ${err.message}`, true);
-        }
+        })();
       }
     );
   };
 
   const handleBulkDeleteMedia = () => {
     if (selectedMediaIds.length === 0) return;
-    askConfirm(`Delete ${selectedMediaIds.length} selected media items permanently?`, async () => {
-      try {
-        let cloudDeletedCount = 0;
-        for (const id of selectedMediaIds) {
-          const found = mediaItems.find((m) => m.id === id);
-          await deleteDoc(doc(db, 'media', id));
-          if (found) {
+    const idsToDelete = [...selectedMediaIds];
+    askConfirm(`Delete ${idsToDelete.length} selected media items permanently?`, () => {
+      // Optimistic instant removal
+      const itemsToDelete = mediaItems.filter((m) => idsToDelete.includes(m.id));
+      setMediaItems((prev) => prev.filter((m) => !idsToDelete.includes(m.id)));
+      setSelectedMediaIds([]);
+      notifyStatus(`Deleting ${idsToDelete.length} items...`);
+
+      void (async () => {
+        try {
+          let cloudDeletedCount = 0;
+          await Promise.allSettled(idsToDelete.map((id) => deleteDoc(doc(db, 'media', id))));
+          for (const found of itemsToDelete) {
             const delRes = await deleteFirestoreMediaChunks(
               found.storagePath || found.url,
               found.url,
@@ -578,16 +596,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
             );
             if (delRes?.cloudinaryDeleted) cloudDeletedCount++;
           }
+          notifyStatus(
+            cloudDeletedCount > 0
+              ? `Bulk delete completed (${cloudDeletedCount} also removed from Cloudinary).`
+              : 'Bulk delete completed.'
+          );
+        } catch (err: any) {
+          notifyStatus(`Bulk delete error: ${err.message}`, true);
         }
-        setSelectedMediaIds([]);
-        notifyStatus(
-          cloudDeletedCount > 0
-            ? `Bulk delete completed (${cloudDeletedCount} also removed from Cloudinary).`
-            : 'Bulk delete completed.'
-        );
-      } catch (err: any) {
-        notifyStatus(`Bulk delete error: ${err.message}`, true);
-      }
+      })();
     });
   };
 
@@ -610,214 +627,205 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     }
   };
 
-  const handleSendInboxReply = async (e: React.FormEvent) => {
+  const handleSendInboxReply = (e: React.FormEvent) => {
     e.preventDefault();
     if (!replyMessage.trim()) return;
-    try {
-      await addDoc(collection(db, 'notifications'), {
-        title: replyTitle.trim() || 'Message from Jay',
-        message: replyMessage.trim(),
-        imageUrl: '',
-        soundUrl: DEFAULT_SAVED_SOUNDS[0].url,
-        createdAt: Date.now(),
-        scheduledFor: null,
-        status: 'sent',
-        seen: false,
-        replyToInboxId: replyTarget?.id || null,
-      });
-      if (replyTarget?.id) {
-        await updateDoc(doc(db, 'inbox', replyTarget.id), { read: true }).catch(() => {});
-      }
-      setReplyTarget(null);
-      setReplyMessage('');
-      notifyStatus('Reply notification sent to her app.');
-    } catch (err: any) {
-      notifyStatus(`Failed to send reply: ${err.message}`, true);
+    const targetId = replyTarget?.id || null;
+    const titleVal = replyTitle.trim() || 'Message from Jay';
+    const msgVal = replyMessage.trim();
+
+    setReplyTarget(null);
+    setReplyMessage('');
+    notifyStatus('Reply notification sent to her app.');
+
+    void addDoc(collection(db, 'notifications'), {
+      title: titleVal,
+      message: msgVal,
+      imageUrl: '',
+      soundUrl: DEFAULT_SAVED_SOUNDS[0].url,
+      createdAt: Date.now(),
+      scheduledFor: null,
+      status: 'sent',
+      seen: false,
+      replyToInboxId: targetId,
+    }).catch((err: any) => notifyStatus(`Failed to send reply: ${err.message}`, true));
+
+    if (targetId) {
+      void updateDoc(doc(db, 'inbox', targetId), { read: true }).catch(() => {});
     }
   };
 
   // Section 5: Send or Schedule Notification
-  const handleSendNotification = async (e: React.FormEvent) => {
+  const handleSendNotification = (e: React.FormEvent) => {
     e.preventDefault();
     if (!notifTitle.trim() || !notifMessage.trim()) {
       notifyStatus('Title and message are required.', true);
       return;
     }
-    try {
-      const scheduledMs = notifScheduleTime ? new Date(notifScheduleTime).getTime() : null;
-      await addDoc(collection(db, 'notifications'), {
-        title: notifTitle.trim(),
-        message: notifMessage.trim(),
-        imageUrl: notifImage.trim(),
-        soundUrl: notifSoundUrl,
-        createdAt: Date.now(),
-        scheduledFor: scheduledMs,
-        status: scheduledMs && scheduledMs > Date.now() ? 'scheduled' : 'sent',
-        seen: false,
-      });
-      setNotifTitle('');
-      setNotifMessage('');
-      setNotifImage('');
-      setNotifScheduleTime('');
-      notifyStatus(scheduledMs ? 'Notification scheduled.' : 'Notification sent live.');
-    } catch (err: any) {
-      notifyStatus(`Error: ${err.message}`, true);
-    }
+    const scheduledMs = notifScheduleTime ? new Date(notifScheduleTime).getTime() : null;
+    const payload = {
+      title: notifTitle.trim(),
+      message: notifMessage.trim(),
+      imageUrl: notifImage.trim(),
+      soundUrl: notifSoundUrl,
+      createdAt: Date.now(),
+      scheduledFor: scheduledMs,
+      status: scheduledMs && scheduledMs > Date.now() ? 'scheduled' : 'sent',
+      seen: false,
+    };
+
+    setNotifTitle('');
+    setNotifMessage('');
+    setNotifImage('');
+    setNotifScheduleTime('');
+    notifyStatus(scheduledMs ? 'Notification scheduled.' : 'Notification sent live!');
+
+    void addDoc(collection(db, 'notifications'), payload).catch((err: any) =>
+      notifyStatus(`Error: ${err.message}`, true)
+    );
   };
 
   // Section 6: Send or Schedule Truecaller-Style Overlay
-  const handleSendOverlay = async (e: React.FormEvent) => {
+  const handleSendOverlay = (e: React.FormEvent) => {
     e.preventDefault();
     if (!ovTitle.trim() || !ovMessage.trim()) {
       notifyStatus('Overlay title and message are required.', true);
       return;
     }
-    try {
-      const scheduledMs = ovScheduleTime ? new Date(ovScheduleTime).getTime() : null;
-      await addDoc(collection(db, 'overlays'), {
-        title: ovTitle.trim(),
-        message: ovMessage.trim(),
-        imageUrl: ovImage.trim(),
-        theme: ovTheme,
-        fontStyle: ovFontStyle,
-        buttons: ovButtons.slice(0, 3),
-        createdAt: Date.now(),
-        scheduledFor: scheduledMs,
-        status: scheduledMs && scheduledMs > Date.now() ? 'scheduled' : 'sent',
-        dismissed: false,
-      });
-      notifyStatus(scheduledMs ? 'Overlay scheduled.' : 'Overlay popup sent to her screen.');
-    } catch (err: any) {
-      notifyStatus(`Overlay error: ${err.message}`, true);
-    }
+    const scheduledMs = ovScheduleTime ? new Date(ovScheduleTime).getTime() : null;
+    const payload = {
+      title: ovTitle.trim(),
+      message: ovMessage.trim(),
+      imageUrl: ovImage.trim(),
+      theme: ovTheme,
+      fontStyle: ovFontStyle,
+      buttons: ovButtons.slice(0, 3),
+      createdAt: Date.now(),
+      scheduledFor: scheduledMs,
+      status: scheduledMs && scheduledMs > Date.now() ? 'scheduled' : 'sent',
+      dismissed: false,
+    };
+
+    notifyStatus(scheduledMs ? 'Overlay scheduled.' : 'Overlay popup sent to her screen!');
+    void addDoc(collection(db, 'overlays'), payload).catch((err: any) =>
+      notifyStatus(`Overlay error: ${err.message}`, true)
+    );
   };
 
   // Section 7: Save / Reorder Sections
-  const handleSaveSection = async (e: React.FormEvent) => {
+  const handleSaveSection = (e: React.FormEvent) => {
     e.preventDefault();
     if (!secTitle.trim()) {
       notifyStatus('Section title is required.', true);
       return;
     }
-    try {
-      const payload = {
-        title: secTitle.trim(),
-        icon: secIcon.trim() || '💌',
-        content: secContent,
-        imageUrl: secImageUrl.trim(),
-        audioUrl: secAudioUrl.trim(),
-        videoUrl: secVideoUrl.trim(),
-        visible: secVisible,
-        updatedAt: Date.now(),
-      };
-      if (editingSectionId) {
-        await updateDoc(doc(db, 'sections', editingSectionId), payload);
-        notifyStatus('Section updated.');
-      } else {
-        await addDoc(collection(db, 'sections'), {
-          ...payload,
-          order: sectionsList.length,
-          createdAt: Date.now(),
-        });
-        notifyStatus('New section created.');
-      }
-      setEditingSectionId(null);
-      setSecTitle('');
-      setSecIcon('💌');
-      setSecContent('');
-      setSecImageUrl('');
-      setSecAudioUrl('');
-      setSecVideoUrl('');
-      setSecVisible(true);
-    } catch (err: any) {
-      notifyStatus(`Save section error: ${err.message}`, true);
+    const payload = {
+      title: secTitle.trim(),
+      icon: secIcon.trim() || '💌',
+      content: secContent,
+      imageUrl: secImageUrl.trim(),
+      audioUrl: secAudioUrl.trim(),
+      videoUrl: secVideoUrl.trim(),
+      visible: secVisible,
+      updatedAt: Date.now(),
+    };
+    const editId = editingSectionId;
+
+    setEditingSectionId(null);
+    setSecTitle('');
+    setSecIcon('💌');
+    setSecContent('');
+    setSecImageUrl('');
+    setSecAudioUrl('');
+    setSecVideoUrl('');
+    setSecVisible(true);
+    notifyStatus(editId ? 'Section updated.' : 'New section created.');
+
+    if (editId) {
+      void updateDoc(doc(db, 'sections', editId), payload).catch((err: any) =>
+        notifyStatus(`Save section error: ${err.message}`, true)
+      );
+    } else {
+      void addDoc(collection(db, 'sections'), {
+        ...payload,
+        order: sectionsList.length,
+        createdAt: Date.now(),
+      }).catch((err: any) => notifyStatus(`Save section error: ${err.message}`, true));
     }
   };
 
-  const handleMoveSection = async (index: number, direction: -1 | 1) => {
+  const handleMoveSection = (index: number, direction: -1 | 1) => {
     const targetIdx = index + direction;
     if (targetIdx < 0 || targetIdx >= sectionsList.length) return;
     const itemA = sectionsList[index];
     const itemB = sectionsList[targetIdx];
-    try {
-      await Promise.all([
-        updateDoc(doc(db, 'sections', itemA.id), { order: targetIdx }),
-        updateDoc(doc(db, 'sections', itemB.id), { order: index }),
-      ]);
-      notifyStatus('Order updated.');
-    } catch (err: any) {
-      notifyStatus(`Reorder failed: ${err.message}`, true);
-    }
+
+    // Optimistic reorder in UI
+    const nextList = [...sectionsList];
+    nextList[index] = itemB;
+    nextList[targetIdx] = itemA;
+    setSectionsList(nextList);
+    notifyStatus('Order updated.');
+
+    void Promise.all([
+      updateDoc(doc(db, 'sections', itemA.id), { order: targetIdx }),
+      updateDoc(doc(db, 'sections', itemB.id), { order: index }),
+    ]).catch((err: any) => notifyStatus(`Reorder failed: ${err.message}`, true));
   };
 
   // Section 8: Save Live Content Editor
-  const handleSaveContentEditor = async () => {
-    try {
-      await setDoc(
-        doc(db, 'content', 'main'),
-        {
-          name: editRecipientName.trim() || 'Kashish',
-          birthday: editCountdownDate.trim() || '2026-12-17',
-          homeMessage: editHomeMessage,
-          personalMessage: editSecretLetter,
-          nameMeanings: editNameMeanings,
-          poems: editPoems,
-          compliments: editCompliments,
-          updatedAt: Date.now(),
-        },
-        { merge: true }
-      );
-      notifyStatus('Live content saved to Firestore. Reflected in app immediately.');
-    } catch (err: any) {
-      notifyStatus(`Save content failed: ${err.message}`, true);
-    }
+  const handleSaveContentEditor = () => {
+    const payload = {
+      name: editRecipientName.trim() || 'Kashish',
+      birthday: editCountdownDate.trim() || '2026-12-17',
+      homeMessage: editHomeMessage,
+      personalMessage: editSecretLetter,
+      nameMeanings: editNameMeanings,
+      poems: editPoems,
+      compliments: editCompliments,
+      updatedAt: Date.now(),
+    };
+    notifyStatus('Live content saved! Reflected in app immediately.');
+    void setDoc(doc(db, 'content', 'main'), payload, { merge: true }).catch((err: any) =>
+      notifyStatus(`Save content failed: ${err.message}`, true)
+    );
   };
 
   // Section 9: Save Music Settings
-  const handleSaveMusicSettings = async () => {
-    try {
-      await setDoc(
-        doc(db, 'settings', 'config'),
-        {
-          musicUrl: selectedMusicUrl,
-          musicVolume: musicVol,
-          musicEnabled: musicOn,
-          updatedAt: Date.now(),
-        },
-        { merge: true }
-      );
-      notifyStatus('Music settings updated in real time.');
-    } catch (err: any) {
-      notifyStatus(`Music save error: ${err.message}`, true);
-    }
+  const handleSaveMusicSettings = () => {
+    const payload = {
+      musicUrl: selectedMusicUrl,
+      musicVolume: musicVol,
+      musicEnabled: musicOn,
+      updatedAt: Date.now(),
+    };
+    notifyStatus('Music settings updated in real time!');
+    void setDoc(doc(db, 'settings', 'config'), payload, { merge: true }).catch((err: any) =>
+      notifyStatus(`Music save error: ${err.message}`, true)
+    );
   };
 
   // Section 10: Save App Control Settings
-  const handleSaveAppControl = async () => {
-    try {
-      await setDoc(
-        doc(db, 'settings', 'config'),
-        {
-          features: {
-            games: featGames,
-            galleryUpload: featGalleryUpload,
-            hug: featHug,
-            call: featCall,
-            voiceNote: featVoiceNote,
-          },
-          entryPassword: lockPasswordInput.trim(),
-          callPhoneNumber: callNumberInput.trim() || '9817905531',
-          maintenanceMode: maintMode,
-          maintenanceMessage: maintMessage.trim(),
-          forceLock: forceLockMode,
-          updatedAt: Date.now(),
-        },
-        { merge: true }
-      );
-      notifyStatus('App Control settings saved and applied live.');
-    } catch (err: any) {
-      notifyStatus(`App Control error: ${err.message}`, true);
-    }
+  const handleSaveAppControl = () => {
+    const payload = {
+      features: {
+        games: featGames,
+        galleryUpload: featGalleryUpload,
+        hug: featHug,
+        call: featCall,
+        voiceNote: featVoiceNote,
+      },
+      entryPassword: lockPasswordInput.trim(),
+      callPhoneNumber: callNumberInput.trim() || '9817905531',
+      maintenanceMode: maintMode,
+      maintenanceMessage: maintMessage.trim(),
+      forceLock: forceLockMode,
+      updatedAt: Date.now(),
+    };
+    notifyStatus('App Control settings saved and applied live!');
+    void setDoc(doc(db, 'settings', 'config'), payload, { merge: true }).catch((err: any) =>
+      notifyStatus(`App Control error: ${err.message}`, true)
+    );
   };
 
   // Section 11: Backup JSON & Clear Logs
@@ -857,16 +865,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
   };
 
   const handleClearActivityLogs = () => {
-    askConfirm('Delete all activity logs from Firestore permanently?', async () => {
-      try {
-        const snap = await getDocs(collection(db, 'activity'));
-        const batch = writeBatch(db);
-        snap.docs.forEach((d) => batch.delete(d.ref));
-        await batch.commit();
-        notifyStatus('All activity logs cleared.');
-      } catch (err: any) {
-        notifyStatus(`Clear logs failed: ${err.message}`, true);
-      }
+    askConfirm('Delete all activity logs from Firestore permanently?', () => {
+      setActivities([]);
+      notifyStatus('All activity logs cleared.');
+      void (async () => {
+        try {
+          const snap = await getDocs(collection(db, 'activity'));
+          const batch = writeBatch(db);
+          snap.docs.forEach((d) => batch.delete(d.ref));
+          await batch.commit();
+        } catch (err: any) {
+          notifyStatus(`Clear logs failed: ${err.message}`, true);
+        }
+      })();
     });
   };
 
@@ -1691,10 +1702,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                                     className={inputCls}
                                   />
                                   <button
-                                    onClick={async () => {
-                                      await updateDoc(doc(db, 'media', item.id), { name: renameValue.trim() });
+                                    onClick={() => {
+                                      const newName = renameValue.trim();
+                                      setMediaItems((prev) =>
+                                        prev.map((m) => (m.id === item.id ? { ...m, name: newName } : m))
+                                      );
                                       setRenamingId(null);
                                       notifyStatus('Renamed.');
+                                      void updateDoc(doc(db, 'media', item.id), { name: newName }).catch(
+                                        (err: any) => notifyStatus(`Rename failed: ${err.message}`, true)
+                                      );
                                     }}
                                     className={btnPrimary}
                                   >
@@ -1722,13 +1739,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                             <div className="flex items-center justify-between gap-1 pt-1 border-t border-neutral-800/40">
                               <select
                                 value={item.category || 'Gallery'}
-                                onChange={async (e) => {
+                                onChange={(e) => {
                                   const newCat = e.target.value;
-                                  await updateDoc(doc(db, 'media', item.id), { category: newCat });
-                                  if (newCat === 'Home photo') {
-                                    await setDoc(doc(db, 'content', 'main'), { lockPhotoUrl: item.url }, { merge: true });
-                                  }
+                                  setMediaItems((prev) =>
+                                    prev.map((m) => (m.id === item.id ? { ...m, category: newCat } : m))
+                                  );
                                   notifyStatus(`Moved to ${newCat}`);
+                                  void updateDoc(doc(db, 'media', item.id), { category: newCat }).catch(() => {});
+                                  if (newCat === 'Home photo') {
+                                    void setDoc(doc(db, 'content', 'main'), { lockPhotoUrl: item.url }, { merge: true }).catch(() => {});
+                                  }
                                 }}
                                 className={`text-[11px] px-1.5 py-0.5 rounded-[10px] border ${borderCol} bg-transparent`}
                               >
@@ -1902,7 +1922,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                         </td>
                         <td className="py-1.5 px-2.5 text-right whitespace-nowrap space-x-1">
                           <button
-                            onClick={() => updateDoc(doc(db, 'inbox', item.id), { read: !item.read })}
+                            onClick={() => {
+                              const nextRead = !item.read;
+                              setInboxItems((prev) =>
+                                prev.map((x) => (x.id === item.id ? { ...x, read: nextRead } : x))
+                              );
+                              void updateDoc(doc(db, 'inbox', item.id), { read: nextRead }).catch(() => {});
+                            }}
                             className={btnSecondary}
                           >
                             {item.read ? 'Mark Unread' : 'Mark Read'}
@@ -1923,20 +1949,26 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                           </button>
                           <button
                             onClick={() =>
-                              askConfirm('Delete this inbox item permanently from App & Storage?', async () => {
-                                await deleteDoc(doc(db, 'inbox', item.id));
-                                if (item.mediaUrl || item.storagePath) {
-                                  const delRes = await deleteFirestoreMediaChunks(
-                                    item.storagePath || item.mediaUrl,
-                                    item.mediaUrl,
-                                    item.type
-                                  );
-                                  if (delRes?.cloudinaryDeleted) {
-                                    notifyStatus('Inbox item deleted from App & Cloudinary!');
-                                  } else {
-                                    notifyStatus('Inbox item deleted.');
+                              askConfirm('Delete this inbox item permanently from App & Storage?', () => {
+                                setInboxItems((prev) => prev.filter((x) => x.id !== item.id));
+                                notifyStatus('Inbox item deleted.');
+                                void (async () => {
+                                  try {
+                                    await deleteDoc(doc(db, 'inbox', item.id));
+                                    if (item.mediaUrl || item.storagePath) {
+                                      const delRes = await deleteFirestoreMediaChunks(
+                                        item.storagePath || item.mediaUrl,
+                                        item.mediaUrl,
+                                        item.type
+                                      );
+                                      if (delRes?.cloudinaryDeleted) {
+                                        notifyStatus('Inbox item deleted from App & Cloudinary!');
+                                      }
+                                    }
+                                  } catch (err: any) {
+                                    notifyStatus(`Delete error: ${err.message}`, true);
                                   }
-                                }
+                                })();
                               })
                             }
                             className={btnDanger}
@@ -2092,8 +2124,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                         </td>
                         <td className="py-1.5 px-2.5 text-right space-x-1 whitespace-nowrap">
                           <button
-                            onClick={async () => {
-                              await addDoc(collection(db, 'notifications'), {
+                            onClick={() => {
+                              notifyStatus('Notification resent.');
+                              void addDoc(collection(db, 'notifications'), {
                                 title: n.title,
                                 message: n.message,
                                 imageUrl: n.imageUrl || '',
@@ -2101,8 +2134,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                                 createdAt: Date.now(),
                                 status: 'sent',
                                 seen: false,
-                              });
-                              notifyStatus('Notification resent.');
+                              }).catch((err: any) => notifyStatus(`Resend error: ${err.message}`, true));
                             }}
                             className={btnSecondary}
                           >
@@ -2110,8 +2142,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                           </button>
                           <button
                             onClick={() =>
-                              askConfirm('Delete notification from history?', async () => {
-                                await deleteDoc(doc(db, 'notifications', n.id));
+                              askConfirm('Delete notification from history?', () => {
+                                setNotificationsList((prev) => prev.filter((x) => x.id !== n.id));
+                                notifyStatus('Notification deleted.');
+                                void deleteDoc(doc(db, 'notifications', n.id)).catch(() => {});
                               })
                             }
                             className={btnDanger}
@@ -2433,8 +2467,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                         </td>
                         <td className="py-1.5 px-2.5 text-right space-x-1">
                           <button
-                            onClick={async () => {
-                              await addDoc(collection(db, 'overlays'), {
+                            onClick={() => {
+                              notifyStatus('Overlay resent.');
+                              void addDoc(collection(db, 'overlays'), {
                                 title: o.title,
                                 message: o.message,
                                 imageUrl: o.imageUrl || '',
@@ -2444,8 +2479,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                                 createdAt: Date.now(),
                                 status: 'sent',
                                 dismissed: false,
-                              });
-                              notifyStatus('Overlay resent.');
+                              }).catch((err: any) => notifyStatus(`Resend error: ${err.message}`, true));
                             }}
                             className={btnSecondary}
                           >
@@ -2453,8 +2487,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                           </button>
                           <button
                             onClick={() =>
-                              askConfirm('Delete this overlay record?', async () => {
-                                await deleteDoc(doc(db, 'overlays', o.id));
+                              askConfirm('Delete this overlay record?', () => {
+                                setOverlaysList((prev) => prev.filter((x) => x.id !== o.id));
+                                notifyStatus('Overlay record deleted.');
+                                void deleteDoc(doc(db, 'overlays', o.id)).catch(() => {});
                               })
                             }
                             className={btnDanger}
@@ -2612,9 +2648,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                           </td>
                           <td className="py-1.5 px-2.5 text-right space-x-1">
                             <button
-                              onClick={() =>
-                                updateDoc(doc(db, 'sections', s.id), { visible: s.visible === false })
-                              }
+                              onClick={() => {
+                                const nextVis = s.visible === false;
+                                setSectionsList((prev) =>
+                                  prev.map((x) => (x.id === s.id ? { ...x, visible: nextVis } : x))
+                                );
+                                void updateDoc(doc(db, 'sections', s.id), { visible: nextVis }).catch(() => {});
+                              }}
                               className={btnSecondary}
                             >
                               {s.visible === false ? 'Show' : 'Hide'}
@@ -2636,8 +2676,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                             </button>
                             <button
                               onClick={() =>
-                                askConfirm(`Delete section "${s.title}"?`, async () => {
-                                  await deleteDoc(doc(db, 'sections', s.id));
+                                askConfirm(`Delete section "${s.title}"?`, () => {
+                                  setSectionsList((prev) => prev.filter((x) => x.id !== s.id));
+                                  notifyStatus('Section deleted.');
+                                  void deleteDoc(doc(db, 'sections', s.id)).catch(() => {});
                                 })
                               }
                               className={btnDanger}

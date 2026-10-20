@@ -26,7 +26,7 @@ import {
   requestNativePermissions,
   uploadMediaToCloudinary,
 } from '../androidBridge';
-import { collection, doc, onSnapshot, query, orderBy, updateDoc, increment } from 'firebase/firestore';
+import { collection, doc, onSnapshot, query, orderBy, limit, updateDoc, increment } from 'firebase/firestore';
 import { db } from '../firebase';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSite } from '../siteContent';
@@ -135,7 +135,7 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ name, isDarkMode
 
   // Subscribe to real-time Firestore media collection + merge curated defaults
   useEffect(() => {
-    const q = query(collection(db, 'media'), orderBy('createdAt', 'desc'));
+    const q = query(collection(db, 'media'), orderBy('createdAt', 'desc'), limit(80));
     const unsub = onSnapshot(
       q,
       (snap) => {

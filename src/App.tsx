@@ -190,38 +190,34 @@ export default function App() {
     };
   }, []);
 
-  // When unlocked, start background music on first user interaction if not playing yet
+  // When unlocked, start background music on first user interaction ONCE (never override manual pause)
+  const hasAutoStartedMusicRef = useRef(false);
   useEffect(() => {
-    if (!isUnlocked || site.musicEnabled === false) return;
+    if (!isUnlocked || site.musicEnabled === false || hasAutoStartedMusicRef.current) return;
 
     if (romanticAudio.getIsPlaying()) {
+      hasAutoStartedMusicRef.current = true;
       setIsPlayingMusic(true);
       return;
     }
 
     const startOnInteraction = () => {
-      if (!romanticAudio.getIsPlaying() && site.musicEnabled !== false) {
-        const targetUrl =
-          activeTab === 'secret-letter' && isSecretLetterOpenInView
-            ? site.secretLetterMusicUrl
-            : site.musicUrl;
-        romanticAudio.play(targetUrl);
+      hasAutoStartedMusicRef.current = true;
+      if (!romanticAudio.getIsPlaying() && !romanticAudio.isUserPaused() && site.musicEnabled !== false) {
+        romanticAudio.play(site.musicUrl);
       }
-      cleanup();
+      window.removeEventListener('pointerdown', startOnInteraction);
+      window.removeEventListener('keydown', startOnInteraction);
     };
 
-    const cleanup = () => {
-      ['click', 'touchstart', 'touchend', 'pointerdown', 'keydown'].forEach((evt) => {
-        window.removeEventListener(evt, startOnInteraction);
-      });
+    window.addEventListener('pointerdown', startOnInteraction, { once: true, passive: true });
+    window.addEventListener('keydown', startOnInteraction, { once: true, passive: true });
+
+    return () => {
+      window.removeEventListener('pointerdown', startOnInteraction);
+      window.removeEventListener('keydown', startOnInteraction);
     };
-
-    ['click', 'touchstart', 'touchend', 'pointerdown', 'keydown'].forEach((evt) => {
-      window.addEventListener(evt, startOnInteraction, { once: true, passive: true });
-    });
-
-    return cleanup;
-  }, [isUnlocked, activeTab, isSecretLetterOpenInView]);
+  }, [isUnlocked, site.musicEnabled, site.musicUrl]);
 
   // Sync data-theme on <html> element and persist in localStorage + update theme-color meta tag
   useEffect(() => {
@@ -241,31 +237,39 @@ export default function App() {
     }
   }, [isDarkMode]);
 
-  // Track visits and session duration on this device
+  // Track visits and session duration on this device WITHOUT triggering 5-second full-app re-renders
   useEffect(() => {
+    const sessionStartMs = Date.now();
     setProgress((prev) => ({
       ...prev,
       totalVisits: (prev.totalVisits || 0) + 1,
       lastActivityDate: new Date().toISOString(),
     }));
 
-    const durationTimer = setInterval(() => {
-      setProgress((prev) => ({
-        ...prev,
-        sessionDurationSeconds: (prev.sessionDurationSeconds || 0) + 5,
-        lastActivityDate: new Date().toISOString(),
-      }));
-    }, 5000);
+    const flushSessionDuration = () => {
+      const elapsedSec = Math.max(1, Math.round((Date.now() - sessionStartMs) / 1000));
+      try {
+        const current = loadProgress();
+        saveProgress({
+          ...current,
+          sessionDurationSeconds: (current.sessionDurationSeconds || 0) + elapsedSec,
+          lastActivityDate: new Date().toISOString(),
+        });
+      } catch {}
+    };
 
-    // Tracking for Admin Panel & Telegram Bot (Full details on initial open)
-    incrementStat('app_opens');
-    trackSectionVisit('app_start');
-    logNativeActivity(`📱 <b>${site.name}'s World</b> opened!`, true);
+    window.addEventListener('pagehide', flushSessionDuration);
 
-    return () => clearInterval(durationTimer);
+    // Fire-and-forget initial open tracking
+    void incrementStat('app_opens');
+    void trackSectionVisit('app_start');
+    void logNativeActivity(`📱 <b>${site.name}'s World</b> opened!`, true);
+
+    return () => {
+      flushSessionDuration();
+      window.removeEventListener('pagehide', flushSessionDuration);
+    };
   }, []);
-
-  // 🔔 Firebase Real-time notifications handled by NotificationManager
 
   const handleUnlock = () => {
     setIsUnlocked(true);
@@ -275,7 +279,6 @@ export default function App() {
       }
     } catch {}
 
-    // Ensure initial history stack is setup so Android back returns to home
     if (typeof window !== 'undefined') {
       window.history.replaceState({ tab: 'home', isUnlocked: true }, '', window.location.pathname);
       if (activeTab !== 'home') {
@@ -283,21 +286,21 @@ export default function App() {
       }
     }
 
-    // Smoothly initiate background music on unlock
     romanticAudio.play(site.musicUrl);
 
-    incrementStat('unlocks');
-    trackSectionVisit('home');
-    logNativeActivity(`🔓 <b>${site.name}</b> logged in & entered ${site.name}'s World!`, true);
+    void incrementStat('unlocks');
+    void trackSectionVisit('home');
+    void logNativeActivity(`🔓 <b>${site.name}</b> logged in & entered ${site.name}'s World!`, true);
   };
 
   const handleToggleMusic = () => {
     const targetUrl =
-      activeTab === 'secret-letter' && isSecretLetterOpenInView
+      activeTab === 'secret-letter' && isSecretLetterOpenInView && site.secretLetterMusicUrl
         ? site.secretLetterMusicUrl
         : site.musicUrl;
-    logNativeActivity(`🎵 ${site.name} toggled the Music!`);
-    romanticAudio.toggle(targetUrl);
+    const nowPlaying = romanticAudio.toggle(targetUrl);
+    setIsPlayingMusic(nowPlaying);
+    triggerHaptic(25);
   };
 
   const handleToggleDarkMode = () => {
@@ -714,11 +717,13 @@ export default function App() {
         </div>
       )}
 
-      {/* Full-Screen Kashish Control Center */}
-      <AdminPanel 
-        isOpen={isAdminOpen} 
-        onClose={() => setIsAdminOpen(false)} 
-      />
+      {/* Full-Screen Kashish Control Center (mounted only when open for zero background overhead) */}
+      {isAdminOpen && (
+        <AdminPanel
+          isOpen={isAdminOpen}
+          onClose={() => setIsAdminOpen(false)}
+        />
+      )}
     </div>
   );
 }

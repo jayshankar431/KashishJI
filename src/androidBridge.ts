@@ -586,6 +586,7 @@ export function uploadToCloudinaryDirect(
 
     const xhr = new XMLHttpRequest();
     xhr.open('POST', endpoint, true);
+    xhr.timeout = 20000;
 
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable && onProgress) {
@@ -617,6 +618,10 @@ export function uploadToCloudinaryDirect(
         }
         reject(new Error(errMsg));
       }
+    };
+
+    xhr.ontimeout = () => {
+      reject(new Error('Cloudinary upload timed out.'));
     };
 
     xhr.onerror = () => {
@@ -726,6 +731,7 @@ export async function uploadFileToFirebaseStorage(
 
   for (let i = 0; i < totalChunks; i++) {
     const slice = processedDataUrl.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+    // Deliberately omit `createdAt` on chunks so `orderBy('createdAt', 'desc')` queries never download 600KB chunks!
     await addDoc(collection(db, 'media'), {
       isChunk: true,
       chunkGroupId,
@@ -735,7 +741,7 @@ export async function uploadFileToFirebaseStorage(
       folder,
       name: customFileName || `chunk_${i}`,
       uploadedBy: uploadedByRole,
-      createdAt: Date.now(),
+      chunkCreatedAt: Date.now(),
     });
     if (onProgress) {
       onProgress(Math.min(99, 75 + Math.round(((i + 1) / totalChunks) * 24)));
@@ -948,8 +954,9 @@ export async function makeNativePhoneCall(phoneNumber?: string): Promise<void> {
   const cleanedInput = (phoneNumber || '').replace(/[^\d+]/g, '');
   const targetPhone = cleanedInput || FIXED_CALL_PHONE_NUMBER;
 
-  await incrementStat('calls_tapped');
-  await logNativeActivity(`📞 Tapped Call Button (${targetPhone})`, false, 'call_tapped');
+  // Fire-and-forget analytics so dialing happens with 0ms delay
+  void incrementStat('calls_tapped');
+  void logNativeActivity(`📞 Tapped Call Button (${targetPhone})`, false, 'call_tapped');
 
   try {
     if (typeof window !== 'undefined' && window.AndroidApp?.makePhoneCall) {
