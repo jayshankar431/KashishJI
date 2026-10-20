@@ -19,6 +19,8 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   updateProfile,
   sendPasswordResetEmail,
   EmailAuthProvider,
@@ -61,6 +63,26 @@ export const NostalgicLockScreen: React.FC<NostalgicLockScreenProps> = ({
   const [isDiaryFlipping, setIsDiaryFlipping] = useState(false);
   const [imgLoaded, setImgLoaded] = useState(false);
   const [imgError, setImgError] = useState(false);
+
+  // Handle Google Redirect Sign-In completion on mobile / in-app browsers
+  useEffect(() => {
+    getRedirectResult(auth)
+      .then(async (result) => {
+        if (result?.user) {
+          await saveUserToFirestore(
+            result.user.uid,
+            result.user.email,
+            result.user.displayName,
+            'google_redirect'
+          );
+          logNativeActivity(`🔓 Google Sign-In: <b>${result.user.email}</b>`, true);
+          triggerUnlock(result.user.displayName || result.user.email?.split('@')[0]);
+        }
+      })
+      .catch(() => {
+        // Ignore if no redirect was pending
+      });
+  }, []);
 
   const triggerUnlock = (displayName?: string | null) => {
     setIsSuccess(true);
@@ -291,9 +313,18 @@ export const NostalgicLockScreen: React.FC<NostalgicLockScreenProps> = ({
       logNativeActivity(`🔓 Google Sign-In: <b>${result.user.email}</b>`, true);
       triggerUnlock(result.user.displayName || result.user.email?.split('@')[0]);
     } catch (err: any) {
-      setIsShaking(true);
-      setTimeout(() => setIsShaking(false), 600);
-      setFeedbackMessage(formatFirebaseError(err));
+      if (err?.code === 'auth/popup-blocked') {
+        try {
+          await signInWithRedirect(auth, googleProvider);
+          return;
+        } catch (redirErr: any) {
+          setFeedbackMessage(formatFirebaseError(redirErr));
+        }
+      } else {
+        setIsShaking(true);
+        setTimeout(() => setIsShaking(false), 600);
+        setFeedbackMessage(formatFirebaseError(err));
+      }
     } finally {
       setIsLoading(false);
     }
