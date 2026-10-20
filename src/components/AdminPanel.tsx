@@ -38,6 +38,12 @@ import {
   PopupButtonItem,
 } from '../siteContent';
 import {
+  OVERLAY_THEMES,
+  OVERLAY_FONTS,
+  OverlayThemeId,
+  OverlayFontId,
+} from './LiveOverlaysAndNotifications';
+import {
   LayoutDashboard,
   Activity,
   Image as ImageIcon,
@@ -176,14 +182,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
   const [uploadingSound, setUploadingSound] = useState<boolean>(false);
 
   // Section 6: Overlay Popup Sender State
-  const [ovTitle, setOvTitle] = useState<string>('Incoming Call from Jay');
-  const [ovMessage, setOvMessage] = useState<string>('Hey Kashish, pick up or tap below to talk!');
+  const [ovTitle, setOvTitle] = useState<string>('Thinking of You, Kashish');
+  const [ovMessage, setOvMessage] = useState<string>('Just wanted to remind you how special you are to me. Tap below whenever you want to talk!');
   const [ovImage, setOvImage] = useState<string>('');
+  const [ovTheme, setOvTheme] = useState<OverlayThemeId>('velvet-rose');
+  const [ovFontStyle, setOvFontStyle] = useState<OverlayFontId>('romantic-serif');
   const [ovScheduleTime, setOvScheduleTime] = useState<string>('');
   const [ovButtons, setOvButtons] = useState<PopupButtonItem[]>([
-    { label: 'Call Now', action: 'call_now', payload: '9817905531' },
-    { label: 'Open Gallery', action: 'open_section', payload: 'gallery' },
-    { label: 'Dismiss', action: 'dismiss', payload: '' },
+    { label: 'Call Me Now', action: 'call_now', payload: '9817905531' },
+    { label: 'Open Our Gallery', action: 'open_section', payload: 'gallery' },
+    { label: 'Keep in My Heart', action: 'dismiss', payload: '' },
   ]);
 
   // Section 7: Sections Manager State
@@ -670,6 +678,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
         title: ovTitle.trim(),
         message: ovMessage.trim(),
         imageUrl: ovImage.trim(),
+        theme: ovTheme,
+        fontStyle: ovFontStyle,
         buttons: ovButtons.slice(0, 3),
         createdAt: Date.now(),
         scheduledFor: scheduledMs,
@@ -957,7 +967,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
   const adminScopedCss = `
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
     .kashish-admin-panel,
-    .kashish-admin-panel *,
+    .kashish-admin-panel *:not(.overlay-preview-custom-font),
     .kashish-admin-panel button,
     .kashish-admin-panel input,
     .kashish-admin-panel select,
@@ -968,7 +978,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     .kashish-admin-panel aside,
     .kashish-admin-panel h1,
     .kashish-admin-panel h2,
-    .kashish-admin-panel h3,
+    .kashish-admin-panel h3:not(.overlay-preview-custom-font),
     .kashish-admin-panel pre,
     .kashish-admin-panel code {
       font-family: 'Poppins', system-ui, sans-serif !important;
@@ -2162,6 +2172,38 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                     />
                   </div>
 
+                  {/* Theme & Font Selectors */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                      <label className={`block text-[11px] ${textMuted} mb-1`}>Popup Theme</label>
+                      <select
+                        value={ovTheme}
+                        onChange={(e) => setOvTheme(e.target.value as OverlayThemeId)}
+                        className={inputCls}
+                      >
+                        {(Object.keys(OVERLAY_THEMES) as OverlayThemeId[]).map((tKey) => (
+                          <option key={tKey} value={tKey}>
+                            {OVERLAY_THEMES[tKey].name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className={`block text-[11px] ${textMuted} mb-1`}>Typography / Font Style</label>
+                      <select
+                        value={ovFontStyle}
+                        onChange={(e) => setOvFontStyle(e.target.value as OverlayFontId)}
+                        className={inputCls}
+                      >
+                        {(Object.keys(OVERLAY_FONTS) as OverlayFontId[]).map((fKey) => (
+                          <option key={fKey} value={fKey}>
+                            {OVERLAY_FONTS[fKey].name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
                   {/* Configurable Buttons (Up to 3) */}
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
@@ -2256,39 +2298,104 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                   </div>
                 </form>
 
-                {/* Live Preview Box */}
-                <div className={`p-3 rounded-[14px] border ${borderCol} flex flex-col justify-between`}>
-                  <div className={`text-[11px] font-bold uppercase ${textMuted} mb-2`}>
-                    Live Truecaller Overlay Preview
-                  </div>
-                  <div className={`rounded-[14px] border ${borderCol} p-3 space-y-2.5 my-auto`}>
-                    <div className={`text-[10px] uppercase tracking-wider ${textMuted} border-b ${borderCol} pb-1`}>
-                      Incoming Alert · Kashish World
-                    </div>
-                    {ovImage && (
-                      <img src={ovImage} alt="" className="w-12 h-12 rounded-full object-cover mx-auto border" />
-                    )}
-                    <div className="font-bold text-[13px] text-center">{ovTitle || 'Title'}</div>
-                    <div className={`text-[11px] ${textMuted} text-center whitespace-pre-wrap`}>
-                      {ovMessage || 'Message'}
-                    </div>
-                    <div className="space-y-1 pt-1">
-                      {ovButtons.map((b, i) => (
+                {/* Live Romantic Preview Box */}
+                {(() => {
+                  const pTheme = OVERLAY_THEMES[ovTheme] || OVERLAY_THEMES['velvet-rose'];
+                  const pFont = OVERLAY_FONTS[ovFontStyle] || OVERLAY_FONTS['romantic-serif'];
+                  const isLight = ovTheme === 'soft-blush';
+                  return (
+                    <div className={`p-3 rounded-[14px] border ${borderCol} flex flex-col justify-between`}>
+                      <div className={`text-[11px] font-bold uppercase ${textMuted} mb-2`}>
+                        Live Romantic Overlay Preview ({pTheme.name})
+                      </div>
+                      <div
+                        style={{
+                          background: pTheme.cardBg,
+                          borderColor: pTheme.border,
+                        }}
+                        className="rounded-[20px] border p-4 space-y-3 my-auto text-center"
+                      >
                         <div
-                          key={i}
-                          className={`py-1 px-2 text-center text-[11px] rounded-[10px] border ${borderCol} ${
-                            i === 0 ? (dark ? 'bg-white text-black' : 'bg-black text-white') : ''
-                          }`}
+                          style={{ color: pTheme.kickerText }}
+                          className="text-[10px] uppercase tracking-widest font-semibold"
                         >
-                          {b.label} ({b.action})
+                          ♥ A Special Note For Kashish ♥
                         </div>
-                      ))}
+                        {ovImage ? (
+                          <img
+                            src={ovImage}
+                            alt=""
+                            style={{ borderColor: pTheme.border }}
+                            className="w-16 h-16 rounded-full object-cover mx-auto border-2"
+                          />
+                        ) : (
+                          <div
+                            style={{
+                              background: pTheme.iconBadge,
+                              borderColor: pTheme.border,
+                              color: pTheme.kickerText,
+                            }}
+                            className="w-12 h-12 rounded-full border mx-auto flex items-center justify-center text-base"
+                          >
+                            ♥
+                          </div>
+                        )}
+                        <h3
+                          style={{
+                            fontFamily: pFont.titleFont,
+                            fontSize: '21px',
+                            color: pTheme.titleText,
+                          }}
+                          className="overlay-preview-custom-font font-bold leading-tight"
+                        >
+                          {ovTitle || 'Title'}
+                        </h3>
+                        <div
+                          style={{
+                            background: pTheme.quoteBg,
+                            borderColor: pTheme.border,
+                          }}
+                          className="rounded-[14px] border px-3 py-2.5"
+                        >
+                          <div
+                            style={{
+                              fontFamily: pFont.bodyFont,
+                              fontSize: ovFontStyle === 'handwriting' ? '17px' : '12.5px',
+                              color: pTheme.bodyText,
+                            }}
+                            className="overlay-preview-custom-font whitespace-pre-wrap leading-relaxed"
+                          >
+                            {ovMessage || 'Message'}
+                          </div>
+                        </div>
+                        <div className="space-y-1.5 pt-1">
+                          {ovButtons.map((b, i) => (
+                            <div
+                              key={i}
+                              style={
+                                i === 0
+                                  ? { background: pTheme.primaryBtn, color: '#ffffff' }
+                                  : {
+                                      background: pTheme.secondaryBtn,
+                                      color: isLight ? '#4a0e27' : '#fce7f3',
+                                      borderColor: pTheme.border,
+                                    }
+                              }
+                              className={`py-2 px-3 text-center text-[11px] font-semibold rounded-[12px] ${
+                                i === 0 ? '' : 'border'
+                              }`}
+                            >
+                              {b.label} ({b.action})
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <div className={`text-[10px] ${textMuted} mt-2`}>
+                        Triggers immediately on her screen with this exact theme & font.
+                      </div>
                     </div>
-                  </div>
-                  <div className={`text-[10px] ${textMuted} mt-2`}>
-                    Triggers immediately on her screen via Firestore listener.
-                  </div>
-                </div>
+                  );
+                })()}
               </div>
 
               {/* Overlay History */}
@@ -2331,6 +2438,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                                 title: o.title,
                                 message: o.message,
                                 imageUrl: o.imageUrl || '',
+                                theme: o.theme || ovTheme,
+                                fontStyle: o.fontStyle || ovFontStyle,
                                 buttons: o.buttons || [],
                                 createdAt: Date.now(),
                                 status: 'sent',
