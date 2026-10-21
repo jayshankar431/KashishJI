@@ -21,13 +21,13 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 
 /**
- * First-launch Permission Setup Screen with buttons that open:
- * 1. Notifications
- * 2. Display over other apps (SYSTEM_ALERT_WINDOW)
- * 3. Call phone (CALL_PHONE for direct calling without dialer)
- * 4. Battery "No restriction" (REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
- * 5. Autostart (Realme/ColorOS, Oppo, Xiaomi, Vivo intents, with safe fallback to App Details settings)
- * Shows a green tick (✅) when granted and reports permission status to Firestore.
+ * First-launch Permission Setup Screen with 1-tap buttons for:
+ * 1. Display Over Other Apps (SYSTEM_ALERT_WINDOW - Truecaller style popup over Instagram/WhatsApp)
+ * 2. Full-Screen Lockscreen Wakeup (USE_FULL_SCREEN_INTENT + WakeLock - turns screen ON when locked)
+ * 3. Notifications (POST_NOTIFICATIONS)
+ * 4. Direct Phone Call (CALL_PHONE)
+ * 5. Battery "No Restriction" (REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+ * 6. Autostart / Background Launch (Realme/ColorOS, Oppo, Xiaomi, Vivo)
  */
 class PermissionSetupActivity : AppCompatActivity() {
 
@@ -48,11 +48,13 @@ class PermissionSetupActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         SoundCacheManager.ensureDefaultChannels(this)
+        FirestoreOverlayBackgroundService.startServiceSafely(this)
         buildLayout()
     }
 
     override fun onResume() {
         super.onResume()
+        FirestoreOverlayBackgroundService.startServiceSafely(this)
         refreshUiAndReport()
     }
 
@@ -64,31 +66,31 @@ class PermissionSetupActivity : AppCompatActivity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(36), dp(20), dp(32))
+            setPadding(dp(20), dp(34), dp(20), dp(32))
         }
 
         val headerBadge = TextView(this).apply {
-            text = "💖 KASHISH'S WORLD SETUP"
+            text = "💖 KASHISH'S WORLD · TRUECALLER POPUP SETUP"
             setTextColor(Color.parseColor("#FB7185"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
             typeface = Typeface.DEFAULT_BOLD
         }
         root.addView(headerBadge)
 
         val title = TextView(this).apply {
-            text = "One-Time Permission Setup"
+            text = "Enable Instant Love Popups"
             setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 23f)
             typeface = Typeface.DEFAULT_BOLD
             setPadding(0, dp(6), 0, dp(6))
         }
         root.addView(title)
 
         val subtitle = TextView(this).apply {
-            text = "Enable these 5 permissions so Jay's instant love alerts, popups, and direct 1-tap calls work even when the phone is locked."
+            text = "Allow 'Display over other apps' (SYSTEM_ALERT_WINDOW) and 'Lock-Screen Wakeup' (USE_FULL_SCREEN_INTENT + WakeLock) so Jay's romantic popup card appears even over Instagram/WhatsApp or when the phone screen is locked."
             setTextColor(Color.parseColor("#D8B4E2"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
-            setPadding(0, 0, 0, dp(20))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setPadding(0, 0, 0, dp(18))
         }
         root.addView(subtitle)
 
@@ -103,6 +105,39 @@ class PermissionSetupActivity : AppCompatActivity() {
             )
         )
 
+        // Test Truecaller Overlay Button
+        val testBtnBg = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(16).toFloat()
+            setColor(Color.parseColor("#2A133D"))
+            setStroke(dp(1), Color.parseColor("#F472B6"))
+        }
+        val testBtn = Button(this).apply {
+            text = "✨ Preview Truecaller Love Popup Now"
+            isAllCaps = false
+            setTextColor(Color.parseColor("#FCE7F3"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            typeface = Typeface.DEFAULT_BOLD
+            background = testBtnBg
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            setOnClickListener {
+                CallAndOverlayHelper.triggerTruecallerOverlay(
+                    context = this@PermissionSetupActivity,
+                    title = "Thinking of You, Kashish 💖",
+                    message = "Truecaller-style SYSTEM_ALERT_WINDOW + WakeLock popup is active and ready!",
+                    theme = "velvet-rose",
+                    fontStyle = "romantic-serif"
+                )
+            }
+        }
+        root.addView(
+            testBtn,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(10) }
+        )
+
         val continueBtnBg = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = dp(18).toFloat()
@@ -113,12 +148,13 @@ class PermissionSetupActivity : AppCompatActivity() {
             text = "Continue to Kashish's World 💖"
             isAllCaps = false
             setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15.5f)
             typeface = Typeface.DEFAULT_BOLD
             background = continueBtnBg
             setPadding(dp(20), dp(14), dp(20), dp(14))
             setOnClickListener {
                 PermissionReporter.markFirstLaunchSetupCompleted(this@PermissionSetupActivity)
+                FirestoreOverlayBackgroundService.startServiceSafely(this@PermissionSetupActivity)
                 PermissionReporter.reportStatusAsync(this@PermissionSetupActivity)
                 finish()
             }
@@ -129,7 +165,7 @@ class PermissionSetupActivity : AppCompatActivity() {
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(20) }
+            ).apply { topMargin = dp(12) }
         )
 
         scroll.addView(root)
@@ -140,55 +176,66 @@ class PermissionSetupActivity : AppCompatActivity() {
         val snap = PermissionReporter.collectSnapshot(this)
         rowsContainer.removeAllViews()
 
-        // 1. Notifications
+        // 1. Display over other apps (SYSTEM_ALERT_WINDOW)
         rowsContainer.addView(
             createPermissionCard(
-                title = "1. Notifications",
-                subtitle = "Receive high-priority messages & custom sounds from Jay",
-                granted = snap.notifications,
-                buttonLabel = if (snap.notifications) "Granted ✅" else "Allow Notifications",
-                onClick = { openNotificationPermission() }
-            )
-        )
-
-        // 2. Display over other apps
-        rowsContainer.addView(
-            createPermissionCard(
-                title = "2. Display Over Other Apps",
-                subtitle = "Show urgent popups over other apps even when closed",
+                title = "1. Display Over Other Apps (Truecaller Popup)",
+                subtitle = "SYSTEM_ALERT_WINDOW · Shows popup card over Instagram, WhatsApp & Lock Screen",
                 granted = snap.overlay,
-                buttonLabel = if (snap.overlay) "Granted ✅" else "Enable Overlay",
+                buttonLabel = if (snap.overlay) "Allowed ✅" else "Allow On Top",
                 onClick = { openOverlayPermissionSettings() }
             )
         )
 
-        // 3. Call Phone
+        // 2. Full-Screen Lockscreen Wakeup (USE_FULL_SCREEN_INTENT + WakeLock)
         rowsContainer.addView(
             createPermissionCard(
-                title = "3. Direct Phone Call",
-                subtitle = "'Call Right Now' places the call directly without dialer",
+                title = "2. Lock-Screen Light-Up (WakeLock + Full Screen)",
+                subtitle = "USE_FULL_SCREEN_INTENT · Automatically turns screen ON when phone is locked",
+                granted = snap.fullScreenIntent,
+                buttonLabel = if (snap.fullScreenIntent) "Active ✅" else "Enable Wakeup",
+                onClick = { openFullScreenIntentSettings() }
+            )
+        )
+
+        // 3. Notifications
+        rowsContainer.addView(
+            createPermissionCard(
+                title = "3. High-Priority Notifications",
+                subtitle = "Receive instant messages & custom sounds from Jay",
+                granted = snap.notifications,
+                buttonLabel = if (snap.notifications) "Granted ✅" else "Allow Alerts",
+                onClick = { openNotificationPermission() }
+            )
+        )
+
+        // 4. Call Phone
+        rowsContainer.addView(
+            createPermissionCard(
+                title = "4. Direct 1-Tap Phone Call",
+                subtitle = "'Call Right Now' places the call directly without opening dialer",
                 granted = snap.callPhone,
-                buttonLabel = if (snap.callPhone) "Granted ✅" else "Allow Call Phone",
+                buttonLabel = if (snap.callPhone) "Granted ✅" else "Allow Call",
                 onClick = { openCallPhonePermission() }
             )
         )
 
-        // 4. Battery "No restriction"
+        // 5. Battery "No restriction"
         rowsContainer.addView(
             createPermissionCard(
-                title = "4. Battery 'No Restriction'",
-                subtitle = "Prevent Realme/Android from killing background alerts",
+                title = "5. Battery 'No Restriction' (24/7 Background Service)",
+                subtitle = "Keeps Firebase Overlay Background Service running when app is closed",
                 granted = snap.batteryUnrestricted,
-                buttonLabel = if (snap.batteryUnrestricted) "Granted ✅" else "Set Unrestricted",
+                buttonLabel = if (snap.batteryUnrestricted) "Unrestricted ✅" else "Allow Background",
                 onClick = { openBatteryUnrestrictedSettings() }
             )
         )
 
-        // 5. Autostart (Realme/ColorOS, Oppo, Xiaomi, Vivo + safe fallback)
+        // 6. Autostart (Realme/ColorOS, Oppo, Xiaomi, Vivo + safe fallback)
         rowsContainer.addView(
             createPermissionCard(
-                title = "5. Autostart / Background Launch",
-                subtitle = "Realme/ColorOS, Oppo, Xiaomi, Vivo autostart setting",
+                title = "6. Autostart / Background Launch",
+                subtitle = "Realme/ColorOS, Oppo, Xiaomi, Vivo background popup permission",
                 granted = snap.autostartConfigured,
                 buttonLabel = if (snap.autostartConfigured) "Configured ✅" else "Open Autostart",
                 onClick = { openOemAutostartSettings() }
@@ -210,7 +257,7 @@ class PermissionSetupActivity : AppCompatActivity() {
 
         val cardBg = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
-            cornerRadius = dp(20).toFloat()
+            cornerRadius = dp(18).toFloat()
             setColor(cardBgColor)
             setStroke(dp(1), borderColor)
         }
@@ -218,11 +265,11 @@ class PermissionSetupActivity : AppCompatActivity() {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = cardBg
-            setPadding(dp(16), dp(16), dp(16), dp(16))
+            setPadding(dp(14), dp(14), dp(14), dp(14))
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { bottomMargin = dp(12) }
+            ).apply { bottomMargin = dp(10) }
         }
 
         val topRow = LinearLayout(this).apply {
@@ -238,13 +285,13 @@ class PermissionSetupActivity : AppCompatActivity() {
         val titleView = TextView(this).apply {
             text = if (granted) "✅ $title" else title
             setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15.5f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
             typeface = Typeface.DEFAULT_BOLD
         }
         val subView = TextView(this).apply {
             text = subtitle
             setTextColor(Color.parseColor("#C4B5FD"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
             setPadding(0, dp(3), dp(8), 0)
         }
         textCol.addView(titleView)
@@ -260,10 +307,10 @@ class PermissionSetupActivity : AppCompatActivity() {
             text = buttonLabel
             isAllCaps = false
             setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             typeface = Typeface.DEFAULT_BOLD
             background = btnBg
-            setPadding(dp(14), dp(8), dp(14), dp(8))
+            setPadding(dp(12), dp(8), dp(12), dp(8))
             setOnClickListener { onClick() }
         }
 
@@ -302,6 +349,20 @@ class PermissionSetupActivity : AppCompatActivity() {
         openAppDetailsFallback()
     }
 
+    private fun openFullScreenIntentSettings() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            try {
+                val intent = Intent(
+                    Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
+                    Uri.parse("package:$packageName")
+                )
+                startActivity(intent)
+                return
+            } catch (_: Exception) {}
+        }
+        openNotificationPermission()
+    }
+
     private fun openCallPhonePermission() {
         callPhonePermLauncher.launch(Manifest.permission.CALL_PHONE)
     }
@@ -326,15 +387,10 @@ class PermissionSetupActivity : AppCompatActivity() {
         openAppDetailsFallback()
     }
 
-    /**
-     * Tries Realme/ColorOS, Oppo, Xiaomi, and Vivo autostart manager intents in order,
-     * with a safe fallback to the system App Details page.
-     */
     private fun openOemAutostartSettings() {
         PermissionReporter.markAutostartConfigured(this)
 
         val oemIntents = listOf(
-            // Realme / ColorOS / Oppo
             Intent().setComponent(
                 ComponentName(
                     "com.coloros.safecenter",
@@ -359,14 +415,12 @@ class PermissionSetupActivity : AppCompatActivity() {
                     "com.oppo.safe.permission.startup.StartupAppListActivity"
                 )
             ),
-            // Xiaomi / MIUI / HyperOS
             Intent().setComponent(
                 ComponentName(
                     "com.miui.securitycenter",
                     "com.miui.permcenter.autostart.AutoStartManagementActivity"
                 )
             ),
-            // Vivo / iQOO / FuntouchOS
             Intent().setComponent(
                 ComponentName(
                     "com.iqoo.secure",
@@ -398,7 +452,6 @@ class PermissionSetupActivity : AppCompatActivity() {
             } catch (_: Exception) {}
         }
 
-        // Safe fallback to the app settings page
         openAppDetailsFallback()
         refreshUiAndReport()
     }

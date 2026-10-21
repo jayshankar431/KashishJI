@@ -47,24 +47,24 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
-    // 6. NOTIFICATIONS COLLECTION (Push & real-time in-app notifications)
+    // 6. NOTIFICATIONS COLLECTION (Push & real-time in-app + Android background service notifications)
     match /notifications/{notifId} {
-      allow read: if isSignedIn();
-      allow update: if isAdmin() || (isSignedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['seen', 'seenAt']));
+      allow read: if true;
+      allow update: if isAdmin() || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['seen', 'seenAt']);
       allow create, delete: if isAdmin();
     }
 
-    // 7. OVERLAYS COLLECTION (Truecaller-style full-screen / floating overlay popups)
+    // 7. OVERLAYS COLLECTION (Truecaller-style SYSTEM_ALERT_WINDOW + WakeLock popups over other apps)
     match /overlays/{overlayId} {
-      allow read: if isSignedIn();
-      allow update: if isAdmin() || (isSignedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['dismissed', 'clickedAction', 'seenAt']));
+      allow read: if true;
+      allow update: if isAdmin() || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['dismissed', 'clickedAction', 'seenAt']);
       allow create, delete: if isAdmin();
     }
 
-    // 8. SETTINGS COLLECTION (Feature toggles, lock password, call number, maintenance, music, stats)
+    // 8. SETTINGS COLLECTION (Feature toggles, lock password, call number, maintenance, music, stats, device_status)
     match /settings/{docId} {
-      allow read: if isSignedIn();
-      allow create, update: if isAdmin() || (isSignedIn() && docId == 'stats');
+      allow read: if isSignedIn() || docId == 'device_status';
+      allow create, update: if isAdmin() || docId == 'device_status' || (isSignedIn() && docId == 'stats');
       allow delete: if isAdmin();
     }
 

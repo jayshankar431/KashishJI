@@ -16,7 +16,6 @@ import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -57,8 +56,9 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Create high-importance notification channels
+        // Create high-importance notification channels & start the Truecaller Background Service
         SoundCacheManager.ensureDefaultChannels(this)
+        FirestoreOverlayBackgroundService.startServiceSafely(this)
 
         // Setup WebView
         webView = WebView(this)
@@ -77,10 +77,31 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl(PermissionReporter.getWebBaseUrl(this))
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncomingSectionIntent(intent)
+    }
+
     override fun onResume() {
         super.onResume()
+        FirestoreOverlayBackgroundService.startServiceSafely(this)
         PermissionReporter.reportStatusAsync(this)
         syncPermissionsIntoWebView()
+        handleIncomingSectionIntent(intent)
+    }
+
+    private fun handleIncomingSectionIntent(incoming: Intent?) {
+        val section = incoming?.getStringExtra("open_section")?.trim() ?: return
+        if (section.isNotEmpty()) {
+            incoming.removeExtra("open_section")
+            try {
+                webView.evaluateJavascript(
+                    "window.dispatchEvent(new CustomEvent('kashish-open-section', { detail: '$section' }));",
+                    null
+                )
+            } catch (_: Exception) {}
+        }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -117,6 +138,7 @@ class MainActivity : AppCompatActivity() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 syncPermissionsIntoWebView()
+                handleIncomingSectionIntent(intent)
             }
         }
 
@@ -170,11 +192,7 @@ class MainActivity : AppCompatActivity() {
                   try {
                     var payload = $statusJson;
                     window.__KASHISH_PERMISSIONS__ = payload;
-                    fetch('/api/device/status', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify(payload)
-                    }).catch(function(){});
+                    window.dispatchEvent(new CustomEvent('kashish-permissions-updated', { detail: payload }));
                   } catch(e) {}
                 })();
             """.trimIndent()

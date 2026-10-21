@@ -13,10 +13,10 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.provider.Settings
 import android.webkit.JavascriptInterface
-import android.widget.Toast
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import org.json.JSONObject
 
 /**
  * Native bridge for Kashish's World Android wrapper.
@@ -52,6 +52,45 @@ class AndroidAppInterface(private val activity: Activity) {
     }
 
     @JavascriptInterface
+    fun setAuthToken(token: String?) {
+        if (!token.isNullOrBlank()) {
+            PermissionReporter.saveAuthToken(activity.applicationContext, token)
+            FirestoreOverlayBackgroundService.startServiceSafely(activity.applicationContext)
+            PermissionReporter.reportStatusAsync(activity.applicationContext)
+        }
+    }
+
+    @JavascriptInterface
+    fun showSystemOverlay(overlayJson: String?) {
+        if (overlayJson.isNullOrBlank()) return
+        activity.runOnUiThread {
+            try {
+                val obj = JSONObject(overlayJson)
+                val docId = obj.optString("id", "")
+                val title = obj.optString("title", "Thinking of You 💖")
+                val message = obj.optString("message", "")
+                val imageUrl = obj.optString("imageUrl", "")
+                val theme = obj.optString("theme", "velvet-rose")
+                val fontStyle = obj.optString("fontStyle", "romantic-serif")
+                val buttonsArr = obj.optJSONArray("buttons")?.toString() ?: ""
+                val phone = obj.optString("phoneNumber", "")
+
+                CallAndOverlayHelper.triggerTruecallerOverlay(
+                    context = activity.applicationContext,
+                    overlayDocId = docId,
+                    title = title,
+                    message = message,
+                    imageUrl = imageUrl,
+                    theme = theme,
+                    fontStyle = fontStyle,
+                    buttonItemsJson = buttonsArr,
+                    phoneNumber = phone
+                )
+            } catch (_: Exception) {}
+        }
+    }
+
+    @JavascriptInterface
     fun makePhoneCall(phoneNumber: String?) {
         activity.runOnUiThread {
             CallAndOverlayHelper.placeDirectCall(activity, phoneNumber)
@@ -83,6 +122,11 @@ class AndroidAppInterface(private val activity: Activity) {
     }
 
     @JavascriptInterface
+    fun openOverlayPermission() {
+        requestOverlayPermission()
+    }
+
+    @JavascriptInterface
     fun openPermissionSetup() {
         activity.runOnUiThread {
             activity.startActivity(Intent(activity, PermissionSetupActivity::class.java))
@@ -98,6 +142,7 @@ class AndroidAppInterface(private val activity: Activity) {
     fun bringAppToFront() {
         activity.runOnUiThread {
             try {
+                CallAndOverlayHelper.wakeUpScreenImmediately(activity, 12_000L)
                 val intent = Intent(activity, MainActivity::class.java).apply {
                     addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 }
@@ -108,17 +153,7 @@ class AndroidAppInterface(private val activity: Activity) {
 
     @JavascriptInterface
     fun showNotification(title: String, body: String) {
-        SoundCacheManager.ensureDefaultChannels(activity)
-        val notification = NotificationCompat.Builder(activity, SoundCacheManager.DEFAULT_CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle(title)
-            .setContentText(body)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setAutoCancel(true)
-            .build()
-        val nm = activity.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify((System.currentTimeMillis() % 100000).toInt(), notification)
+        CallAndOverlayHelper.showHighPriorityBannerNotification(activity, title, body)
     }
 
     @JavascriptInterface

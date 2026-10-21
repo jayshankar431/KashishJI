@@ -35,12 +35,16 @@ export interface AndroidAppBridge {
   makePhoneCall?: (phoneNumber?: string) => void;
   openPermissionSetup?: () => void;
   getAppVersion?: () => string;
+  showSystemOverlay?: (overlayJson: string) => void;
+  setAuthToken?: (token: string) => void;
+  getPermissionStatusJson?: () => string;
 }
 
 declare global {
   interface Window {
     AndroidApp?: AndroidAppBridge;
     isNativeApp?: boolean;
+    __KASHISH_PERMISSIONS__?: any;
   }
 }
 
@@ -955,10 +959,42 @@ export function canDrawOverlays(): boolean {
 
 export function requestOverlayPermission(): void {
   try {
-    if (typeof window !== 'undefined' && window.AndroidApp?.openOverlayPermission) {
-      window.AndroidApp.openOverlayPermission();
+    if (typeof window !== 'undefined') {
+      if (window.AndroidApp?.requestOverlayPermission) {
+        window.AndroidApp.requestOverlayPermission();
+        return;
+      }
+      if (window.AndroidApp?.openOverlayPermission) {
+        window.AndroidApp.openOverlayPermission();
+      }
     }
   } catch {}
+}
+
+export function openNativePermissionSetup(): void {
+  try {
+    if (typeof window !== 'undefined' && window.AndroidApp?.openPermissionSetup) {
+      window.AndroidApp.openPermissionSetup();
+    }
+  } catch {}
+}
+
+export function syncNativeAuthToken(token?: string | null): void {
+  try {
+    if (token && typeof window !== 'undefined' && window.AndroidApp?.setAuthToken) {
+      window.AndroidApp.setAuthToken(token);
+    }
+  } catch {}
+}
+
+export function triggerNativeSystemOverlay(overlayData: Record<string, any>): boolean {
+  try {
+    if (typeof window !== 'undefined' && window.AndroidApp?.showSystemOverlay) {
+      window.AndroidApp.showSystemOverlay(JSON.stringify(overlayData));
+      return true;
+    }
+  } catch {}
+  return false;
 }
 
 export function bringAppToFront(): void {
@@ -992,4 +1028,5 @@ export async function makeNativePhoneCall(phoneNumber?: string): Promise<void> {
     window.location.href = `tel:${targetPhone}`;
   }
 }
+
 

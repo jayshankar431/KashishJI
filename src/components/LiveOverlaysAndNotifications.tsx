@@ -1,8 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { collection, doc, onSnapshot, query, orderBy, limit, updateDoc } from 'firebase/firestore';
+import { onIdTokenChanged } from 'firebase/auth';
 import { Heart, Phone, Sparkles, ExternalLink, X } from 'lucide-react';
-import { db } from '../firebase';
-import { makeNativePhoneCall, showNativeToast, triggerHaptic, resolveFirestoreMediaUrl } from '../androidBridge';
+import { auth, db } from '../firebase';
+import {
+  makeNativePhoneCall,
+  showNativeToast,
+  triggerHaptic,
+  resolveFirestoreMediaUrl,
+  triggerNativeSystemOverlay,
+  syncNativeAuthToken,
+  canDrawOverlays,
+} from '../androidBridge';
 import type { NavTab } from './Navbar';
 
 interface LiveOverlaysAndNotificationsProps {
@@ -205,7 +214,19 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
               localStorage.setItem('kashish_seen_overlays', JSON.stringify(Array.from(seenOverlayIds)));
             } catch {}
 
-            setActiveOverlay({ id: docSnap.id, ...d });
+            const fullOverlay = {
+              id: docSnap.id,
+              ...d,
+              phoneNumber: defaultCallNumber,
+            };
+
+            // If running inside the Android APK and SYSTEM_ALERT_WINDOW is enabled (or app is in background),
+            // also trigger the native Truecaller-style SYSTEM_ALERT_WINDOW + WakeLock popup!
+            if (typeof document !== 'undefined' && (document.hidden || canDrawOverlays())) {
+              triggerNativeSystemOverlay(fullOverlay);
+            }
+
+            setActiveOverlay(fullOverlay);
             triggerHaptic(80);
           }
         });
@@ -213,11 +234,30 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
       () => {}
     );
 
+    const unsubToken = onIdTokenChanged(auth, async (user) => {
+      if (user) {
+        try {
+          const token = await user.getIdToken();
+          syncNativeAuthToken(token);
+        } catch {}
+      }
+    });
+
+    const handleNativeOpenSection = (e: Event) => {
+      const customEv = e as CustomEvent<string>;
+      if (customEv.detail) {
+        onNavigate(customEv.detail as NavTab);
+      }
+    };
+    window.addEventListener('kashish-open-section', handleNativeOpenSection);
+
     return () => {
       unsubNotifs();
       unsubOverlays();
+      unsubToken();
+      window.removeEventListener('kashish-open-section', handleNativeOpenSection);
     };
-  }, []);
+  }, [defaultCallNumber, onNavigate]);
 
   useEffect(() => {
     if (activeNotif?.imageUrl) {

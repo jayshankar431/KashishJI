@@ -200,6 +200,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     { label: 'Open Our Gallery', action: 'open_section', payload: 'gallery' },
     { label: 'Keep in My Heart', action: 'dismiss', payload: '' },
   ]);
+  const [deviceStatusDoc, setDeviceStatusDoc] = useState<Record<string, any>>({});
 
   // Section 7: Sections Manager State
   const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
@@ -405,6 +406,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       () => {}
     );
 
+    const unsubDeviceStatus = onSnapshot(
+      doc(db, 'settings', 'device_status'),
+      (snap) => {
+        if (snap.exists()) setDeviceStatusDoc(snap.data());
+      },
+      () => {}
+    );
+
     return () => {
       unsubStats();
       unsubActivity();
@@ -414,6 +423,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       unsubOverlays();
       unsubSections();
       unsubUsers();
+      unsubDeviceStatus();
     };
   }, [isOpen, isAdminAuthenticated]);
 
@@ -2526,10 +2536,91 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
           {/* 6. OVERLAY POPUP SENDER (Truecaller Style) */}
           {activeSection === 'overlays' && (
             <div className="space-y-4">
-              <div className={`border-b ${borderCol} pb-2`}>
-                <h2 className="text-[13px] font-bold uppercase tracking-wider">
-                  6. Overlay Popup Sender (Truecaller Style)
-                </h2>
+              <div className={`flex flex-wrap items-center justify-between gap-2 border-b ${borderCol} pb-2`}>
+                <div>
+                  <h2 className="text-[13px] font-bold uppercase tracking-wider">
+                    6. Overlay Popup Sender (Truecaller Style · SYSTEM_ALERT_WINDOW + WakeLock)
+                  </h2>
+                  <p className={`text-[11px] ${textMuted}`}>
+                    Displays over Instagram/WhatsApp via SYSTEM_ALERT_WINDOW and lights up the locked screen via USE_FULL_SCREEN_INTENT + WakeLock.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    notifyStatus('Instant Truecaller Wakeup + Overlay popup sent!');
+                    void addDoc(collection(db, 'overlays'), {
+                      title: ovTitle.trim() || 'Thinking of You, Kashish 💖',
+                      message:
+                        ovMessage.trim() ||
+                        'Just wanted to remind you how special you are to me right now!',
+                      imageUrl: ovImage.trim(),
+                      theme: ovTheme,
+                      fontStyle: ovFontStyle,
+                      buttons: ovButtons.slice(0, 3),
+                      createdAt: Date.now(),
+                      scheduledFor: null,
+                      status: 'sent',
+                      dismissed: false,
+                    }).catch((err: any) => notifyStatus(`Overlay error: ${err.message}`, true));
+                  }}
+                  className={btnPrimary}
+                >
+                  ⚡ Send Instant Truecaller Wakeup Popup
+                </button>
+              </div>
+
+              {/* Android Truecaller Permissions & Background Service Live Status */}
+              <div className={`p-3 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-2.5`}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-bold text-[12px]">
+                    Android APK Truecaller Overlay & Lockscreen Wakeup Status
+                  </div>
+                  <span className={`text-[11px] ${textMuted}`}>
+                    {deviceStatusDoc.deviceModel
+                      ? `Phone: ${deviceStatusDoc.deviceModel} · Synced ${
+                          deviceStatusDoc.updatedAt
+                            ? new Date(Number(deviceStatusDoc.updatedAt)).toLocaleTimeString()
+                            : 'Live'
+                        }`
+                      : 'Waiting for Android APK first launch (Located in /android-app)'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {[
+                    {
+                      label: '1. Display Over Other Apps',
+                      sub: 'SYSTEM_ALERT_WINDOW (Instagram/WhatsApp)',
+                      ok: Boolean(deviceStatusDoc.overlay),
+                    },
+                    {
+                      label: '2. Lockscreen Light-Up',
+                      sub: 'USE_FULL_SCREEN_INTENT + WakeLock',
+                      ok: deviceStatusDoc.fullScreenIntent !== false && Boolean(deviceStatusDoc.deviceModel),
+                    },
+                    {
+                      label: '3. 24/7 Background Service',
+                      sub: 'Firestore overlays Watcher',
+                      ok: Boolean(deviceStatusDoc.backgroundServiceRunning),
+                    },
+                    {
+                      label: '4. Battery Unrestricted',
+                      sub: 'No background kill on lock',
+                      ok: Boolean(deviceStatusDoc.batteryUnrestricted),
+                    },
+                  ].map((item, idx) => (
+                    <div key={idx} className={`p-2.5 rounded-[10px] border ${borderCol} ${bgMain}`}>
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="font-bold text-[11px] truncate">{item.label}</span>
+                        <span className="text-[10px] font-bold">
+                          {item.ok ? '✅ ACTIVE' : '⏳ PENDING'}
+                        </span>
+                      </div>
+                      <div className={`text-[10px] ${textMuted} mt-0.5 truncate`}>{item.sub}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -3642,9 +3733,9 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
     match /activity/{id} { allow read, update, delete: if isAdmin(); allow create: if isSignedIn(); }
-    match /notifications/{id} { allow read: if isSignedIn(); allow update: if isSignedIn(); allow create, delete: if isAdmin(); }
-    match /overlays/{id} { allow read: if isSignedIn(); allow update: if isSignedIn(); allow create, delete: if isAdmin(); }
-    match /settings/{id} { allow read: if isSignedIn(); allow create, update: if isAdmin() || id == 'stats'; allow delete: if isAdmin(); }
+    match /notifications/{id} { allow read: if true; allow update: if isAdmin() || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['seen', 'seenAt']); allow create, delete: if isAdmin(); }
+    match /overlays/{id} { allow read: if true; allow update: if isAdmin() || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['dismissed', 'clickedAction', 'seenAt']); allow create, delete: if isAdmin(); }
+    match /settings/{id} { allow read: if isSignedIn() || id == 'device_status'; allow create, update: if isAdmin() || id == 'device_status' || (isSignedIn() && id == 'stats'); allow delete: if isAdmin(); }
     match /users/{userId} {
       allow read: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
       allow create: if isAdmin() || (isSignedIn() && request.auth.uid == userId && request.resource.data.get('approved', false) == false);

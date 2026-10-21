@@ -10,13 +10,14 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
-    <!-- High-Priority Notifications, System Overlay, Full-Screen Intent & Direct Calling -->
+    <!-- Truecaller-Style System Overlay, Full-Screen Lockscreen Wakeup & Direct Calling -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- Optional Hardware Features -->
@@ -38,6 +39,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:screenOrientation="portrait">
             <intent-filter>
@@ -46,14 +48,14 @@
             </intent-filter>
         </activity>
 
-        <!-- First-Launch Permission Setup Screen -->
+        <!-- First-Launch Permission Setup Screen (SYSTEM_ALERT_WINDOW + USE_FULL_SCREEN_INTENT + WakeLock) -->
         <activity
             android:name=".PermissionSetupActivity"
             android:exported="false"
             android:screenOrientation="portrait"
             android:theme="@style/Theme.AppCompat.NoActionBar" />
 
-        <!-- Full-Screen Intent Fallback Activity (when SYSTEM_ALERT_WINDOW is missing) -->
+        <!-- Full-Screen Intent Lockscreen Wakeup Activity (USE_FULL_SCREEN_INTENT + WakeLock) -->
         <activity
             android:name=".UrgentOverlayFallbackActivity"
             android:exported="false"
@@ -65,11 +67,36 @@
             android:screenOrientation="portrait"
             android:theme="@style/Theme.AppCompat.NoActionBar" />
 
-        <!-- System Overlay Window Service (SYSTEM_ALERT_WINDOW over other apps) -->
+        <!-- Truecaller-Style System Overlay Window Service (SYSTEM_ALERT_WINDOW over Instagram/WhatsApp) -->
         <service
             android:name=".UrgentOverlayWindowService"
             android:enabled="true"
             android:exported="false" />
+
+        <!-- Persistent Firebase Background Watcher Service (watches Firestore `overlays` & `notifications`) -->
+        <service
+            android:name=".FirestoreOverlayBackgroundService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Real-time romantic Truecaller-style overlay listener for Kashish's World" />
+        </service>
+
+        <!-- Auto-Start Background Listener on Device Boot or App Update -->
+        <receiver
+            android:name=".BootCompletedReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:directBootAware="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
 
         <!-- FCM HTTP v1 High-Priority DATA Message Receiver -->
         <service

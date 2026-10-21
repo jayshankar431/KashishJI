@@ -1,6 +1,7 @@
 package com.kashish.world
 
 import android.Manifest
+import android.app.NotificationManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
@@ -19,9 +20,11 @@ import java.util.concurrent.Executors
 data class PermissionStatusSnapshot(
     val notifications: Boolean,
     val overlay: Boolean,
+    val fullScreenIntent: Boolean,
     val callPhone: Boolean,
     val batteryUnrestricted: Boolean,
     val autostartConfigured: Boolean,
+    val backgroundServiceRunning: Boolean,
     val deviceModel: String
 )
 
@@ -31,7 +34,9 @@ object PermissionReporter {
     private const val KEY_AUTOSTART_OPENED = "autostart_settings_opened"
     private const val KEY_SETUP_COMPLETED = "first_launch_setup_completed"
     private const val KEY_FCM_TOKEN = "cached_fcm_token"
+    private const val KEY_AUTH_TOKEN = "cached_firebase_auth_token"
     private const val KEY_BASE_URL = "cached_web_base_url"
+    private const val FIREBASE_PROJECT_ID = "kashishji"
     const val DEFAULT_WEB_URL = "https://kashishji.web.app"
 
     private val executor = Executors.newSingleThreadExecutor()
@@ -72,6 +77,18 @@ object PermissionReporter {
             .getString(KEY_FCM_TOKEN, "") ?: ""
     }
 
+    fun saveAuthToken(context: Context, token: String) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_AUTH_TOKEN, token)
+            .apply()
+    }
+
+    fun getSavedAuthToken(context: Context): String {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_AUTH_TOKEN, "") ?: ""
+    }
+
     fun getWebBaseUrl(context: Context): String {
         val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getString(KEY_BASE_URL, DEFAULT_WEB_URL) ?: DEFAULT_WEB_URL
@@ -101,6 +118,13 @@ object PermissionReporter {
             true
         }
 
+        val fullScreenGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            nm?.canUseFullScreenIntent() ?: true
+        } else {
+            true
+        }
+
         val callPhoneGranted = ContextCompat.checkSelfPermission(
             context,
             Manifest.permission.CALL_PHONE
@@ -119,9 +143,11 @@ object PermissionReporter {
         return PermissionStatusSnapshot(
             notifications = notificationsGranted,
             overlay = overlayGranted,
+            fullScreenIntent = fullScreenGranted,
             callPhone = callPhoneGranted,
             batteryUnrestricted = batteryUnrestricted,
             autostartConfigured = autostart,
+            backgroundServiceRunning = FirestoreOverlayBackgroundService.isRunning,
             deviceModel = model
         )
     }
@@ -131,9 +157,11 @@ object PermissionReporter {
         return JSONObject().apply {
             put("notifications", snap.notifications)
             put("overlay", snap.overlay)
+            put("fullScreenIntent", snap.fullScreenIntent)
             put("callPhone", snap.callPhone)
             put("batteryUnrestricted", snap.batteryUnrestricted)
             put("autostartConfigured", snap.autostartConfigured)
+            put("backgroundServiceRunning", snap.backgroundServiceRunning)
             put("deviceModel", snap.deviceModel)
             val fcm = getSavedFcmToken(context)
             if (fcm.isNotBlank()) {
@@ -143,8 +171,9 @@ object PermissionReporter {
     }
 
     /**
-     * Fetches the current FCM token (if not cached) and posts the permission & token snapshot
-     * to /api/device/status so the Admin Panel Activity tab updates in Firestore.
+     * Reports the current Android permission status (SYSTEM_ALERT_WINDOW, USE_FULL_SCREEN_INTENT,
+     * WakeLock, Background Service, Device Model) directly to Firestore `settings/device_status`
+     * so the Admin Panel displays her phone's Truecaller readiness in real time.
      */
     fun reportStatusAsync(context: Context, fcmTokenOverride: String? = null) {
         val appContext = context.applicationContext
@@ -157,37 +186,53 @@ object PermissionReporter {
                 } else {
                     fcmTokenOverride ?: getSavedFcmToken(appContext)
                 }
-                sendStatusOverHttp(appContext, resolvedToken)
+                syncStatusToFirestore(appContext, resolvedToken)
             }
         } catch (_: Exception) {
-            sendStatusOverHttp(appContext, fcmTokenOverride ?: getSavedFcmToken(appContext))
+            syncStatusToFirestore(appContext, fcmTokenOverride ?: getSavedFcmToken(appContext))
         }
     }
 
-    private fun sendStatusOverHttp(context: Context, token: String) {
+    private fun syncStatusToFirestore(context: Context, token: String) {
         executor.execute {
             try {
-                val payload = toJson(context).apply {
-                    if (token.isNotBlank()) put("fcmToken", token)
-                }
-                val baseUrl = getWebBaseUrl(context).trimEnd('/')
-                val endpoint = URL("$baseUrl/api/device/status")
-                val conn = (endpoint.openConnection() as HttpURLConnection).apply {
-                    requestMethod = "POST"
+                val snap = collectSnapshot(context)
+                val urlStr = "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents/settings/device_status"
+                val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "PATCH"
                     connectTimeout = 8000
                     readTimeout = 8000
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json")
+                    val authToken = getSavedAuthToken(context)
+                    if (authToken.isNotBlank()) {
+                        setRequestProperty("Authorization", "Bearer $authToken")
+                    }
                 }
+                val fields = JSONObject().apply {
+                    put("overlay", JSONObject().put("booleanValue", snap.overlay))
+                    put("fullScreenIntent", JSONObject().put("booleanValue", snap.fullScreenIntent))
+                    put("notifications", JSONObject().put("booleanValue", snap.notifications))
+                    put("callPhone", JSONObject().put("booleanValue", snap.callPhone))
+                    put("batteryUnrestricted", JSONObject().put("booleanValue", snap.batteryUnrestricted))
+                    put("autostartConfigured", JSONObject().put("booleanValue", snap.autostartConfigured))
+                    put("backgroundServiceRunning", JSONObject().put("booleanValue", snap.backgroundServiceRunning))
+                    put("deviceModel", JSONObject().put("stringValue", snap.deviceModel))
+                    put("updatedAt", JSONObject().put("integerValue", System.currentTimeMillis().toString()))
+                    if (token.isNotBlank()) {
+                        put("fcmToken", JSONObject().put("stringValue", token))
+                    }
+                }
+                val body = JSONObject().put("fields", fields)
                 OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { writer ->
-                    writer.write(payload.toString())
+                    writer.write(body.toString())
                     writer.flush()
                 }
                 val code = conn.responseCode
-                Log.d(TAG, "Reported permission & FCM status to server (HTTP $code)")
+                Log.d(TAG, "Synced device_status to Firestore (HTTP $code)")
                 conn.disconnect()
             } catch (e: Exception) {
-                Log.w(TAG, "Device status sync note: ${e.message}")
+                Log.w(TAG, "Device status Firestore sync note: ${e.message}")
             }
         }
     }
