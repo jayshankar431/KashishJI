@@ -3960,7 +3960,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                     </select>
                     <button
                       type="button"
-                      onClick={() => handlePreviewSound(selectedMusicUrl)}
+                      onClick={() => handlePreviewSoundUrl(selectedMusicUrl)}
                       className={btnSecondary}
                     >
                       {previewingSoundUrl === selectedMusicUrl ? 'Stop Preview' : '▶ Test Play'}
@@ -3994,7 +3994,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                           <div className="flex items-center gap-1.5 shrink-0">
                             <button
                               type="button"
-                              onClick={() => handlePreviewSound(t.url)}
+                              onClick={() => handlePreviewSoundUrl(t.url)}
                               className={btnSecondary}
                             >
                               {previewingSoundUrl === t.url ? 'Stop' : 'Play'}
