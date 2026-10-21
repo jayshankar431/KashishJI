@@ -43,9 +43,7 @@ class AndroidAppInterface(private val activity: Activity) {
 
     @JavascriptInterface
     fun showToast(message: String) {
-        activity.runOnUiThread {
-            Toast.makeText(activity, message, Toast.LENGTH_SHORT).show()
-        }
+        // Bottom toast popups disabled
     }
 
     @JavascriptInterface

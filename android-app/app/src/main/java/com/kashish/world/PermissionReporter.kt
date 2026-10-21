@@ -32,7 +32,7 @@ object PermissionReporter {
     private const val KEY_SETUP_COMPLETED = "first_launch_setup_completed"
     private const val KEY_FCM_TOKEN = "cached_fcm_token"
     private const val KEY_BASE_URL = "cached_web_base_url"
-    const val DEFAULT_WEB_URL = "https://kashishhji.web.app"
+    const val DEFAULT_WEB_URL = "https://kashishji.web.app"
 
     private val executor = Executors.newSingleThreadExecutor()
 
@@ -73,8 +73,16 @@ object PermissionReporter {
     }
 
     fun getWebBaseUrl(context: Context): String {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getString(KEY_BASE_URL, DEFAULT_WEB_URL) ?: DEFAULT_WEB_URL
+        if (raw.contains("kashishhji.web.app")) {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(KEY_BASE_URL, DEFAULT_WEB_URL)
+                .apply()
+            return DEFAULT_WEB_URL
+        }
+        return raw
     }
 
     fun collectSnapshot(context: Context): PermissionStatusSnapshot {

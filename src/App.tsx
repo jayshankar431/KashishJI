@@ -18,42 +18,124 @@ import { loadProgress, saveProgress, resetProgress, UserProgressData } from './s
 import { triggerHaptic, showNativeToast, logNativeActivity, incrementStat, trackSectionVisit } from './androidBridge';
 import { Heart, Home, Music } from 'lucide-react';
 import { DynamicSlot } from './components/DynamicSlot';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { auth, ADMIN_EMAIL } from './firebase';
+import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
+import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
+import { auth, db, ADMIN_EMAIL } from './firebase';
 import { AdminPanel } from './components/AdminPanel';
 import { LiveOverlaysAndNotifications } from './components/LiveOverlaysAndNotifications';
 
 export default function App() {
   const site = useSite();
-  const [isUnlocked, setIsUnlocked] = useState<boolean>(() => {
-    try {
-      if (typeof window !== 'undefined' && window.sessionStorage) {
-        return window.sessionStorage.getItem('kashishUnlocked') === 'true';
-      }
-      return false;
-    } catch {
-      return false;
-    }
-  });
+  const [isUnlocked, setIsUnlocked] = useState<boolean>(false);
+  const [authUser, setAuthUser] = useState<FirebaseUser | null>(() => auth.currentUser);
+  const [approvalStatus, setApprovalStatus] = useState<
+    'loading' | 'approved' | 'pending' | 'rejected' | 'unauthenticated'
+  >('loading');
   const [isLoadingAssets, setIsLoadingAssets] = useState(true);
+  const prevApprovalRef = useRef<string>('loading');
 
-  // Sync unlock state with Firebase Authentication
+  // Sync unlock state with Firebase Authentication AND Real-Time Admin Approval Gate
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user) {
-        setIsUnlocked(true);
-        try {
-          window.sessionStorage.setItem('kashishUnlocked', 'true');
-        } catch {}
-      } else {
+    let unsubUserDoc: (() => void) | null = null;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (unsubUserDoc) {
+        unsubUserDoc();
+        unsubUserDoc = null;
+      }
+
+      setAuthUser(user);
+
+      if (!user) {
+        setApprovalStatus('unauthenticated');
+        prevApprovalRef.current = 'unauthenticated';
         setIsUnlocked(false);
         try {
           window.sessionStorage.removeItem('kashishUnlocked');
         } catch {}
+        return;
       }
+
+      // Admin is always automatically approved
+      if (user.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
+        setApprovalStatus('approved');
+        prevApprovalRef.current = 'approved';
+        setIsUnlocked(true);
+        try {
+          window.sessionStorage.setItem('kashishUnlocked', 'true');
+        } catch {}
+        return;
+      }
+
+      // Non-admin user: Listen to real-time approval status in Firestore `users/{uid}`
+      const userDocRef = doc(db, 'users', user.uid);
+      unsubUserDoc = onSnapshot(
+        userDocRef,
+        (snap) => {
+          if (!snap.exists()) {
+            // Register user as pending if document doesn't exist yet
+            setApprovalStatus('pending');
+            prevApprovalRef.current = 'pending';
+            setIsUnlocked(false);
+            try {
+              window.sessionStorage.removeItem('kashishUnlocked');
+            } catch {}
+            void setDoc(
+              userDocRef,
+              {
+                uid: user.uid,
+                email: user.email || '',
+                displayName: user.displayName || user.email?.split('@')[0] || 'New User',
+                photoURL: user.photoURL || '',
+                authMethod: user.providerData?.[0]?.providerId || 'google',
+                approved: false,
+                status: 'pending',
+                createdAt: Date.now(),
+                lastLoginAt: serverTimestamp(),
+              },
+              { merge: true }
+            ).catch(() => {});
+            return;
+          }
+
+          const data = snap.data();
+          const isApproved = data.approved === true || data.status === 'approved';
+          if (isApproved) {
+            const wasPending = prevApprovalRef.current === 'pending' || prevApprovalRef.current === 'rejected';
+            setApprovalStatus('approved');
+            prevApprovalRef.current = 'approved';
+            setIsUnlocked(true);
+            try {
+              window.sessionStorage.setItem('kashishUnlocked', 'true');
+            } catch {}
+            if (wasPending) {
+              romanticAudio.playChime();
+              showNativeToast(`Approved by Admin! Welcome to ${site.name}'s World 💖`);
+            }
+          } else {
+            const nextStat = data.status === 'rejected' ? 'rejected' : 'pending';
+            setApprovalStatus(nextStat);
+            prevApprovalRef.current = nextStat;
+            setIsUnlocked(false);
+            romanticAudio.stop();
+            try {
+              window.sessionStorage.removeItem('kashishUnlocked');
+            } catch {}
+          }
+        },
+        () => {
+          // If Firestore read fails, keep locked for safety
+          setApprovalStatus('pending');
+          setIsUnlocked(false);
+        }
+      );
     });
-    return () => unsubscribe();
-  }, []);
+
+    return () => {
+      unsubscribeAuth();
+      if (unsubUserDoc) unsubUserDoc();
+    };
+  }, [site.name]);
 
   // Preload key assets (fonts, lock photo) with a max 2.2s cap
   useEffect(() => {
@@ -542,8 +624,10 @@ export default function App() {
         </div>
       )}
 
-      {/* Lock Page: Mounts NostalgicLockScreen when locked or when forceLock is active for non-admin */}
-      {!isUnlocked || (site.forceLock && auth.currentUser?.email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) ? (
+      {/* Lock Page: Mounts NostalgicLockScreen when locked, unapproved, or when forceLock is active for non-admin */}
+      {!isUnlocked ||
+      approvalStatus !== 'approved' ||
+      (site.forceLock && authUser?.email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) ? (
         <NostalgicLockScreen
           name={site.name}
           lockPhotoUrl={site.lockPhotoUrl}
@@ -554,6 +638,11 @@ export default function App() {
           onUnlock={handleUnlock}
           isDarkMode={isDarkMode}
           onToggleDarkMode={handleToggleDarkMode}
+          approvalStatus={approvalStatus}
+          currentUserEmail={authUser?.email}
+          currentUserName={authUser?.displayName}
+          onSignOutUser={handleLockAgain}
+          onShowAdmin={() => setIsAdminOpen(true)}
         />
       ) : (
         /* Main Website: Created only after correct unlock */
@@ -702,12 +791,6 @@ export default function App() {
             )}
             </div>
           </main>
-
-          {/* Floating Music Indicator Pill on desktop / tablet */}
-          <div className="fixed bottom-6 right-4 z-30 hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full backdrop-blur-md bg-white/80 dark:bg-[#1a0f2b]/80 border border-rose-200 dark:border-rose-900 shadow-sm text-xs text-rose-600 dark:text-rose-300 pointer-events-none">
-            <Music className="w-3.5 h-3.5 animate-bounce" />
-            <span>{isPlayingMusic ? 'Music playing' : 'Music muted'}</span>
-          </div>
 
           {/* Real-Time Notifications & Truecaller-Style Overlay Popups */}
           <LiveOverlaysAndNotifications

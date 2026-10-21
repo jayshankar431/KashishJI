@@ -76,6 +76,7 @@ import {
   ExternalLink,
   Copy,
   RefreshCw,
+  UserCheck,
 } from 'lucide-react';
 
 interface AdminPanelProps {
@@ -85,6 +86,7 @@ interface AdminPanelProps {
 
 type AdminSectionId =
   | 'dashboard'
+  | 'users'
   | 'activity'
   | 'media'
   | 'inbox'
@@ -98,6 +100,7 @@ type AdminSectionId =
 
 const SIDEBAR_ITEMS: { id: AdminSectionId; label: string; icon: React.FC<{ className?: string }> }[] = [
   { id: 'dashboard', label: '1. Dashboard', icon: LayoutDashboard },
+  { id: 'users', label: 'User Approvals', icon: UserCheck },
   { id: 'activity', label: '2. Activity Tracker', icon: Activity },
   { id: 'media', label: '3. Media Manager', icon: ImageIcon },
   { id: 'inbox', label: '4. Inbox (From Her)', icon: Inbox },
@@ -143,6 +146,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
   const [notificationsList, setNotificationsList] = useState<any[]>([]);
   const [overlaysList, setOverlaysList] = useState<any[]>([]);
   const [sectionsList, setSectionsList] = useState<any[]>([]);
+  const [usersList, setUsersList] = useState<any[]>([]);
+  const [userFilter, setUserFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
+  const [userSearch, setUserSearch] = useState<string>('');
   const [dataLoading, setDataLoading] = useState<boolean>(true);
 
   // Section 2: Activity Filters
@@ -388,6 +394,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       () => {}
     );
 
+    const unsubUsers = onSnapshot(
+      collection(db, 'users'),
+      (snap) => {
+        const list: any[] = [];
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+        list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        setUsersList(list);
+      },
+      () => {}
+    );
+
     return () => {
       unsubStats();
       unsubActivity();
@@ -396,8 +413,130 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       unsubNotifs();
       unsubOverlays();
       unsubSections();
+      unsubUsers();
     };
   }, [isOpen, isAdminAuthenticated]);
+
+  const isUserAdminAccount = (u: any) =>
+    String(u?.email || '').toLowerCase() === ADMIN_EMAIL.toLowerCase();
+
+  const getUserStatus = (u: any): 'approved' | 'pending' | 'rejected' => {
+    if (isUserAdminAccount(u) || u?.approved === true || u?.status === 'approved') {
+      return 'approved';
+    }
+    if (u?.status === 'rejected') return 'rejected';
+    return 'pending';
+  };
+
+  const pendingUsersList = useMemo(
+    () => usersList.filter((u) => !isUserAdminAccount(u) && getUserStatus(u) === 'pending'),
+    [usersList]
+  );
+
+  const filteredUsersList = useMemo(() => {
+    return usersList.filter((u) => {
+      const st = getUserStatus(u);
+      if (userFilter !== 'all' && st !== userFilter) return false;
+      if (userSearch.trim()) {
+        const q = userSearch.toLowerCase();
+        const emailStr = String(u.email || '').toLowerCase();
+        const nameStr = String(u.displayName || '').toLowerCase();
+        if (!emailStr.includes(q) && !nameStr.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [usersList, userFilter, userSearch]);
+
+  const handleApproveUser = (userItem: any) => {
+    const uid = userItem.id;
+    setUsersList((prev) =>
+      prev.map((u) => (u.id === uid ? { ...u, approved: true, status: 'approved', approvedAt: Date.now() } : u))
+    );
+    notifyStatus(`Approved ${userItem.email || userItem.displayName}! They can now access the app.`);
+    void setDoc(
+      doc(db, 'users', uid),
+      {
+        approved: true,
+        status: 'approved',
+        approvedAt: Date.now(),
+        approvedBy: ADMIN_EMAIL,
+      },
+      { merge: true }
+    ).catch((err) => notifyStatus(`Approve failed: ${err.message}`, true));
+  };
+
+  const handleRejectUser = (userItem: any) => {
+    if (isUserAdminAccount(userItem)) {
+      notifyStatus('Admin account cannot be blocked.', true);
+      return;
+    }
+    const uid = userItem.id;
+    setUsersList((prev) =>
+      prev.map((u) => (u.id === uid ? { ...u, approved: false, status: 'rejected', rejectedAt: Date.now() } : u))
+    );
+    notifyStatus(`Blocked / revoked access for ${userItem.email || userItem.displayName}.`);
+    void setDoc(
+      doc(db, 'users', uid),
+      {
+        approved: false,
+        status: 'rejected',
+        rejectedAt: Date.now(),
+      },
+      { merge: true }
+    ).catch((err) => notifyStatus(`Block failed: ${err.message}`, true));
+  };
+
+  const handleSetPendingUser = (userItem: any) => {
+    if (isUserAdminAccount(userItem)) return;
+    const uid = userItem.id;
+    setUsersList((prev) =>
+      prev.map((u) => (u.id === uid ? { ...u, approved: false, status: 'pending' } : u))
+    );
+    notifyStatus(`Moved ${userItem.email || userItem.displayName} back to Pending Approval.`);
+    void setDoc(
+      doc(db, 'users', uid),
+      {
+        approved: false,
+        status: 'pending',
+      },
+      { merge: true }
+    ).catch((err) => notifyStatus(`Update failed: ${err.message}`, true));
+  };
+
+  const handleDeleteUserRecord = (userItem: any) => {
+    if (isUserAdminAccount(userItem)) {
+      notifyStatus('Cannot delete primary Admin record.', true);
+      return;
+    }
+    askConfirm(
+      `Remove user record for "${userItem.email || userItem.displayName}"? If they sign in again, they will have to wait for approval again.`,
+      () => {
+        setUsersList((prev) => prev.filter((u) => u.id !== userItem.id));
+        notifyStatus('User record deleted.');
+        void deleteDoc(doc(db, 'users', userItem.id)).catch((err) =>
+          notifyStatus(`Delete failed: ${err.message}`, true)
+        );
+      }
+    );
+  };
+
+  const handleApproveAllPendingUsers = () => {
+    if (pendingUsersList.length === 0) return;
+    const idsToApprove = pendingUsersList.map((u) => u.id);
+    setUsersList((prev) =>
+      prev.map((u) =>
+        idsToApprove.includes(u.id) ? { ...u, approved: true, status: 'approved', approvedAt: Date.now() } : u
+      )
+    );
+    notifyStatus(`Approved all ${idsToApprove.length} pending user(s)!`);
+    idsToApprove.forEach((uid) => {
+      void setDoc(
+        doc(db, 'users', uid),
+        { approved: true, status: 'approved', approvedAt: Date.now(), approvedBy: ADMIN_EMAIL },
+        { merge: true }
+      ).catch(() => {});
+    });
+  };
 
   const notifyStatus = (msg: string, isErr = false) => {
     if (isErr) {
@@ -608,7 +747,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     });
   };
 
-  // Section 4: Inbox Audio Playback & Reply
+  // Section 4: Inbox Audio Playback, Download & Reply
   const togglePlayInboxAudio = async (item: any) => {
     if (!audioEl || !item.mediaUrl) return;
     if (playingAudioId === item.id) {
@@ -620,11 +759,38 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
         notifyStatus('Audio file unavailable', true);
         return;
       }
+      audioEl.pause();
       audioEl.src = playUrl;
-      audioEl.play().catch(() => notifyStatus('Could not play audio', true));
+      audioEl.currentTime = 0;
       setPlayingAudioId(item.id);
       audioEl.onended = () => setPlayingAudioId(null);
+      audioEl.onerror = () => {
+        setPlayingAudioId(null);
+        notifyStatus('Could not play audio format on this device', true);
+      };
+      audioEl.play().catch((err: any) => {
+        setPlayingAudioId(null);
+        notifyStatus(`Could not play audio: ${err?.message || 'Playback blocked'}`, true);
+      });
     }
+  };
+
+  const handleDownloadInboxMedia = async (item: any) => {
+    if (!item?.mediaUrl) return;
+    const resolved = await resolveFirestoreMediaUrl(item.mediaUrl);
+    if (!resolved) {
+      notifyStatus('Media file unavailable for download', true);
+      return;
+    }
+    const ext = item.type === 'voice' ? 'webm' : 'jpg';
+    const a = document.createElement('a');
+    a.href = resolved;
+    a.download = `kashish_${item.type}_${item.id}.${ext}`;
+    a.target = '_blank';
+    a.rel = 'noreferrer';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
   };
 
   const handleSendInboxReply = (e: React.FormEvent) => {
@@ -1182,6 +1348,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
             {SIDEBAR_ITEMS.map((item) => {
               const Icon = item.icon;
               const isActive = activeSection === item.id;
+              const badgeCount = item.id === 'users' ? pendingUsersList.length : 0;
               return (
                 <button
                   key={item.id}
@@ -1189,7 +1356,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                     setActiveSection(item.id);
                     setSidebarOpen(false);
                   }}
-                  className={`w-full flex items-center gap-2 px-2.5 py-2 text-left text-[12px] rounded-[10px] border cursor-pointer ${
+                  className={`w-full flex items-center justify-between gap-2 px-2.5 py-2 text-left text-[12px] rounded-[10px] border cursor-pointer ${
                     isActive
                       ? dark
                         ? 'bg-white text-black border-white font-semibold'
@@ -1197,8 +1364,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                       : `border-transparent ${textMuted} hover:text-current`
                   }`}
                 >
-                  <Icon className="w-3.5 h-3.5 shrink-0" />
-                  <span className="truncate">{item.label}</span>
+                  <span className="flex items-center gap-2 min-w-0">
+                    <Icon className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">{item.label}</span>
+                  </span>
+                  {badgeCount > 0 && (
+                    <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-md bg-rose-600 text-white tabular-nums shrink-0">
+                      {badgeCount}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -1229,12 +1403,59 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                 <span className={`text-[11px] ${textMuted}`}>Real-Time Firestore Sync</span>
               </div>
 
+              {/* Pending User Approvals Alert Banner on Dashboard */}
+              {pendingUsersList.length > 0 && (
+                <div className={`p-3 rounded-[14px] border border-amber-500/50 bg-amber-500/10 space-y-2.5`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="font-bold text-[12px]">
+                      ⏳ {pendingUsersList.length} New User(s) Waiting for Admin Approval
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button onClick={handleApproveAllPendingUsers} className={btnPrimary}>
+                        Approve All ({pendingUsersList.length})
+                      </button>
+                      <button onClick={() => setActiveSection('users')} className={btnSecondary}>
+                        Manage All Users
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    {pendingUsersList.map((u) => (
+                      <div
+                        key={u.id}
+                        className={`p-2 rounded-[10px] border ${borderCol} ${bgMain} flex flex-wrap items-center justify-between gap-2`}
+                      >
+                        <div className="min-w-0">
+                          <div className="font-bold text-[12px] truncate">
+                            {u.displayName || 'New User'} · <span className="font-normal">{u.email}</span>
+                          </div>
+                          <div className={`text-[11px] ${textMuted}`}>
+                            Method: {u.authMethod || 'google'} · Requested:{' '}
+                            {u.createdAt ? new Date(u.createdAt).toLocaleString() : 'Just now'}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button onClick={() => handleApproveUser(u)} className={btnPrimary}>
+                            <Check className="w-3 h-3 inline mr-1" />
+                            Approve
+                          </button>
+                          <button onClick={() => handleRejectUser(u)} className={btnDanger}>
+                            Reject / Block
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Compact Metric Grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
                 {[
                   { label: 'Last Opened', val: lastOpenedStr },
                   { label: 'Total Opens', val: String(totalOpens) },
                   { label: 'Active Screen', val: String(lastActiveScreen).toUpperCase() },
+                  { label: 'Pending Users', val: String(pendingUsersList.length) },
                   { label: 'Hugs Count', val: String(hugsCount) },
                   { label: 'Calls Tapped', val: String(callsTapped) },
                   { label: 'Voice Notes', val: String(voiceReceivedCount) },
@@ -1290,6 +1511,149 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                     </tbody>
                   </table>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* USER APPROVALS MANAGER */}
+          {activeSection === 'users' && (
+            <div className="space-y-4">
+              <div className={`flex flex-wrap items-center justify-between gap-2 border-b ${borderCol} pb-2`}>
+                <div>
+                  <h2 className="text-[13px] font-bold uppercase tracking-wider">
+                    User Approvals & Access Control
+                  </h2>
+                  <p className={`text-[11px] ${textMuted}`}>
+                    New users who sign up with Google or Email cannot enter the app until you Approve them here.
+                  </p>
+                </div>
+                {pendingUsersList.length > 0 && (
+                  <button onClick={handleApproveAllPendingUsers} className={btnPrimary}>
+                    <Check className="w-3.5 h-3.5 inline mr-1" />
+                    Approve All Pending ({pendingUsersList.length})
+                  </button>
+                )}
+              </div>
+
+              {/* Summary Counts & Filter Controls */}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {(
+                    [
+                      { id: 'all', label: `All Users (${usersList.length})` },
+                      { id: 'pending', label: `Pending Approval (${pendingUsersList.length})` },
+                      {
+                        id: 'approved',
+                        label: `Approved (${usersList.filter((u) => getUserStatus(u) === 'approved').length})`,
+                      },
+                      {
+                        id: 'rejected',
+                        label: `Blocked / Rejected (${usersList.filter((u) => getUserStatus(u) === 'rejected').length})`,
+                      },
+                    ] as const
+                  ).map((tab) => (
+                    <button
+                      key={tab.id}
+                      onClick={() => setUserFilter(tab.id)}
+                      className={userFilter === tab.id ? btnPrimary : btnSecondary}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="w-full sm:w-64">
+                  <input
+                    type="text"
+                    placeholder="Search user name or email..."
+                    value={userSearch}
+                    onChange={(e) => setUserSearch(e.target.value)}
+                    className={inputCls}
+                  />
+                </div>
+              </div>
+
+              {/* Users Table */}
+              <div className={`rounded-[14px] overflow-hidden border ${borderCol} overflow-x-auto`}>
+                <table className="w-full text-left border-collapse text-[12px]">
+                  <thead>
+                    <tr className={`border-b ${borderCol} ${bgSubtle} ${textMuted}`}>
+                      <th className="py-2 px-3 font-medium">User / Email</th>
+                      <th className="py-2 px-3 font-medium">Sign-In Method</th>
+                      <th className="py-2 px-3 font-medium">Registered</th>
+                      <th className="py-2 px-3 font-medium">Status</th>
+                      <th className="py-2 px-3 font-medium text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredUsersList.map((u) => {
+                      const status = getUserStatus(u);
+                      const isAdminAcc = isUserAdminAccount(u);
+                      return (
+                        <tr key={u.id} className={`border-b ${borderCol}`}>
+                          <td className="py-2 px-3">
+                            <div className="font-bold">
+                              {u.displayName || 'User'}{' '}
+                              {isAdminAcc && (
+                                <span className="ml-1 text-[10px] font-bold text-emerald-500">· ADMIN</span>
+                              )}
+                            </div>
+                            <div className={`text-[11px] ${textMuted}`}>{u.email || u.id}</div>
+                          </td>
+                          <td className={`py-2 px-3 text-[11px] ${textMuted}`}>
+                            {u.authMethod || 'google'}
+                          </td>
+                          <td className={`py-2 px-3 tabular-nums whitespace-nowrap text-[11px] ${textMuted}`}>
+                            {u.createdAt ? new Date(u.createdAt).toLocaleString() : 'Existing User'}
+                          </td>
+                          <td className="py-2 px-3 whitespace-nowrap">
+                            {status === 'approved' ? (
+                              <span className="font-bold text-emerald-500">✓ Approved</span>
+                            ) : status === 'rejected' ? (
+                              <span className="font-bold text-rose-500">✕ Blocked</span>
+                            ) : (
+                              <span className="font-bold text-amber-500">⏳ Pending Approval</span>
+                            )}
+                          </td>
+                          <td className="py-2 px-3 text-right whitespace-nowrap">
+                            {isAdminAcc ? (
+                              <span className={`text-[11px] ${textMuted}`}>Owner Account</span>
+                            ) : (
+                              <div className="inline-flex items-center gap-1.5">
+                                {status !== 'approved' && (
+                                  <button onClick={() => handleApproveUser(u)} className={btnPrimary}>
+                                    <Check className="w-3 h-3 inline mr-1" />
+                                    Approve
+                                  </button>
+                                )}
+                                {status !== 'rejected' && (
+                                  <button onClick={() => handleRejectUser(u)} className={btnDanger}>
+                                    {status === 'approved' ? 'Revoke / Block' : 'Reject'}
+                                  </button>
+                                )}
+                                {status !== 'pending' && (
+                                  <button onClick={() => handleSetPendingUser(u)} className={btnSecondary}>
+                                    Set Pending
+                                  </button>
+                                )}
+                                <button onClick={() => handleDeleteUserRecord(u)} className={btnDanger}>
+                                  <Trash2 className="w-3 h-3 inline" />
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {filteredUsersList.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className={`py-6 text-center ${textMuted}`}>
+                          No users found matching your filter.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
@@ -1934,15 +2298,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                             {item.read ? 'Mark Unread' : 'Mark Read'}
                           </button>
                           {item.mediaUrl && (
-                            <a
-                              href={item.mediaUrl}
-                              download={`kashish_${item.type}_${item.id}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className={`${btnSecondary} inline-block`}
+                            <button
+                              type="button"
+                              onClick={() => void handleDownloadInboxMedia(item)}
+                              className={btnSecondary}
                             >
                               Download
-                            </a>
+                            </button>
                           )}
                           <button onClick={() => setReplyTarget(item)} className={btnPrimary}>
                             Reply
@@ -3283,6 +3645,12 @@ service cloud.firestore {
     match /notifications/{id} { allow read: if isSignedIn(); allow update: if isSignedIn(); allow create, delete: if isAdmin(); }
     match /overlays/{id} { allow read: if isSignedIn(); allow update: if isSignedIn(); allow create, delete: if isAdmin(); }
     match /settings/{id} { allow read: if isSignedIn(); allow create, update: if isAdmin() || id == 'stats'; allow delete: if isAdmin(); }
+    match /users/{userId} {
+      allow read: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+      allow create: if isAdmin() || (isSignedIn() && request.auth.uid == userId && request.resource.data.get('approved', false) == false);
+      allow update: if isAdmin() || (isSignedIn() && request.auth.uid == userId && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['approved', 'status', 'role']));
+      allow delete: if isAdmin();
+    }
   }
 }`}
                 </pre>

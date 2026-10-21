@@ -63,27 +63,11 @@ export function triggerHaptic(ms: number = 40): void {
   }
 }
 
-export function showNativeToast(message: string): void {
-  try {
-    if (typeof window !== 'undefined' && window.AndroidApp?.showToast) {
-      window.AndroidApp.showToast(message);
-      return;
-    }
-    if (typeof document !== 'undefined') {
-      const existing = document.getElementById('kashish-web-toast');
-      if (existing) existing.remove();
-      const toast = document.createElement('div');
-      toast.id = 'kashish-web-toast';
-      toast.textContent = message;
-      toast.className =
-        'fixed bottom-20 left-1/2 -translate-x-1/2 z-[400] px-5 py-3 rounded-2xl bg-slate-900/95 text-white text-xs font-bold shadow-2xl border border-white/10 transition-all duration-300 pointer-events-none';
-      document.body.appendChild(toast);
-      setTimeout(() => {
-        toast.remove();
-      }, 3200);
-    }
-  } catch {
-    // Graceful no-op
+export function showNativeToast(_message: string): void {
+  // Bottom black toast popups intentionally disabled per user preference
+  if (typeof document !== 'undefined') {
+    const existing = document.getElementById('kashish-web-toast');
+    if (existing) existing.remove();
   }
 }
 
@@ -305,28 +289,43 @@ function blobToDataUrl(blob: Blob): Promise<string> {
 
 function dataUrlToBlob(dataUrl: string): Blob {
   const parts = dataUrl.split(',');
-  const mime = parts[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
+  const rawMime = parts[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
+  // Strip codec parameters like ';codecs=opus' so Blob MIME type is clean (e.g. 'audio/webm')
+  const cleanMime = rawMime.split(';')[0].trim() || 'application/octet-stream';
   const bstr = atob(parts[1] || '');
   let n = bstr.length;
   const u8arr = new Uint8Array(n);
   while (n--) {
     u8arr[n] = bstr.charCodeAt(n);
   }
-  return new Blob([u8arr], { type: mime });
+  return new Blob([u8arr], { type: cleanMime });
 }
 
 // In-memory cache for resolved chunked Firestore media URLs
 const resolvedChunkCache = new Map<string, string>();
 
 /**
- * Resolves a media URL. If it is a `firestore-chunked://<chunkGroupId>` reference
- * (used when audio/video files > 650KB are stored across multiple Firestore docs
- * without paid Firebase Storage), it fetches and reassembles the chunks into a Blob URL.
+ * Resolves a media URL.
+ * - If it is a `firestore-chunked://<chunkGroupId>` reference, fetches and reassembles chunks into a Blob URL.
+ * - If it is a `data:audio/...` base64 URL (which may include `;codecs=opus`), converts it to a clean Blob URL
+ *   so all desktop and mobile `<audio>` elements can play and seek it reliably.
  */
 export async function resolveFirestoreMediaUrl(url?: string): Promise<string> {
   if (!url) return '';
-  if (!url.startsWith('firestore-chunked://')) return url;
   if (resolvedChunkCache.has(url)) return resolvedChunkCache.get(url)!;
+
+  if (url.startsWith('data:audio/') || url.startsWith('data:video/')) {
+    try {
+      const blob = dataUrlToBlob(url);
+      const blobUrl = URL.createObjectURL(blob);
+      resolvedChunkCache.set(url, blobUrl);
+      return blobUrl;
+    } catch {
+      return url;
+    }
+  }
+
+  if (!url.startsWith('firestore-chunked://')) return url;
 
   const chunkGroupId = url.replace('firestore-chunked://', '').trim();
   try {
@@ -361,6 +360,8 @@ export interface CloudinaryRuntimeConfig {
   apiSecret?: string;
 }
 
+const PLACEHOLDER_PRESET = 'Unsigned Upload Preset Name';
+
 /**
  * Reads the active Cloudinary configuration synced from Firestore `settings/config`
  * (stored in localStorage `kashish_site_overrides` by SiteContentProvider) or env vars.
@@ -368,9 +369,7 @@ export interface CloudinaryRuntimeConfig {
  */
 export function getCloudinaryRuntimeConfig(): CloudinaryRuntimeConfig {
   let cloudName = (import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || 'dsfcu9y1h').trim();
-  let uploadPreset = (
-    import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || 'Unsigned Upload Preset Name'
-  ).trim();
+  let uploadPreset = (import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || '').trim();
   let apiKey = (import.meta.env.VITE_CLOUDINARY_API_KEY || '').trim();
   let apiSecret = (import.meta.env.VITE_CLOUDINARY_API_SECRET || '').trim();
 
@@ -395,6 +394,10 @@ export function getCloudinaryRuntimeConfig(): CloudinaryRuntimeConfig {
     }
   } catch {
     // Ignore storage read error
+  }
+
+  if (uploadPreset === PLACEHOLDER_PRESET) {
+    uploadPreset = '';
   }
 
   return { cloudName, uploadPreset, apiKey, apiSecret };
@@ -898,7 +901,24 @@ export async function logVoiceNoteToFirestore(
     if (typeof audio === 'string') {
       mediaUrl = audio;
     } else {
-      const res = await uploadFileToFirebaseStorage(audio, 'uploads_from_her', 'voice_note', onProgress);
+      const rawType = (audio.type || 'audio/webm').toLowerCase();
+      const ext = rawType.includes('mp4') || rawType.includes('m4a') || rawType.includes('aac')
+        ? 'mp4'
+        : rawType.includes('ogg')
+        ? 'ogg'
+        : rawType.includes('wav')
+        ? 'wav'
+        : 'webm';
+      const cleanMime = rawType.split(';')[0].trim() || `audio/${ext}`;
+      const normalizedBlob = new Blob([audio], { type: cleanMime });
+      const fileName = `voice_note_${Date.now()}.${ext}`;
+
+      const res = await uploadFileToFirebaseStorage(
+        normalizedBlob,
+        'uploads_from_her',
+        fileName,
+        onProgress
+      );
       mediaUrl = res.url;
       storagePath = res.storagePath;
     }
@@ -914,10 +934,11 @@ export async function logVoiceNoteToFirestore(
       senderEmail: auth.currentUser?.email || 'kashish',
       senderUid: auth.currentUser?.uid || '',
     });
-    await incrementStat('voice_received');
+    void incrementStat('voice_received');
     if (onProgress) onProgress(100);
     return true;
-  } catch {
+  } catch (err) {
+    console.error('Failed to save voice note to Firestore:', err);
     if (onProgress) onProgress(100);
     return false;
   }

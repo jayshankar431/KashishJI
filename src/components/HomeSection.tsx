@@ -20,7 +20,7 @@ import { PWAInstallButton } from './PWAInstallButton';
 import { CONFIG } from '../config';
 import { BirthdaySurpriseSpinner } from './BirthdaySurpriseSpinner';
 import { triggerHaptic, logNativeActivity, sendTelegramVoice, logVoiceNoteToFirestore, incrementStat, showNativeToast, isNativeApp, requestNativePermissions, makeNativePhoneCall } from '../androidBridge';
-import { Phone, Mic, StopCircle } from 'lucide-react';
+import { Phone, Mic, StopCircle, Send, Trash2, Volume2 } from 'lucide-react';
 import { DynamicSlot } from './DynamicSlot';
 import { useSite } from '../siteContent';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -81,10 +81,76 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
   const [isRecording, setIsRecording] = useState(false);
   const [isUploadingVoice, setIsUploadingVoice] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
+  const [recordedPreviewBlob, setRecordedPreviewBlob] = useState<Blob | null>(null);
+  const [recordedPreviewUrl, setRecordedPreviewUrl] = useState<string>('');
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const recordingRequestedRef = useRef(false);
+  const stopActionRef = useRef<'send' | 'preview' | 'cancel'>('send');
+  const wasMusicPlayingRef = useRef(false);
+
+  const cleanupMicStream = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch {}
+      });
+      mediaStreamRef.current = null;
+    }
+    recordingRequestedRef.current = false;
+  };
+
+  useEffect(() => {
+    return () => {
+      cleanupMicStream();
+      if (recordedPreviewUrl) {
+        URL.revokeObjectURL(recordedPreviewUrl);
+      }
+    };
+  }, [recordedPreviewUrl]);
+
+  const uploadVoiceBlob = (audioBlob: Blob) => {
+    if (audioBlob.size < 80) {
+      showNativeToast('Voice note was too short. Please speak for at least 1 second! 🎙️');
+      return;
+    }
+
+    if (recordedPreviewUrl) {
+      URL.revokeObjectURL(recordedPreviewUrl);
+    }
+    setRecordedPreviewBlob(null);
+    setRecordedPreviewUrl('');
+    setIsUploadingVoice(true);
+    showNativeToast('Sending Voice Note... 🎙️');
+
+    void (async () => {
+      try {
+        const [, savedToInbox] = await Promise.all([
+          sendTelegramVoice(audioBlob, `🎙️ New Voice Note from ${name}`).catch(() => ({ ok: false })),
+          logVoiceNoteToFirestore(`Voice Note from ${name} (${Math.max(1, recordingTime)}s)`, audioBlob),
+          incrementStat('voice_sent').catch(() => {}),
+        ]);
+
+        if (savedToInbox) {
+          showNativeToast('Voice Note Sent to Jay! 🎙️💖');
+          void logNativeActivity(`🎙️ ${name} sent a Voice Note!`);
+        } else {
+          showNativeToast('Could not upload voice note. Please check connection and try again.');
+        }
+      } catch {
+        showNativeToast('Could not send voice note. Please try again.');
+      } finally {
+        setIsUploadingVoice(false);
+      }
+    })();
+  };
 
   const startRecording = async () => {
     if (
@@ -95,24 +161,34 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
     ) {
       return;
     }
+
+    // Clear any previous unsent preview
+    if (recordedPreviewUrl) {
+      URL.revokeObjectURL(recordedPreviewUrl);
+      setRecordedPreviewUrl('');
+    }
+    setRecordedPreviewBlob(null);
+
     recordingRequestedRef.current = true;
+    stopActionRef.current = 'send';
     setIsStartingMic(true);
     triggerHaptic(35);
 
-    let stream: MediaStream | null = null;
-    let wasMusicPlaying = false;
-
     try {
-      if (typeof window === 'undefined' || !window.MediaRecorder || !navigator?.mediaDevices?.getUserMedia) {
+      if (
+        typeof window === 'undefined' ||
+        typeof window.MediaRecorder === 'undefined' ||
+        !navigator?.mediaDevices?.getUserMedia
+      ) {
         recordingRequestedRef.current = false;
         setIsStartingMic(false);
-        showNativeToast('Voice Recording not supported on this browser ❌');
+        showNativeToast('Voice Recording require HTTPS or a supported browser 🎙️');
         return;
       }
 
       // Immediately pause background music so it does not bleed into the recording
-      wasMusicPlaying = romanticAudio.getIsPlaying();
-      if (wasMusicPlaying) {
+      wasMusicPlayingRef.current = romanticAudio.getIsPlaying();
+      if (wasMusicPlayingRef.current) {
         romanticAudio.stop(false);
       }
 
@@ -120,26 +196,57 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
         requestNativePermissions(['MICROPHONE']);
       }
 
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+      } catch {
+        // Fallback to simplest constraint if advanced constraints fail on specific hardware
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
+
+      mediaStreamRef.current = stream;
+
       if (!recordingRequestedRef.current) {
-        stream.getTracks().forEach((track) => track.stop());
+        cleanupMicStream();
         setIsStartingMic(false);
-        if (wasMusicPlaying) romanticAudio.play();
+        if (wasMusicPlayingRef.current) romanticAudio.play();
         return;
       }
 
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
-        ? 'audio/ogg;codecs=opus'
-        : MediaRecorder.isTypeSupported('audio/mp4')
-        ? 'audio/mp4'
-        : '';
+      const candidateTypes = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/mp4',
+        'audio/ogg;codecs=opus',
+        'audio/ogg',
+        'audio/wav',
+      ];
+      let chosenMime = '';
+      if (typeof MediaRecorder.isTypeSupported === 'function') {
+        for (const t of candidateTypes) {
+          if (MediaRecorder.isTypeSupported(t)) {
+            chosenMime = t;
+            break;
+          }
+        }
+      }
 
-      const mediaRecorder = new MediaRecorder(stream, {
-        ...(mimeType ? { mimeType } : {}),
-        audioBitsPerSecond: 32000,
-      });
+      let mediaRecorder: MediaRecorder;
+      try {
+        mediaRecorder = chosenMime
+          ? new MediaRecorder(stream, { mimeType: chosenMime })
+          : new MediaRecorder(stream);
+      } catch {
+        // Ultimate fallback with zero options for strict mobile WebViews / iOS Safari
+        mediaRecorder = new MediaRecorder(stream);
+      }
+
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
@@ -149,61 +256,71 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
         }
       };
 
-      mediaRecorder.onstop = () => {
+      mediaRecorder.onerror = () => {
+        cleanupMicStream();
         setIsRecording(false);
         setIsStartingMic(false);
-        if (timerRef.current) {
-          clearInterval(timerRef.current);
-          timerRef.current = null;
-        }
+        if (wasMusicPlayingRef.current) romanticAudio.play();
+        showNativeToast('Recorder interrupted. Tap Record Voice to try again 🎙️');
+      };
 
-        // Release microphone hardware IMMEDIATELY so browser/OS never lags or holds audio focus
-        stream?.getTracks().forEach((track) => track.stop());
-        recordingRequestedRef.current = false;
-        if (wasMusicPlaying) {
+      mediaRecorder.onstop = () => {
+        const action = stopActionRef.current;
+        const activeMime = (mediaRecorder.mimeType || chosenMime || 'audio/webm').split(';')[0].trim();
+
+        setIsRecording(false);
+        setIsStartingMic(false);
+        cleanupMicStream();
+
+        if (wasMusicPlayingRef.current && action !== 'preview') {
           romanticAudio.play();
         }
 
-        const audioBlob = new Blob(audioChunksRef.current, {
-          type: mediaRecorder.mimeType || mimeType || 'audio/webm',
-        });
-        if (audioBlob.size < 100) {
-          showNativeToast('Voice note was too short. Tap once to record, then tap again to send! 🎙️');
+        if (action === 'cancel') {
+          audioChunksRef.current = [];
+          showNativeToast('Voice recording cancelled.');
           return;
         }
 
-        // Optimistic instant feedback — upload happens in background without freezing UI
-        setIsUploadingVoice(true);
-        showNativeToast('Sending Voice Note... 🎙️');
+        const audioBlob = new Blob(audioChunksRef.current, { type: activeMime || 'audio/webm' });
+        audioChunksRef.current = [];
 
-        void (async () => {
-          try {
-            await Promise.allSettled([
-              sendTelegramVoice(audioBlob, `🎙️ New Voice Note from ${name}`),
-              logVoiceNoteToFirestore(`Voice Note from ${name}`, audioBlob),
-              incrementStat('voice_sent'),
-            ]);
-            showNativeToast('Voice Note Sent! 🎙️🚀');
-            void logNativeActivity('🎙️ Kashish sent a Voice Note!');
-          } catch {
-            showNativeToast('Could not send voice note. Please try again.');
-          } finally {
-            setIsUploadingVoice(false);
-          }
-        })();
+        if (audioBlob.size < 80) {
+          showNativeToast('Voice note was too short. Speak for a moment, then tap Send! 🎙️');
+          return;
+        }
+
+        if (action === 'preview') {
+          const previewObjUrl = URL.createObjectURL(audioBlob);
+          setRecordedPreviewBlob(audioBlob);
+          setRecordedPreviewUrl(previewObjUrl);
+          showNativeToast('Recording ready! Listen or tap Send 🚀');
+          return;
+        }
+
+        uploadVoiceBlob(audioBlob);
       };
 
-      mediaRecorder.start(250);
+      // Start recording (use 500ms timeslice if supported, fallback to un-sliced start)
+      try {
+        mediaRecorder.start(500);
+      } catch {
+        mediaRecorder.start();
+      }
+
       setIsStartingMic(false);
       setIsRecording(true);
       setRecordingTime(0);
       triggerHaptic(50);
-      showNativeToast('Recording started... Tap again to send! 🎙️');
+      showNativeToast('Recording started... Speak now! 🎙️');
 
       timerRef.current = setInterval(() => {
         setRecordingTime((prev) => {
           if (prev + 1 >= 60 && mediaRecorderRef.current?.state === 'recording') {
-            mediaRecorderRef.current.stop();
+            stopActionRef.current = 'send';
+            try {
+              mediaRecorderRef.current.stop();
+            } catch {}
             setIsRecording(false);
             if (timerRef.current) clearInterval(timerRef.current);
           }
@@ -211,28 +328,61 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
         });
       }, 1000);
     } catch (err: any) {
-      stream?.getTracks().forEach((track) => track.stop());
-      recordingRequestedRef.current = false;
+      cleanupMicStream();
+      setIsRecording(false);
       setIsStartingMic(false);
-      if (wasMusicPlaying) romanticAudio.play();
-      console.warn('Microphone access unavailable or denied:', err?.message || err);
-      showNativeToast('Please allow Microphone access in permissions! 🎙️');
+      if (wasMusicPlayingRef.current) romanticAudio.play();
+
+      const errName = String(err?.name || '');
+      console.warn('Microphone error:', errName, err?.message || err);
+      if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
+        showNativeToast('No microphone found on this device 🎙️');
+      } else if (errName === 'NotReadableError' || errName === 'TrackStartError') {
+        showNativeToast('Microphone is busy in another app. Close other apps & try again 🎙️');
+      } else {
+        showNativeToast('Please allow Microphone permission in your browser/phone settings! 🎙️');
+      }
     }
   };
 
-  const stopRecording = () => {
-    recordingRequestedRef.current = false;
+  const stopRecording = (mode: 'send' | 'preview' | 'cancel' = 'send') => {
+    stopActionRef.current = mode;
     setIsStartingMic(false);
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
 
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      mediaRecorderRef.current.stop();
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== 'inactive') {
+      try {
+        if (recorder.state === 'recording' && typeof recorder.requestData === 'function') {
+          recorder.requestData();
+        }
+      } catch {}
+      try {
+        recorder.stop();
+      } catch {
+        cleanupMicStream();
+      }
       setIsRecording(false);
       triggerHaptic(40);
+    } else {
+      cleanupMicStream();
+      setIsRecording(false);
     }
+  };
+
+  const discardPreviewRecording = () => {
+    if (recordedPreviewUrl) {
+      URL.revokeObjectURL(recordedPreviewUrl);
+    }
+    setRecordedPreviewBlob(null);
+    setRecordedPreviewUrl('');
+    if (wasMusicPlayingRef.current) {
+      romanticAudio.play();
+    }
+    showNativeToast('Voice note discarded.');
   };
 
   const handleSpecialHeartTap = () => {
@@ -456,42 +606,145 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
               {site.features?.voiceNote !== false && (
                 <button
                   type="button"
-                  disabled={isUploadingVoice || isStartingMic}
+                  disabled={isUploadingVoice}
                   onClick={() => {
+                    if (isStartingMic) return;
                     if (!isRecording) {
                       void startRecording();
                     } else {
-                      stopRecording();
+                      stopRecording('send');
                     }
                   }}
                   aria-label="Tap to record and send a voice note"
                   aria-pressed={isRecording}
                   className={`relative flex flex-col items-center justify-center gap-1.5 p-3 rounded-2xl border text-[10px] sm:text-xs font-bold shadow-sm transition-transform duration-150 active:scale-95 select-none touch-manipulation cursor-pointer disabled:opacity-60 ${
                     isRecording
-                      ? 'bg-rose-500 border-rose-600 text-white'
+                      ? 'bg-rose-500 border-rose-600 text-white shadow-lg shadow-rose-500/30'
                       : 'bg-amber-500/5 border-amber-500/20 text-amber-600 dark:text-amber-400'
                   }`}
                 >
-                  {isRecording ? <StopCircle className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                  {isRecording ? <StopCircle className="w-5 h-5 animate-pulse" /> : <Mic className="w-5 h-5" />}
                   <span>
                     {isStartingMic
                       ? 'Opening Mic...'
                       : isUploadingVoice
                       ? 'Sending Voice...'
                       : isRecording
-                      ? `${recordingTime}s (Tap to Send)`
+                      ? `${recordingTime}s · Tap to Send`
                       : 'Record Voice'}
                   </span>
                   {isRecording && (
-                    <div className="absolute top-1.5 right-1.5 flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-200 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-300"></span>
+                    <div className="absolute top-1.5 right-1.5 flex h-2.5 w-2.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-white"></span>
                     </div>
                   )}
                 </button>
               )}
             </div>
           </div>
+
+          {/* Live Voice Recorder Control Card (Active Recording OR Preview before Sending) */}
+          {(isRecording || recordedPreviewBlob) && (
+            <div className="pt-2 max-w-sm mx-auto w-full animate-fade-in">
+              <div
+                style={{
+                  backgroundColor: 'var(--card)',
+                  borderColor: isRecording ? 'rgba(244, 63, 94, 0.5)' : 'var(--card-border)',
+                  boxShadow: '0 8px 24px var(--shadow-color)',
+                }}
+                className="rounded-2xl border p-3.5 space-y-3 text-left"
+              >
+                {isRecording ? (
+                  <>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex h-2.5 w-2.5 rounded-full bg-rose-500 animate-ping" />
+                        <span style={{ color: 'var(--text)' }} className="text-xs font-bold">
+                          Recording Voice Note...
+                        </span>
+                      </div>
+                      <span className="text-xs font-mono font-bold text-rose-500 tabular-nums">
+                        00:{String(recordingTime).padStart(2, '0')} / 01:00
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2 pt-0.5">
+                      <button
+                        type="button"
+                        onClick={() => stopRecording('cancel')}
+                        className="flex items-center justify-center gap-1 py-2 px-2.5 rounded-xl border border-slate-400/30 text-xs font-bold text-[var(--text-soft)] hover:bg-rose-500/10 hover:text-rose-500 transition-colors cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Cancel</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => stopRecording('preview')}
+                        className="flex items-center justify-center gap-1 py-2 px-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 text-xs font-bold text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 transition-colors cursor-pointer"
+                      >
+                        <Volume2 className="w-3.5 h-3.5" />
+                        <span>Preview</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => stopRecording('send')}
+                        className="flex items-center justify-center gap-1 py-2 px-2.5 rounded-xl bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold shadow-sm transition-colors cursor-pointer"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        <span>Send Now</span>
+                      </button>
+                    </div>
+                  </>
+                ) : recordedPreviewBlob ? (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <span style={{ color: 'var(--text)' }} className="text-xs font-bold flex items-center gap-1.5">
+                        <Mic className="w-3.5 h-3.5 text-rose-500" />
+                        Voice Note Ready ({Math.max(1, recordingTime)}s)
+                      </span>
+                      <button
+                        type="button"
+                        onClick={discardPreviewRecording}
+                        className="text-[11px] font-bold text-rose-500 hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        Discard
+                      </button>
+                    </div>
+
+                    {recordedPreviewUrl && (
+                      <audio
+                        src={recordedPreviewUrl}
+                        controls
+                        className="w-full h-9 rounded-lg"
+                      />
+                    )}
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void startRecording()}
+                        className="py-2 px-3 rounded-xl border border-[var(--card-border)] text-xs font-bold text-[var(--text)] hover:bg-[var(--card-subtle)] transition-colors cursor-pointer"
+                      >
+                        Re-record 🎙️
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => uploadVoiceBlob(recordedPreviewBlob)}
+                        className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold shadow-sm transition-colors cursor-pointer"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        <span>Send Voice Note</span>
+                      </button>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            </div>
+          )}
 
           {/* Dynamic Slot: Home Quick Actions */}
           <DynamicSlot slotId="home_quick_actions" onNavigate={onNavigate} isDarkMode={isDarkMode} />

@@ -68,10 +68,20 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // 9. USERS COLLECTION
+    // 9. USERS COLLECTION (Admin Approval Gate)
     match /users/{userId} {
       allow read: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
-      allow write: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+      allow create: if isAdmin() || (
+        isSignedIn() &&
+        request.auth.uid == userId &&
+        request.resource.data.get('approved', false) == false
+      );
+      allow update: if isAdmin() || (
+        isSignedIn() &&
+        request.auth.uid == userId &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['approved', 'status', 'role'])
+      );
+      allow delete: if isAdmin();
     }
   }
 }

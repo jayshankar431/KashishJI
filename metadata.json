@@ -2,9 +2,8 @@
   "name": "Remix Kashish\u0027s World - A Romantic Gift",
   "description": "A deeply romantic, heart-touching interactive surprise gift world for Kashish, with games, puzzles, poems, memories, and secret letters.",
   "requestFramePermissions": [
-    "CAMERA",
-    "MICROPHONE",
-    "NOTIFICATIONS"
+    "camera",
+    "microphone"
   ],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
