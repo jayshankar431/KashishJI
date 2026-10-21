@@ -746,11 +746,15 @@ export default function App() {
 
         if (!isOutdatedByAutoPush && !isForcedByAdmin) return null;
 
+        const defaultUrl = 'https://kashishji.web.app/Kashishhh.apk';
+        const configuredUrl = site.apkDownloadUrl?.trim() || '';
         const downloadUrl =
-          site.apkDownloadUrl?.trim() ||
-          liveApkMeta?.apkUrl ||
-          liveApkMeta?.githubReleaseApkUrl ||
-          'https://kashishji.web.app/Kashishhh.apk';
+          configuredUrl && configuredUrl !== defaultUrl
+            ? configuredUrl
+            : liveApkMeta?.githubReleaseApkUrl ||
+              liveApkMeta?.apkUrl ||
+              configuredUrl ||
+              defaultUrl;
 
         return (
           <div className="fixed inset-0 z-[1550] bg-[#12071a]/98 backdrop-blur-xl text-white flex flex-col items-center justify-center p-6 text-center select-none">

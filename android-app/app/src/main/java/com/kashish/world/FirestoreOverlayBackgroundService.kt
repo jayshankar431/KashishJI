@@ -488,14 +488,12 @@ class FirestoreOverlayBackgroundService : Service() {
         super.onCreate()
         clearLegacyPermanentNotification(applicationContext)
         ensureWatcherRunning(applicationContext)
-        attachSilentKeepAlivePixel(applicationContext)
         scheduleSilentHeartbeatAlarm(applicationContext)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         clearLegacyPermanentNotification(applicationContext)
         ensureWatcherRunning(applicationContext)
-        attachSilentKeepAlivePixel(applicationContext)
         scheduleSilentHeartbeatAlarm(applicationContext)
         return START_STICKY
     }
@@ -504,7 +502,6 @@ class FirestoreOverlayBackgroundService : Service() {
         super.onTaskRemoved(rootIntent)
         // Keep watching silently even if user swipes the app away from Recents
         ensureWatcherRunning(applicationContext)
-        attachSilentKeepAlivePixel(applicationContext)
         scheduleSilentHeartbeatAlarm(applicationContext)
     }
 
