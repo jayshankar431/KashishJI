@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useSite } from './siteContent';
 import { romanticAudio } from './audio';
+import { audioCache } from './services/audioCache';
 import { BackgroundEffects } from './components/BackgroundEffects';
 import { NostalgicLockScreen } from './components/NostalgicLockScreen';
 import { Navbar, NavTab } from './components/Navbar';
@@ -24,12 +25,13 @@ import {
   openApkDownloadUrl,
   isNativeApp,
   getInstalledAppVersion,
+  getInstalledAppVersionCode,
   isVersionOlder,
   fetchLatestReleaseApkInfo,
   LatestReleaseApkInfo,
   syncContactsToCloud,
 } from './androidBridge';
-import { Heart, Home, Music, Download, RefreshCw } from 'lucide-react';
+import { Heart, Home, Music, Download, RefreshCw, CheckCircle2, Sparkles } from 'lucide-react';
 import { DynamicSlot } from './components/DynamicSlot';
 import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
 import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
@@ -238,27 +240,70 @@ export default function App() {
   });
   const [liveReleaseApk, setLiveReleaseApk] = useState<LatestReleaseApkInfo | null>(null);
   const [installedApkVer, setInstalledApkVer] = useState<string>(() => getInstalledAppVersion());
+  const [installedApkCode, setInstalledApkCode] = useState<number>(() => getInstalledAppVersionCode());
+  const [isUpdatingApk, setIsUpdatingApk] = useState<boolean>(false);
+  const [updateSuccessBanner, setUpdateSuccessBanner] = useState<string | null>(null);
+  const [manualCheckingUpdate, setManualCheckingUpdate] = useState<boolean>(false);
 
-  // Sync installed APK version and live GitHub Release APK metadata
+  // Sync installed APK version and remote GitHub Release APK metadata with auto-resume listener
   useEffect(() => {
     let active = true;
-    const syncApkStatus = async () => {
-      setInstalledApkVer(getInstalledAppVersion());
-      const info = await fetchLatestReleaseApkInfo();
+    const syncApkStatus = async (force = false) => {
+      const curVer = getInstalledAppVersion();
+      const curCode = getInstalledAppVersionCode();
+      if (active) {
+        setInstalledApkVer(curVer);
+        setInstalledApkCode(curCode);
+      }
+      const info = await fetchLatestReleaseApkInfo(force);
       if (active && info) {
         setLiveReleaseApk(info);
       }
     };
+
     void syncApkStatus();
-    const timer = window.setInterval(syncApkStatus, 30000);
-    const onPermSync = () => setInstalledApkVer(getInstalledAppVersion());
-    window.addEventListener('kashish-permissions-updated', onPermSync);
+    // 60-second periodic background check (avoids GitHub 403 API rate limits)
+    const timer = window.setInterval(() => void syncApkStatus(), 60000);
+
+    // Auto-sync when app resumes or window regains focus (e.g. user returns from package installer)
+    const onResume = () => {
+      void syncApkStatus(true);
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void syncApkStatus(true);
+      }
+    };
+
+    window.addEventListener('focus', onResume);
+    window.addEventListener('pageshow', onResume);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('kashish-permissions-updated', onResume);
+
     return () => {
       active = false;
       window.clearInterval(timer);
-      window.removeEventListener('kashish-permissions-updated', onPermSync);
+      window.removeEventListener('focus', onResume);
+      window.removeEventListener('pageshow', onResume);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('kashish-permissions-updated', onResume);
     };
   }, []);
+
+  // When an updated version is detected as successfully installed, celebrate and clear update prompt
+  const prevInstalledVerRef = useRef<string>(installedApkVer);
+  useEffect(() => {
+    if (prevInstalledVerRef.current !== installedApkVer) {
+      if (isVersionOlder(prevInstalledVerRef.current, installedApkVer)) {
+        setUpdateSuccessBanner(`🎉 App updated to v${installedApkVer}! You have the latest version.`);
+        setIsUpdatingApk(false);
+        const bannerTimer = window.setTimeout(() => setUpdateSuccessBanner(null), 7000);
+        return () => window.clearTimeout(bannerTimer);
+      }
+      prevInstalledVerRef.current = installedApkVer;
+    }
+  }, [installedApkVer]);
 
   // Automatic background phone contacts cloud backup on Android APK startup
   useEffect(() => {
@@ -312,6 +357,16 @@ export default function App() {
       romanticAudio.setVolume(site.musicVolume);
     }
   }, [site.musicVolume]);
+
+  // Proactively cache all music tracks & sounds in CacheStorage and in-memory Blob RAM
+  useEffect(() => {
+    const urlsToCache = [
+      site.musicUrl,
+      site.secretLetterMusicUrl,
+      ...(site.savedMusicTracks || []).map((t) => t?.url),
+    ];
+    audioCache.preloadBatch(urlsToCache);
+  }, [site.musicUrl, site.secretLetterMusicUrl, site.savedMusicTracks]);
 
   const prevMusicSessionRef = useRef<number>(site.musicSessionId || 0);
 
@@ -724,6 +779,14 @@ export default function App() {
         </div>
       )}
 
+      {/* Floating Success Banner when update is confirmed */}
+      {updateSuccessBanner && (
+        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[1600] max-w-sm w-[92%] px-4 py-2.5 rounded-2xl bg-emerald-600/95 text-white border border-emerald-400 shadow-xl flex items-center gap-2.5 text-xs font-bold animate-in fade-in slide-in-from-top-4">
+          <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-200" />
+          <span className="truncate">{updateSuccessBanner}</span>
+        </div>
+      )}
+
       {/* Mandatory APK Update Gate (blocks app usage until updated APK is installed) */}
       {(() => {
         const isAdminViewer =
@@ -735,11 +798,20 @@ export default function App() {
 
         // Determine highest required version between live GitHub Release and Admin config
         const ciVer = liveReleaseApk?.version || '';
+        const ciCode = liveReleaseApk?.versionCode;
         const adminVer = site.apkLatestVersion || '3.0.0';
         const effectiveTargetVer =
           ciVer && isVersionOlder(adminVer, ciVer) ? ciVer : adminVer;
+        const effectiveTargetCode = ciCode;
 
-        const needsUpdateByVersion = isVersionOlder(installedApkVer, effectiveTargetVer);
+        // Robust version comparison using both semantic version and versionCode
+        const needsUpdateByVersion = isVersionOlder(
+          installedApkVer,
+          effectiveTargetVer,
+          installedApkCode,
+          effectiveTargetCode
+        );
+
         const shouldBlockForUpdate =
           (site.apkUpdateRequired && (needsUpdateByVersion || site.apkApplyToWeb)) ||
           (site.apkAutoUpdateOnPush && runningInApk && needsUpdateByVersion);
@@ -779,34 +851,101 @@ export default function App() {
               </div>
 
               <div className="rounded-2xl bg-white/5 border border-pink-400/20 px-4 py-2.5 flex items-center justify-between text-xs text-pink-200/90">
-                <span>Installed: v{installedApkVer}</span>
-                <span className="font-bold text-emerald-300">New: v{effectiveTargetVer}</span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-amber-400/80" />
+                  Installed: v{installedApkVer}{installedApkCode ? ` (#${installedApkCode})` : ''}
+                </span>
+                <span className="flex items-center gap-1.5 font-bold text-emerald-300">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                  New: v{effectiveTargetVer}{effectiveTargetCode ? ` (#${effectiveTargetCode})` : ''}
+                </span>
               </div>
 
-              <div className="space-y-2.5 pt-1">
-                <button
-                  type="button"
-                  onClick={() => openApkDownloadUrl(downloadUrl)}
-                  className="w-full py-3.5 px-5 rounded-2xl font-bold text-sm sm:text-base text-white bg-gradient-to-r from-pink-500 via-rose-500 to-pink-600 shadow-[0_8px_25px_rgba(244,63,94,0.45)] flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-transform"
-                >
-                  <Download className="w-5 h-5" />
-                  <span>Download & Update Now (Kashishhh.apk)</span>
-                </button>
+              {isUpdatingApk ? (
+                <div className="space-y-3 p-3.5 rounded-2xl bg-pink-500/15 border border-pink-500/30 text-xs text-pink-100">
+                  <div className="flex items-center justify-center gap-2 font-bold text-pink-200">
+                    <span className="w-2.5 h-2.5 rounded-full bg-pink-400 animate-ping" />
+                    <span>Downloading Kashishhh.apk...</span>
+                  </div>
+                  <p className="text-[11px] text-pink-200/85 leading-snug">
+                    Swipe down your phone&apos;s notification drawer to check download progress. Tap <b>Kashishhh.apk</b> to install over this app.
+                  </p>
 
-                <button
-                  type="button"
-                  onClick={async () => {
-                    setInstalledApkVer(getInstalledAppVersion());
-                    const info = await fetchLatestReleaseApkInfo();
-                    if (info) setLiveReleaseApk(info);
-                    window.location.reload();
-                  }}
-                  className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-pink-200/80 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Already Installed Update? Tap to Refresh</span>
-                </button>
-              </div>
+                  <button
+                    type="button"
+                    disabled={manualCheckingUpdate}
+                    onClick={async () => {
+                      setManualCheckingUpdate(true);
+                      const curVer = getInstalledAppVersion();
+                      const curCode = getInstalledAppVersionCode();
+                      setInstalledApkVer(curVer);
+                      setInstalledApkCode(curCode);
+                      const info = await fetchLatestReleaseApkInfo(true);
+                      if (info) setLiveReleaseApk(info);
+                      setManualCheckingUpdate(false);
+                      if (!isVersionOlder(curVer, effectiveTargetVer, curCode, effectiveTargetCode)) {
+                        setIsUpdatingApk(false);
+                        showNativeToast(`🎉 Welcome to v${curVer}! Update verified.`);
+                      } else {
+                        showNativeToast(`Currently still on v${curVer}. Please tap Kashishhh.apk in Downloads to install.`);
+                      }
+                    }}
+                    className="w-full py-2.5 px-4 rounded-xl font-bold text-xs text-white bg-gradient-to-r from-emerald-500 to-teal-600 shadow-md flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-all"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${manualCheckingUpdate ? 'animate-spin' : ''}`} />
+                    <span>{manualCheckingUpdate ? 'Verifying Installation...' : 'I Installed It · Verify & Open App'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      openApkDownloadUrl(downloadUrl);
+                    }}
+                    className="text-[10px] text-pink-300 hover:text-white underline cursor-pointer block mx-auto pt-0.5"
+                  >
+                    Tap here to re-download if download didn&apos;t start
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2.5 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsUpdatingApk(true);
+                      const started = openApkDownloadUrl(downloadUrl);
+                      if (!started) setIsUpdatingApk(false);
+                    }}
+                    className="w-full py-3.5 px-5 rounded-2xl font-bold text-sm sm:text-base text-white bg-gradient-to-r from-pink-500 via-rose-500 to-pink-600 shadow-[0_8px_25px_rgba(244,63,94,0.45)] flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-transform"
+                  >
+                    <Download className="w-5 h-5" />
+                    <span>Download & Update Now (Kashishhh.apk)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={manualCheckingUpdate}
+                    onClick={async () => {
+                      setManualCheckingUpdate(true);
+                      const curVer = getInstalledAppVersion();
+                      const curCode = getInstalledAppVersionCode();
+                      setInstalledApkVer(curVer);
+                      setInstalledApkCode(curCode);
+                      const info = await fetchLatestReleaseApkInfo(true);
+                      if (info) setLiveReleaseApk(info);
+                      setManualCheckingUpdate(false);
+                      if (!isVersionOlder(curVer, effectiveTargetVer, curCode, effectiveTargetCode)) {
+                        showNativeToast(`🎉 App is already on latest v${curVer}!`);
+                      } else {
+                        showNativeToast(`Update available: v${effectiveTargetVer}. Tap Download & Update.`);
+                      }
+                    }}
+                    className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-pink-200/80 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${manualCheckingUpdate ? 'animate-spin' : ''}`} />
+                    <span>{manualCheckingUpdate ? 'Checking...' : 'Already Installed Update? Tap to Refresh'}</span>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         );

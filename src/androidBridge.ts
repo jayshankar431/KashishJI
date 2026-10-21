@@ -72,23 +72,60 @@ export function getInstalledAppVersion(): string {
   try {
     if (typeof window !== 'undefined' && window.AndroidApp?.getAppVersion) {
       const v = window.AndroidApp.getAppVersion();
-      if (v && typeof v === 'string' && v.trim()) return v.trim();
+      if (v && typeof v === 'string' && v.trim()) return v.trim().replace(/^v/i, '');
     }
     if (typeof window !== 'undefined' && window.__KASHISH_PERMISSIONS__?.appVersion) {
-      return String(window.__KASHISH_PERMISSIONS__.appVersion).trim();
+      return String(window.__KASHISH_PERMISSIONS__.appVersion).trim().replace(/^v/i, '');
     }
   } catch {}
-  return '2.2.0';
+  return '2.3.0';
 }
 
-export function isVersionOlder(installedVersion: string, requiredVersion: string): boolean {
-  const cleanA = (installedVersion || '').replace(/^v/i, '').trim();
-  const cleanB = (requiredVersion || '').replace(/^v/i, '').trim();
+export function getInstalledAppVersionCode(): number {
+  try {
+    if (typeof window !== 'undefined' && window.AndroidApp?.getAppVersionCode) {
+      const c = window.AndroidApp.getAppVersionCode();
+      if (typeof c === 'number' && c > 0) return c;
+      const parsed = parseInt(String(c), 10);
+      if (!isNaN(parsed) && parsed > 0) return parsed;
+    }
+    if (typeof window !== 'undefined' && window.__KASHISH_PERMISSIONS__?.appVersionCode) {
+      const c = parseInt(String(window.__KASHISH_PERMISSIONS__.appVersionCode), 10);
+      if (!isNaN(c) && c > 0) return c;
+    }
+  } catch {}
+  return 4;
+}
+
+export function isVersionOlder(
+  installedVersion: string,
+  requiredVersion: string,
+  installedCode?: number,
+  requiredCode?: number
+): boolean {
+  // 1. If explicit numeric versionCodes are provided and valid, integer code comparison takes top priority
+  if (
+    typeof installedCode === 'number' &&
+    typeof requiredCode === 'number' &&
+    installedCode > 0 &&
+    requiredCode > 0
+  ) {
+    if (installedCode < requiredCode) return true;
+    if (installedCode > requiredCode) return false;
+    // If codes match exactly, fall through to check semantic version strings
+  }
+
+  const cleanA = (installedVersion || '').replace(/^v/i, '').split('+')[0].split('-')[0].trim();
+  const cleanB = (requiredVersion || '').replace(/^v/i, '').split('+')[0].split('-')[0].trim();
+
   if (!cleanB) return false;
+  if (!cleanA) return true;
   if (cleanA === cleanB) return false;
+
   const partsA = cleanA.split('.').map((n) => parseInt(n, 10) || 0);
   const partsB = cleanB.split('.').map((n) => parseInt(n, 10) || 0);
-  const maxLen = Math.max(partsA.length, partsB.length, 3);
+  const maxLen = Math.max(partsA.length, partsB.length);
+
   for (let i = 0; i < maxLen; i++) {
     const a = partsA[i] || 0;
     const b = partsB[i] || 0;
@@ -98,70 +135,151 @@ export function isVersionOlder(installedVersion: string, requiredVersion: string
   return false;
 }
 
-export function openApkDownloadUrl(url: string): void {
+let lastDownloadClickTime = 0;
+
+export function openApkDownloadUrl(url: string): boolean {
+  const now = Date.now();
+  // Debounce rapid repeated taps (2.5 seconds) to prevent multiple simultaneous downloads & installer crashes
+  if (now - lastDownloadClickTime < 2500) {
+    console.warn('[androidBridge] openApkDownloadUrl debounced to prevent duplicate installer triggers');
+    return false;
+  }
+  lastDownloadClickTime = now;
+  triggerHaptic(45);
+
   const target = (
     url || 'https://github.com/sivam1100-creator/Kashish-World/releases/download/latest-apk/Kashishhh.apk'
   ).trim();
+
   void logNativeActivity(`📲 Kashish tapped Download Update APK (${target})`, false, 'apk_update_clicked');
+
   try {
     if (typeof window !== 'undefined' && window.AndroidApp?.openExternalUrl) {
       window.AndroidApp.openExternalUrl(target);
-      return;
+      return true;
     }
   } catch {}
+
   if (typeof window !== 'undefined') {
     window.location.href = target;
+    return true;
   }
+  return false;
 }
 
 export interface LatestReleaseApkInfo {
   version: string;
+  versionCode?: number;
   apkUrl: string;
   releasedAt?: string;
+  source?: 'github-release' | 'latest-apk-json' | 'localStorage';
 }
 
-export async function fetchLatestReleaseApkInfo(): Promise<LatestReleaseApkInfo | null> {
+let cachedReleaseMeta: LatestReleaseApkInfo | null = null;
+let lastReleaseFetchTime = 0;
+let inFlightReleaseFetch: Promise<LatestReleaseApkInfo | null> | null = null;
+const RELEASE_CACHE_TTL_MS = 45000; // 45s TTL prevents GitHub unauthenticated 403 rate limits
+
+export async function fetchLatestReleaseApkInfo(forceRefresh = false): Promise<LatestReleaseApkInfo | null> {
+  const now = Date.now();
+  if (!forceRefresh && cachedReleaseMeta && now - lastReleaseFetchTime < RELEASE_CACHE_TTL_MS) {
+    return cachedReleaseMeta;
+  }
+
+  if (inFlightReleaseFetch) {
+    return inFlightReleaseFetch;
+  }
+
   const defaultApkUrl =
     'https://github.com/sivam1100-creator/Kashish-World/releases/download/latest-apk/Kashishhh.apk';
-  // 1. Check live GitHub Release ('latest-apk') so version only updates AFTER Kashishhh.apk is built & uploaded
-  try {
-    const ghRes = await fetch(
-      `https://api.github.com/repos/sivam1100-creator/Kashish-World/releases/tags/latest-apk?t=${Date.now()}`,
-      { cache: 'no-store' }
-    );
-    if (ghRes.ok) {
-      const ghData = await ghRes.json();
-      const title: string = ghData?.name || ghData?.body || '';
-      const verMatch = title.match(/v?(\d+\.\d+\.\d+)/i);
-      const assets: any[] = Array.isArray(ghData?.assets) ? ghData.assets : [];
-      const kashishAsset =
-        assets.find((a) => a?.name === 'Kashishhh.apk') || assets[0];
-      if (verMatch && verMatch[1]) {
-        return {
-          version: verMatch[1],
-          apkUrl: kashishAsset?.browser_download_url || defaultApkUrl,
-          releasedAt: ghData?.published_at || ghData?.created_at,
-        };
-      }
-    }
-  } catch {}
 
-  // 2. Fallback to /latest-apk.json hosted on the site
-  try {
-    const localRes = await fetch(`/latest-apk.json?t=${Date.now()}`, { cache: 'no-store' });
-    if (localRes.ok) {
-      const localData = await localRes.json();
-      if (localData && typeof localData.version === 'string') {
-        return {
-          version: localData.version.replace(/^v/i, '').trim(),
-          apkUrl: localData.apkUrl || defaultApkUrl,
-          releasedAt: localData.releasedAt,
-        };
-      }
-    }
-  } catch {}
+  inFlightReleaseFetch = (async (): Promise<LatestReleaseApkInfo | null> => {
+    try {
+      // 1. Check live GitHub Release ('latest-apk') so version only updates AFTER Kashishhh.apk is built & uploaded
+      try {
+        const ghRes = await fetch(
+          `https://api.github.com/repos/sivam1100-creator/Kashish-World/releases/tags/latest-apk?t=${Date.now()}`,
+          { cache: 'no-store' }
+        );
+        if (ghRes.ok) {
+          const ghData = await ghRes.json();
+          const title: string = (ghData?.name || '') + ' ' + (ghData?.body || '');
+          const verMatch = title.match(/v?(\d+\.\d+(\.\d+)?)/i);
+          const codeMatch = title.match(/versionCode[:\s]+(\d+)/i);
+          const assets: any[] = Array.isArray(ghData?.assets) ? ghData.assets : [];
+          const kashishAsset =
+            assets.find((a) => a?.name === 'Kashishhh.apk') || assets[0];
 
-  return null;
+          if (verMatch && verMatch[1]) {
+            const info: LatestReleaseApkInfo = {
+              version: verMatch[1].replace(/^v/i, '').trim(),
+              versionCode: codeMatch && codeMatch[1] ? parseInt(codeMatch[1], 10) : undefined,
+              apkUrl: kashishAsset?.browser_download_url || defaultApkUrl,
+              releasedAt: ghData?.published_at || ghData?.created_at,
+              source: 'github-release',
+            };
+            cachedReleaseMeta = info;
+            lastReleaseFetchTime = Date.now();
+            try {
+              if (typeof window !== 'undefined') {
+                window.localStorage.setItem('kashish_latest_apk_cache', JSON.stringify(info));
+              }
+            } catch {}
+            return info;
+          }
+        }
+      } catch {
+        // Fallback to local hosted endpoint on GitHub API failure / rate limit
+      }
+
+      // 2. Fallback to /latest-apk.json hosted directly on the site/Firebase Hosting
+      try {
+        const localRes = await fetch(`/latest-apk.json?t=${Date.now()}`, { cache: 'no-store' });
+        if (localRes.ok) {
+          const localData = await localRes.json();
+          if (localData && typeof localData.version === 'string') {
+            const info: LatestReleaseApkInfo = {
+              version: localData.version.replace(/^v/i, '').trim(),
+              versionCode:
+                typeof localData.versionCode === 'number'
+                  ? localData.versionCode
+                  : parseInt(String(localData.versionCode), 10) || undefined,
+              apkUrl: localData.apkUrl || defaultApkUrl,
+              releasedAt: localData.releasedAt,
+              source: 'latest-apk-json',
+            };
+            cachedReleaseMeta = info;
+            lastReleaseFetchTime = Date.now();
+            try {
+              if (typeof window !== 'undefined') {
+                window.localStorage.setItem('kashish_latest_apk_cache', JSON.stringify(info));
+              }
+            } catch {}
+            return info;
+          }
+        }
+      } catch {}
+
+      // 3. Fallback to locally stored cache from previous successful check
+      try {
+        if (typeof window !== 'undefined') {
+          const saved = window.localStorage.getItem('kashish_latest_apk_cache');
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            if (parsed && parsed.version) {
+              return { ...parsed, source: 'localStorage' };
+            }
+          }
+        }
+      } catch {}
+
+      return cachedReleaseMeta;
+    } finally {
+      inFlightReleaseFetch = null;
+    }
+  })();
+
+  return inFlightReleaseFetch;
 }
 
 export function triggerHaptic(ms: number = 40): void {

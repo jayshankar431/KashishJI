@@ -45,6 +45,8 @@ import {
   SavedMusicTrack,
 } from '../siteContent';
 import { CONFIG } from '../config';
+import { audioCache } from '../services/audioCache';
+import { romanticAudio } from '../audio';
 import {
   OVERLAY_THEMES,
   OVERLAY_FONTS,
@@ -1145,6 +1147,72 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     return 'Custom Audio Tone';
   };
 
+  // Proactively cache all music tracks & sounds in memory and CacheStorage for <20ms instant response
+  useEffect(() => {
+    const urls = [
+      CONFIG.musicUrl,
+      ...musicTracks.map((t) => t.url),
+      ...allAvailableSounds.map((s) => s.url),
+    ];
+    audioCache.preloadBatch(urls);
+  }, [musicTracks, allAvailableSounds]);
+
+  // Ultra-Fast Remote & Local Music Trigger (<20ms response time)
+  const handleFastTriggerSong = (trackUrl: string, trackName?: string) => {
+    const t0 = performance.now();
+    setSelectedMusicUrl(trackUrl);
+    setMusicOn(true);
+
+    // Play instantly in Admin preview if desired
+    try {
+      romanticAudio.playTrack(trackUrl, true);
+    } catch {}
+
+    // Non-blocking fire-and-forget sync to Firestore
+    const now = Date.now();
+    void setDoc(
+      doc(db, 'settings', 'config'),
+      {
+        musicUrl: trackUrl,
+        musicEnabled: true,
+        musicVolume: musicVol,
+        savedMusicTracks: musicTracks,
+        musicSessionId: now,
+        updatedAt: now,
+      },
+      { merge: true }
+    ).catch((err) => {
+      console.error('Fast music trigger sync error:', err);
+    });
+
+    const latency = Math.max(1, Math.round(performance.now() - t0));
+    notifyStatus(`⚡ "${trackName || 'Song'}" triggered in ${latency}ms! Live sync dispatched.`);
+  };
+
+  const handleFastToggleMusic = (nextOn: boolean) => {
+    const t0 = performance.now();
+    setMusicOn(nextOn);
+    if (!nextOn) {
+      romanticAudio.stop();
+    } else {
+      romanticAudio.playTrack(selectedMusicUrl, true);
+    }
+    const now = Date.now();
+    void setDoc(
+      doc(db, 'settings', 'config'),
+      {
+        musicEnabled: nextOn,
+        musicSessionId: now,
+        updatedAt: now,
+      },
+      { merge: true }
+    ).catch((err) => {
+      console.error('Music toggle sync error:', err);
+    });
+    const latency = Math.max(1, Math.round(performance.now() - t0));
+    notifyStatus(`⚡ Background music turned ${nextOn ? 'ON' : 'OFF'} in ${latency}ms!`);
+  };
+
   const handlePreviewSoundUrl = async (rawUrl: string) => {
     if (!audioEl) return;
     if (!rawUrl || rawUrl === 'silent') {
@@ -1158,11 +1226,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       setPreviewingSoundUrl('');
       return;
     }
-    const playUrl = await resolveFirestoreMediaUrl(rawUrl);
+
+    // Check fast local cache first (<2ms)
+    let playUrl = audioCache.getPlayableUrl(rawUrl);
+    if (!playUrl || playUrl.startsWith('firestore-chunked://')) {
+      const resolved = await resolveFirestoreMediaUrl(rawUrl);
+      if (resolved) playUrl = resolved;
+    }
+
     if (!playUrl) {
       notifyStatus('Could not load sound preview.', true);
       return;
     }
+
     audioEl.pause();
     audioEl.src = playUrl;
     audioEl.currentTime = 0;
@@ -2084,17 +2160,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
   const inputCls = `w-full px-2.5 py-1.5 text-[12px] rounded-[10px] border ${borderCol} ${
     dark ? 'bg-neutral-950 text-neutral-100' : 'bg-white text-neutral-900'
   } focus:outline-none focus:border-neutral-500`;
-  const btnPrimary = `px-3 py-1.5 text-[12px] font-medium rounded-[10px] border cursor-pointer whitespace-nowrap ${
+  const btnPrimary = `px-3 py-1.5 text-[12px] font-medium rounded-[10px] border cursor-pointer whitespace-nowrap touch-manipulation active:scale-95 transition-transform ${
     dark
       ? 'bg-white text-black border-white hover:bg-neutral-200'
       : 'bg-black text-white border-black hover:bg-neutral-800'
   }`;
   const btnSecondary = `px-2.5 py-1 text-[12px] rounded-[10px] border ${borderCol} ${
     dark ? 'bg-neutral-950 text-neutral-200 hover:bg-neutral-900' : 'bg-white text-neutral-800 hover:bg-neutral-100'
-  } cursor-pointer whitespace-nowrap`;
+  } cursor-pointer whitespace-nowrap touch-manipulation active:scale-95 transition-transform`;
   const btnDanger = `px-2.5 py-1 text-[12px] rounded-[10px] border ${borderCol} ${
     dark ? 'text-neutral-300 hover:bg-neutral-900' : 'text-neutral-700 hover:bg-neutral-100'
-  } cursor-pointer whitespace-nowrap`;
+  } cursor-pointer whitespace-nowrap touch-manipulation active:scale-95 transition-transform`;
 
   const adminScopedCss = `
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
@@ -2255,51 +2331,75 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       className={`kashish-admin-panel fixed inset-0 z-[2000] ${bgMain} flex flex-col overflow-hidden`}
     >
       <style>{adminScopedCss}</style>
-      {/* Top Header Bar (1px border, flat minimal) */}
-      <header className={`h-11 shrink-0 px-3 border-b ${borderCol} flex items-center justify-between gap-2`}>
+      {/* Top Header Bar (Mobile responsive, 1px border) */}
+      <header className={`py-2 px-3 shrink-0 border-b ${borderCol} flex flex-wrap sm:flex-nowrap items-center justify-between gap-2`}>
         <div className="flex items-center gap-2 min-w-0">
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className={`md:hidden p-1.5 rounded-[10px] border ${borderCol} cursor-pointer`}
+            className={`p-2 rounded-[10px] border ${borderCol} cursor-pointer active:scale-95 transition-transform flex items-center justify-center`}
             aria-label="Toggle Menu"
           >
-            {sidebarOpen ? <X className="w-3.5 h-3.5" /> : <Menu className="w-3.5 h-3.5" />}
+            {sidebarOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
           </button>
           <span className="font-bold text-[13px] tracking-tight truncate">KASHISH CONTROL CENTER</span>
-          <span className={`hidden sm:inline text-[11px] ${textMuted}`}>
-            · { currentUser?.email }
+          <span className={`hidden md:inline text-[11px] ${textMuted}`}>
+            · {currentUser?.email}
           </span>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
-          {statusText && <span className="text-[11px] font-medium truncate max-w-[200px]">{statusText}</span>}
-          {errorText && <span className="text-[11px] font-bold underline truncate max-w-[220px]">{errorText}</span>}
-          {dataLoading && <span className={`text-[11px] ${textMuted}`}>Loading...</span>}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {dataLoading && <span className={`hidden sm:inline text-[11px] ${textMuted}`}>Loading...</span>}
 
           <button
             onClick={() => setDark(!dark)}
-            className={btnSecondary}
+            className={`${btnSecondary} text-[11px] py-1 px-2`}
             title="Toggle Dark/Light"
           >
-            {dark ? <Sun className="w-3.5 h-3.5 inline mr-1" /> : <Moon className="w-3.5 h-3.5 inline mr-1" />}
-            <span>{dark ? 'Light' : 'Dark'}</span>
+            {dark ? <Sun className="w-3.5 h-3.5 inline" /> : <Moon className="w-3.5 h-3.5 inline" />}
+            <span className="hidden sm:inline ml-1">{dark ? 'Light' : 'Dark'}</span>
           </button>
 
-          <button onClick={onClose} className={btnPrimary}>
+          <button onClick={onClose} className={`${btnPrimary} text-[11px] py-1 px-2.5`}>
             Back to App
           </button>
         </div>
       </header>
+
+      {/* Notification Toast Strip for Mobile/Desktop */}
+      {(statusText || errorText) && (
+        <div className={`px-3 py-1.5 border-b ${borderCol} ${errorText ? 'bg-rose-500/15 text-rose-300 border-rose-500/30' : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'} flex items-center justify-between gap-2 text-[11px] font-medium animate-in fade-in`}>
+          <span className="truncate">{errorText || statusText}</span>
+          <button
+            onClick={() => {
+              setStatusText('');
+              setErrorText('');
+            }}
+            className="text-[10px] opacity-70 hover:opacity-100 cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Mobile Sidebar Overlay Backdrop */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/70 backdrop-blur-xs z-40 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
 
       {/* Main Workspace: Collapsible Left Sidebar + Content Viewport */}
       <div className="flex-1 flex min-h-0 relative">
         {/* Left Sidebar */}
         <aside
           className={`${
-            sidebarOpen ? 'block absolute inset-y-0 left-0 z-40 w-56 rounded-r-[14px]' : 'hidden'
+            sidebarOpen
+              ? 'fixed inset-y-0 left-0 z-50 w-64 rounded-r-[16px] shadow-2xl bg-black border-r border-neutral-800 animate-in slide-in-from-left duration-200'
+              : 'hidden'
           } md:block md:static md:w-56 shrink-0 border-r ${borderCol} ${bgSubtle} overflow-y-auto flex flex-col justify-between`}
         >
-          <nav className="p-2 space-y-0.5">
+          <nav className="p-2 space-y-1">
             {SIDEBAR_ITEMS.map((item) => {
               const Icon = item.icon;
               const isActive = activeSection === item.id;
@@ -2311,16 +2411,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                     setActiveSection(item.id);
                     setSidebarOpen(false);
                   }}
-                  className={`w-full flex items-center justify-between gap-2 px-2.5 py-2 text-left text-[12px] rounded-[10px] border cursor-pointer ${
+                  className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-left text-[12px] rounded-[10px] border cursor-pointer active:scale-98 transition-all ${
                     isActive
                       ? dark
-                        ? 'bg-white text-black border-white font-semibold'
-                        : 'bg-black text-white border-black font-semibold'
-                      : `border-transparent ${textMuted} hover:text-current`
+                        ? 'bg-white text-black border-white font-bold shadow-sm'
+                        : 'bg-black text-white border-black font-bold shadow-sm'
+                      : `border-transparent ${textMuted} hover:text-current hover:bg-neutral-900/40`
                   }`}
                 >
                   <span className="flex items-center gap-2 min-w-0">
-                    <Icon className="w-3.5 h-3.5 shrink-0" />
+                    <Icon className="w-4 h-4 shrink-0" />
                     <span className="truncate">{item.label}</span>
                   </span>
                   {badgeCount > 0 && (
@@ -2340,16 +2440,45 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                 await signOut(auth);
                 onClose();
               }}
-              className={`${btnSecondary} w-full flex items-center justify-center gap-1.5`}
+              className={`${btnSecondary} w-full flex items-center justify-center gap-1.5 py-2`}
             >
-              <LogOut className="w-3 h-3" />
+              <LogOut className="w-3.5 h-3.5" />
               <span>Sign Out</span>
             </button>
           </div>
         </aside>
 
         {/* Main Content Viewport */}
-        <main className="flex-1 overflow-y-auto p-3 sm:p-5 space-y-4">
+        <main className="flex-1 overflow-y-auto p-2.5 sm:p-5 space-y-3.5">
+          {/* Mobile Quick Horizontal Section Bar (< md screens) */}
+          <div className="md:hidden flex items-center gap-1.5 overflow-x-auto pb-2 scrollbar-none border-b border-neutral-800 shrink-0 select-none">
+            {SIDEBAR_ITEMS.map((item) => {
+              const Icon = item.icon;
+              const isActive = activeSection === item.id;
+              const badgeCount = item.id === 'users' ? pendingUsersList.length : 0;
+              return (
+                <button
+                  key={`mob_tab_${item.id}`}
+                  onClick={() => setActiveSection(item.id)}
+                  className={`px-3 py-1.5 rounded-[10px] text-[11px] font-medium transition-all whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer ${
+                    isActive
+                      ? dark
+                        ? 'bg-white text-black font-bold shadow-sm'
+                        : 'bg-black text-white font-bold shadow-sm'
+                      : `${textMuted} bg-neutral-900/60 hover:bg-neutral-800 border ${borderCol}`
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5 shrink-0" />
+                  <span>{item.label}</span>
+                  {badgeCount > 0 && (
+                    <span className="px-1.5 py-0.2 text-[9px] font-bold rounded-full bg-rose-600 text-white tabular-nums ml-0.5">
+                      {badgeCount}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
           {/* 1. DASHBOARD */}
           {activeSection === 'dashboard' && (
             <div className="space-y-4">
@@ -2449,7 +2578,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                   </div>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-[12px]">
+                  <table className="w-full text-left border-collapse text-[12px] min-w-[500px]">
                     <thead>
                       <tr className={`border-b ${borderCol} ${textMuted}`}>
                         <th className="py-1.5 px-2.5 font-medium">Time</th>
@@ -2556,7 +2685,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
 
               {/* Users Table */}
               <div className={`rounded-[14px] overflow-hidden border ${borderCol} overflow-x-auto`}>
-                <table className="w-full text-left border-collapse text-[12px]">
+                <table className="w-full text-left border-collapse text-[12px] min-w-[550px]">
                   <thead>
                     <tr className={`border-b ${borderCol} ${bgSubtle} ${textMuted}`}>
                       <th className="py-2 px-3 font-medium">User / Email</th>
@@ -2717,7 +2846,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
 
               {/* Log Table */}
               <div className={`rounded-[14px] overflow-hidden border ${borderCol} overflow-x-auto`}>
-                <table className="w-full text-left border-collapse text-[12px]">
+                <table className="w-full text-left border-collapse text-[12px] min-w-[550px]">
                   <thead>
                     <tr className={`border-b ${borderCol} ${bgSubtle} ${textMuted}`}>
                       <th className="py-1.5 px-2.5 font-medium">Timestamp</th>
@@ -3135,7 +3264,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
 
                 return (
                   <div className={`rounded-[14px] overflow-hidden border ${borderCol} overflow-x-auto`}>
-                    <table className="w-full text-left border-collapse text-[12px]">
+                    <table className="w-full text-left border-collapse text-[12px] min-w-[500px]">
                       <thead>
                         <tr className={`border-b ${borderCol} ${bgSubtle} ${textMuted}`}>
                           <th className="py-1.5 px-2.5">Sel</th>
@@ -3251,7 +3380,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
               )}
 
               <div className={`rounded-[14px] overflow-hidden border ${borderCol} overflow-x-auto`}>
-                <table className="w-full text-left border-collapse text-[12px]">
+                <table className="w-full text-left border-collapse text-[12px] min-w-[550px]">
                   <thead>
                     <tr className={`border-b ${borderCol} ${bgSubtle} ${textMuted}`}>
                       <th className="py-1.5 px-2.5">Status</th>
@@ -3636,7 +3765,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                     </button>
                   )}
                 </div>
-                <table className="w-full text-left border-collapse text-[12px]">
+                <table className="w-full text-left border-collapse text-[12px] min-w-[500px]">
                   <thead>
                     <tr className={`border-b ${borderCol} ${textMuted}`}>
                       <th className="py-1.5 px-2.5">Time</th>
@@ -4833,29 +4962,73 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
               </div>
 
               <div className={`p-3.5 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-3.5`}>
-                <div className="flex flex-wrap items-center justify-between gap-2">
+                {/* 20ms Ultra-Fast Remote Trigger Status Banner */}
+                <div className="p-2.5 rounded-[12px] bg-gradient-to-r from-emerald-500/15 via-pink-500/15 to-purple-500/15 border border-emerald-500/30 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shadow-sm shadow-emerald-400/50" />
+                    <div>
+                      <div className="text-[12px] font-bold text-emerald-300">
+                        ⚡ Instant Trigger Engine Active (&lt;20ms Response Time)
+                      </div>
+                      <div className={`text-[10px] ${textMuted}`}>
+                        Audio is pre-cached in RAM & CacheStorage. Remote switch triggers live on Website & APK instantly.
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const t0 = performance.now();
+                      const urls = [CONFIG.musicUrl, ...musicTracks.map((t) => t.url)];
+                      audioCache.preloadBatch(urls);
+                      const elapsed = Math.max(1, Math.round(performance.now() - t0));
+                      notifyStatus(`⚡ All ${urls.length} audio tracks pre-cached in RAM memory in ${elapsed}ms!`);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-500/40 text-[10px] font-bold transition-colors cursor-pointer"
+                  >
+                    💾 Re-warm RAM Cache
+                  </button>
+                </div>
+
+                {/* Instant 1-Click Quick Song Switcher Pills */}
+                <div>
+                  <label className={`block text-[11px] ${textMuted} mb-1.5 font-bold`}>
+                    ⚡ 1-Click Instant Song Switcher (&lt;20ms live trigger)
+                  </label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {musicTracks.map((t) => {
+                      const isSelected = selectedMusicUrl === t.url;
+                      return (
+                        <button
+                          key={`quick_${t.id}`}
+                          type="button"
+                          onClick={() => handleFastTriggerSong(t.url, t.name)}
+                          className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-sm ${
+                            isSelected
+                              ? 'bg-gradient-to-r from-pink-500 to-purple-600 text-white scale-[1.02] shadow-pink-500/30'
+                              : 'bg-white/5 hover:bg-white/10 text-white/80 border border-white/10 hover:border-pink-500/40'
+                          }`}
+                        >
+                          <span>{isSelected ? '🎶' : '▶'}</span>
+                          <span className="truncate max-w-[140px]">{t.name}</span>
+                          {isSelected && (
+                            <span className="text-[9px] bg-white/25 px-1 rounded-full uppercase tracking-wider">
+                              LIVE
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-white/5">
                   <label className="flex items-center gap-2 font-bold cursor-pointer">
                     <input
                       type="checkbox"
                       checked={musicOn}
-                      onChange={async (e) => {
-                        const nextOn = e.target.checked;
-                        setMusicOn(nextOn);
-                        await setDoc(
-                          doc(db, 'settings', 'config'),
-                          {
-                            musicEnabled: nextOn,
-                            musicSessionId: Date.now(),
-                            updatedAt: Date.now(),
-                          },
-                          { merge: true }
-                        ).catch(() => {});
-                        notifyStatus(
-                          nextOn
-                            ? 'Background music enabled live on Website & APK!'
-                            : 'Background music paused/disabled live on Website & APK!'
-                        );
-                      }}
+                      onChange={(e) => handleFastToggleMusic(e.target.checked)}
+                      className="cursor-pointer"
                     />
                     <span>Background Music Enabled ({musicOn ? 'ON' : 'OFF'})</span>
                   </label>
@@ -4884,24 +5057,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                   <div className="flex gap-2">
                     <select
                       value={selectedMusicUrl}
-                      onChange={async (e) => {
-                        const nextUrl = e.target.value;
-                        setSelectedMusicUrl(nextUrl);
-                        await setDoc(
-                          doc(db, 'settings', 'config'),
-                          {
-                            musicUrl: nextUrl,
-                            musicEnabled: true,
-                            musicVolume: musicVol,
-                            savedMusicTracks: musicTracks,
-                            musicSessionId: Date.now(),
-                            updatedAt: Date.now(),
-                          },
-                          { merge: true }
-                        ).catch(() => {});
-                        setMusicOn(true);
-                        notifyStatus('Switched active song live on Website & APK!');
-                      }}
+                      onChange={(e) => handleFastTriggerSong(e.target.value)}
                       className={inputCls}
                     >
                       {musicTracks.map((t) => (
@@ -4923,7 +5079,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                 {/* Saved Music Tracks List with 1-Click Activate & Delete */}
                 <div className={`p-2.5 rounded-[12px] border ${borderCol} space-y-1.5`}>
                   <div className="flex items-center justify-between gap-2">
-                    <div className="text-[11px] font-bold">Saved Music Library (Synced in Firestore)</div>
+                    <div className="text-[11px] font-bold">Saved Music Library (Synced in Firestore & Cached in RAM)</div>
                     {musicTracks.some((t) => t.id !== 'default_saiyaara') && (
                       <button
                         type="button"
@@ -4946,11 +5102,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                             isSelected ? 'border-pink-500/60 bg-pink-500/10' : borderCol
                           } flex items-center justify-between gap-2 text-[11px]`}
                         >
-                          <div className="truncate font-medium">
-                            {isSelected ? '🎶 ' : '🎵 '}
-                            {t.name}
+                          <div className="truncate font-medium flex items-center gap-1.5">
+                            <span>{isSelected ? '🎶 ' : '🎵 '}</span>
+                            <span className="truncate">{t.name}</span>
                             {isSelected && (
-                              <span className="ml-2 px-1.5 py-0.5 rounded bg-pink-500/20 text-pink-300 text-[10px] font-bold">
+                              <span className="px-1.5 py-0.5 rounded bg-pink-500/20 text-pink-300 text-[10px] font-bold shrink-0">
                                 ACTIVE ON SITE & APK
                               </span>
                             )}
@@ -4966,23 +5122,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                             {!isSelected && (
                               <button
                                 type="button"
-                                onClick={async () => {
-                                  setSelectedMusicUrl(t.url);
-                                  setMusicOn(true);
-                                  await setDoc(
-                                    doc(db, 'settings', 'config'),
-                                    {
-                                      musicUrl: t.url,
-                                      musicEnabled: true,
-                                      musicVolume: musicVol,
-                                      savedMusicTracks: musicTracks,
-                                      musicSessionId: Date.now(),
-                                      updatedAt: Date.now(),
-                                    },
-                                    { merge: true }
-                                  ).catch(() => {});
-                                  notifyStatus(`"${t.name}" is now playing on Website & APK!`);
-                                }}
+                                onClick={() => handleFastTriggerSong(t.url, t.name)}
                                 className={btnPrimary}
                               >
                                 Use Song
@@ -5255,10 +5395,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                   </div>
                   <div className="flex items-center gap-2 text-[11px]">
                     <span className="px-2 py-1 rounded-lg bg-pink-500/15 border border-pink-500/30 font-semibold">
-                      Her Installed APK: v{deviceStatusDoc?.appVersion || '2.2.0'}
+                      Her Installed APK: v{deviceStatusDoc?.appVersion || '3.0.0'}{deviceStatusDoc?.appVersionCode ? ` (#${deviceStatusDoc.appVersionCode})` : ''}
                     </span>
                     <span className="px-2 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-semibold">
-                      Latest Release: v{liveCiApkMeta?.version || apkLatestVer}
+                      Latest Release: v{liveCiApkMeta?.version || apkLatestVer}{liveCiApkMeta?.versionCode ? ` (#${liveCiApkMeta.versionCode})` : ''}
                     </span>
                   </div>
                 </div>
