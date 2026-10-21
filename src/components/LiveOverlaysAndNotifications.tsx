@@ -180,8 +180,18 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
               });
             }
 
-            if (typeof window !== 'undefined' && window.AndroidApp?.showNotification) {
-              window.AndroidApp.showNotification(d.title || 'New Message', d.message || '');
+            if (typeof window !== 'undefined' && window.AndroidApp) {
+              const buttonsJson = JSON.stringify(Array.isArray(d.buttons) ? d.buttons : []);
+              if (window.AndroidApp.showNotificationWithButtons) {
+                window.AndroidApp.showNotificationWithButtons(
+                  d.title || 'New Message',
+                  d.message || '',
+                  buttonsJson,
+                  docSnap.id
+                );
+              } else if (window.AndroidApp.showNotification) {
+                window.AndroidApp.showNotification(d.title || 'New Message', d.message || '');
+              }
             }
 
             updateDoc(doc(db, 'notifications', docSnap.id), {
@@ -275,6 +285,27 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
     }
   }, [activeOverlay]);
 
+  const handleNotifButton = (btn: { label: string; action: string; payload?: string }) => {
+    if (!activeNotif) return;
+    const notifId = activeNotif.id;
+    setActiveNotif(null);
+
+    updateDoc(doc(db, 'notifications', notifId), {
+      seen: true,
+      clickedAction: btn.action,
+      seenAt: Date.now(),
+    }).catch(() => {});
+
+    if (btn.action === 'call_now') {
+      void makeNativePhoneCall(btn.payload || defaultCallNumber);
+    } else if (btn.action === 'open_section') {
+      const target = (btn.payload || 'home') as NavTab;
+      onNavigate(target);
+    } else if (btn.action === 'open_url' && btn.payload) {
+      window.location.href = btn.payload;
+    }
+  };
+
   const handleOverlayButton = (btn: { label: string; action: string; payload?: string }) => {
     if (!activeOverlay) return;
     const overlayId = activeOverlay.id;
@@ -319,7 +350,7 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
 
   return (
     <>
-      {/* Real-time Romantic Notification Banner */}
+      {/* Real-time Romantic Notification Banner (with optional Action Buttons) */}
       {activeNotif && (
         <div
           style={{
@@ -327,45 +358,80 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
             borderColor: 'rgba(244, 114, 182, 0.38)',
             boxShadow: '0 18px 45px rgba(244, 63, 94, 0.28), 0 0 0 1px rgba(244, 114, 182, 0.18)',
           }}
-          className="fixed top-4 left-1/2 -translate-x-1/2 z-[1500] w-[92%] max-w-md text-pink-50 border p-4 rounded-[22px] backdrop-blur-xl flex items-center gap-3.5 section-fade-slide"
+          className="fixed top-4 left-1/2 -translate-x-1/2 z-[1500] w-[92%] max-w-md text-pink-50 border p-4 rounded-[22px] backdrop-blur-xl flex flex-col gap-3 section-fade-slide"
         >
-          {notifImgResolved ? (
-            <img
-              src={notifImgResolved}
-              alt=""
-              className="w-13 h-13 rounded-[14px] object-cover shrink-0 border border-pink-400/40"
-            />
-          ) : (
-            <div className="w-11 h-11 rounded-full bg-rose-500/20 border border-pink-400/35 flex items-center justify-center shrink-0">
-              <Heart className="w-5 h-5 text-rose-400 fill-rose-400 animate-heartbeat" />
-            </div>
-          )}
+          <div className="flex items-center gap-3.5">
+            {notifImgResolved ? (
+              <img
+                src={notifImgResolved}
+                alt=""
+                className="w-13 h-13 rounded-[14px] object-cover shrink-0 border border-pink-400/40"
+              />
+            ) : (
+              <div className="w-11 h-11 rounded-full bg-rose-500/20 border border-pink-400/35 flex items-center justify-center shrink-0">
+                <Heart className="w-5 h-5 text-rose-400 fill-rose-400 animate-heartbeat" />
+              </div>
+            )}
 
-          <div className="flex-1 min-w-0">
-            <div className="text-[11px] font-medium text-pink-300/80 tracking-wide">
-              A Note For You · Just Now
+            <div className="flex-1 min-w-0">
+              <div className="text-[11px] font-medium text-pink-300/80 tracking-wide">
+                A Note For You · Just Now
+              </div>
+              <div
+                style={{ fontFamily: "'Cormorant Garamond', 'Playfair Display', Georgia, serif" }}
+                className="text-[19px] font-bold text-white leading-tight truncate mt-0.5"
+              >
+                {activeNotif.title || 'Special Message'}
+              </div>
+              <div
+                style={{ fontFamily: "'Poppins', system-ui, sans-serif" }}
+                className="text-[13px] text-pink-100/90 mt-1 leading-snug break-words"
+              >
+                {activeNotif.message}
+              </div>
             </div>
-            <div
-              style={{ fontFamily: "'Cormorant Garamond', 'Playfair Display', Georgia, serif" }}
-              className="text-[19px] font-bold text-white leading-tight truncate mt-0.5"
+
+            <button
+              onClick={() => setActiveNotif(null)}
+              aria-label="Dismiss notification"
+              className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-pink-200 flex items-center justify-center shrink-0 cursor-pointer transition-colors"
             >
-              {activeNotif.title || 'Special Message'}
-            </div>
-            <div
-              style={{ fontFamily: "'Poppins', system-ui, sans-serif" }}
-              className="text-[13px] text-pink-100/90 mt-1 leading-snug break-words"
-            >
-              {activeNotif.message}
-            </div>
+              <X className="w-4 h-4" />
+            </button>
           </div>
 
-          <button
-            onClick={() => setActiveNotif(null)}
-            aria-label="Dismiss notification"
-            className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-pink-200 flex items-center justify-center shrink-0 cursor-pointer transition-colors"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          {Array.isArray(activeNotif.buttons) && activeNotif.buttons.length > 0 && (
+            <div className="flex flex-wrap gap-2 pt-1 border-t border-pink-400/20">
+              {activeNotif.buttons.slice(0, 3).map((btn: any, idx: number) => {
+                const isPrimary = idx === 0;
+                return (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => handleNotifButton(btn)}
+                    style={
+                      isPrimary
+                        ? {
+                            background: 'linear-gradient(135deg, #f43f5e 0%, #db2777 100%)',
+                            color: '#ffffff',
+                          }
+                        : {
+                            background: 'rgba(255, 255, 255, 0.09)',
+                            color: '#fce7f3',
+                            borderColor: 'rgba(244, 114, 182, 0.3)',
+                          }
+                    }
+                    className={`flex-1 min-w-[110px] py-2 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-transform active:scale-[0.98] ${
+                      isPrimary ? 'border-0 shadow-sm' : 'border'
+                    }`}
+                  >
+                    {getButtonIcon(btn.action)}
+                    <span className="truncate">{btn.label || 'Open'}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

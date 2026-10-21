@@ -185,6 +185,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
   const [notifImage, setNotifImage] = useState<string>('');
   const [notifSoundUrl, setNotifSoundUrl] = useState<string>(DEFAULT_SAVED_SOUNDS[0].url);
   const [notifScheduleTime, setNotifScheduleTime] = useState<string>('');
+  const [notifButtons, setNotifButtons] = useState<PopupButtonItem[]>([
+    { label: 'Call Me Now 📞', action: 'call_now', payload: '9817905531' },
+    { label: 'Open Our Gallery ✨', action: 'open_section', payload: 'gallery' },
+  ]);
   const [customSounds, setCustomSounds] = useState<{ name: string; url: string }[]>([]);
   const [uploadingSound, setUploadingSound] = useState<boolean>(false);
 
@@ -839,11 +843,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       return;
     }
     const scheduledMs = notifScheduleTime ? new Date(notifScheduleTime).getTime() : null;
+    const cleanedButtons = notifButtons
+      .filter((b) => b.label.trim().length > 0)
+      .slice(0, 3)
+      .map((b) => ({
+        label: b.label.trim(),
+        action: b.action,
+        payload: (b.payload || '').trim(),
+      }));
+
     const payload = {
       title: notifTitle.trim(),
       message: notifMessage.trim(),
       imageUrl: notifImage.trim(),
       soundUrl: notifSoundUrl,
+      buttons: cleanedButtons,
       createdAt: Date.now(),
       scheduledFor: scheduledMs,
       status: scheduledMs && scheduledMs > Date.now() ? 'scheduled' : 'sent',
@@ -1041,15 +1055,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
   };
 
   const handleClearActivityLogs = () => {
-    askConfirm('Delete all activity logs from Firestore permanently?', () => {
+    if (activities.length === 0) {
+      notifyStatus('No activity logs to delete.', true);
+      return;
+    }
+    askConfirm(`Delete all ${activities.length} activity logs from Firestore permanently?`, () => {
       setActivities([]);
-      notifyStatus('All activity logs cleared.');
+      notifyStatus('All activity logs deleted.');
       void (async () => {
         try {
           const snap = await getDocs(collection(db, 'activity'));
-          const batch = writeBatch(db);
-          snap.docs.forEach((d) => batch.delete(d.ref));
-          await batch.commit();
+          const docs = snap.docs;
+          const chunkSize = 450;
+          for (let i = 0; i < docs.length; i += chunkSize) {
+            const batch = writeBatch(db);
+            docs.slice(i, i + chunkSize).forEach((d) => batch.delete(d.ref));
+            await batch.commit();
+          }
         } catch (err: any) {
           notifyStatus(`Clear logs failed: ${err.message}`, true);
         }
@@ -1482,11 +1504,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
 
               {/* Recent Activity Feed (Latest 20 Events) */}
               <div className={`rounded-[14px] overflow-hidden border ${borderCol}`}>
-                <div className={`px-3 py-2 border-b ${borderCol} ${bgSubtle} flex items-center justify-between`}>
+                <div className={`px-3 py-2 border-b ${borderCol} ${bgSubtle} flex flex-wrap items-center justify-between gap-2`}>
                   <span className="font-bold text-[12px]">Recent Activity Feed (Latest 20 Events)</span>
-                  <button onClick={() => setActiveSection('activity')} className={btnSecondary}>
-                    View All ({activities.length})
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    {activities.length > 0 && (
+                      <button onClick={handleClearActivityLogs} className={btnDanger}>
+                        <Trash2 className="w-3 h-3 inline mr-1" />
+                        Delete All ({activities.length})
+                      </button>
+                    )}
+                    <button onClick={() => setActiveSection('activity')} className={btnSecondary}>
+                      View All ({activities.length})
+                    </button>
+                  </div>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse text-[12px]">
@@ -1673,10 +1703,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
             <div className="space-y-3">
               <div className={`flex flex-wrap items-center justify-between gap-2 border-b ${borderCol} pb-2`}>
                 <h2 className="text-[13px] font-bold uppercase tracking-wider">2. Activity Tracker</h2>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <button onClick={exportActivityCsv} className={btnPrimary}>
                     <Download className="w-3 h-3 inline mr-1" />
                     Export CSV ({filteredActivities.length})
+                  </button>
+                  <button
+                    onClick={handleClearActivityLogs}
+                    disabled={activities.length === 0}
+                    className={`${btnDanger} disabled:opacity-40`}
+                  >
+                    <Trash2 className="w-3 h-3 inline mr-1" />
+                    Delete All ({activities.length})
                   </button>
                 </div>
               </div>
@@ -1765,6 +1803,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                           <button
                             onClick={() =>
                               askConfirm('Delete this log entry?', async () => {
+                                setActivities((prev) => prev.filter((x) => x.id !== ev.id));
+                                notifyStatus('Activity log deleted.');
                                 await deleteDoc(doc(db, 'activity', ev.id));
                               })
                             }
@@ -2460,6 +2500,160 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                   </div>
                 </div>
 
+                {/* Configurable Notification Action Buttons (Up to 3) */}
+                <div className={`p-2.5 rounded-[12px] border ${borderCol} space-y-2`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="text-[11px] font-bold">
+                        Notification Action Buttons (Optional · Up to 3)
+                      </div>
+                      <div className={`text-[10px] ${textMuted}`}>
+                        Appears both in the in-app notification banner and in Android system notifications.
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {notifButtons.length < 3 && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setNotifButtons([
+                                ...notifButtons,
+                                { label: 'Call Me Now 📞', action: 'call_now', payload: callNumberInput || '9817905531' },
+                              ])
+                            }
+                            className={btnSecondary}
+                          >
+                            + Call Button
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setNotifButtons([
+                                ...notifButtons,
+                                { label: 'Open Gallery ✨', action: 'open_section', payload: 'gallery' },
+                              ])
+                            }
+                            className={btnSecondary}
+                          >
+                            + Section Button
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setNotifButtons([
+                                ...notifButtons,
+                                { label: 'Keep in Heart 💖', action: 'dismiss', payload: '' },
+                              ])
+                            }
+                            className={btnSecondary}
+                          >
+                            + Custom Button
+                          </button>
+                        </>
+                      )}
+                      {notifButtons.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setNotifButtons([])}
+                          className={btnDanger}
+                        >
+                          Clear All Buttons
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {notifButtons.map((btn, idx) => (
+                    <div key={idx} className="grid grid-cols-1 sm:grid-cols-3 gap-1.5 items-center">
+                      <input
+                        type="text"
+                        placeholder="Button Label (e.g. Call Me Now 📞)"
+                        value={btn.label}
+                        onChange={(e) => {
+                          const next = [...notifButtons];
+                          next[idx] = { ...next[idx], label: e.target.value };
+                          setNotifButtons(next);
+                        }}
+                        className={inputCls}
+                      />
+                      <select
+                        value={btn.action}
+                        onChange={(e) => {
+                          const next = [...notifButtons];
+                          const newAction = e.target.value as PopupButtonAction;
+                          next[idx] = {
+                            ...next[idx],
+                            action: newAction,
+                            payload:
+                              newAction === 'call_now'
+                                ? callNumberInput || '9817905531'
+                                : newAction === 'open_section'
+                                ? 'gallery'
+                                : '',
+                          };
+                          setNotifButtons(next);
+                        }}
+                        className={inputCls}
+                      >
+                        <option value="call_now">Call Now (Direct Phone Call)</option>
+                        <option value="open_section">Open App Section</option>
+                        <option value="open_url">Open External Link</option>
+                        <option value="dismiss">Dismiss Notification</option>
+                      </select>
+                      <div className="flex gap-1">
+                        {btn.action === 'open_section' ? (
+                          <select
+                            value={btn.payload || 'home'}
+                            onChange={(e) => {
+                              const next = [...notifButtons];
+                              next[idx] = { ...next[idx], payload: e.target.value };
+                              setNotifButtons(next);
+                            }}
+                            className={inputCls}
+                          >
+                            <option value="home">Home</option>
+                            <option value="gallery">Gallery</option>
+                            <option value="poetry">Poetry</option>
+                            <option value="secret-letter">Secret Letter</option>
+                            <option value="open-when">Open When</option>
+                            <option value="games">Games</option>
+                            <option value="breathe">Breathe</option>
+                            <option value="cute-pic">Cute Pic</option>
+                            <option value="name-game">Name Game</option>
+                            <option value="last-page">Last Page</option>
+                          </select>
+                        ) : (
+                          <input
+                            type="text"
+                            placeholder={
+                              btn.action === 'call_now'
+                                ? 'Phone number (e.g. 9817905531)'
+                                : btn.action === 'open_url'
+                                ? 'https://...'
+                                : 'No payload needed'
+                            }
+                            value={btn.payload || ''}
+                            onChange={(e) => {
+                              const next = [...notifButtons];
+                              next[idx] = { ...next[idx], payload: e.target.value };
+                              setNotifButtons(next);
+                            }}
+                            className={inputCls}
+                          />
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setNotifButtons(notifButtons.filter((_, i) => i !== idx))}
+                          className={btnDanger}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
                 <button type="submit" className={btnPrimary}>
                   {notifScheduleTime ? 'Schedule Notification' : 'Send Notification Now'}
                 </button>
@@ -2474,7 +2668,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                   <thead>
                     <tr className={`border-b ${borderCol} ${textMuted}`}>
                       <th className="py-1.5 px-2.5">Time</th>
-                      <th className="py-1.5 px-2.5">Title & Message</th>
+                      <th className="py-1.5 px-2.5">Title, Message & Buttons</th>
                       <th className="py-1.5 px-2.5">Status</th>
                       <th className="py-1.5 px-2.5 text-right">Actions</th>
                     </tr>
@@ -2488,11 +2682,30 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                         <td className="py-1.5 px-2.5">
                           <div className="font-bold">{n.title}</div>
                           <div className={textMuted}>{n.message}</div>
+                          {Array.isArray(n.buttons) && n.buttons.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {n.buttons.map((b: any, bi: number) => (
+                                <span
+                                  key={bi}
+                                  className={`px-1.5 py-0.5 rounded text-[10px] border ${borderCol}`}
+                                >
+                                  {b.label} ({b.action})
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </td>
-                        <td className="py-1.5 px-2.5 text-[11px]">
-                          <span className={`px-2 py-0.5 rounded-full border ${borderCol}`}>
-                            {n.seen ? 'SEEN' : n.status?.toUpperCase() || 'SENT'}
-                          </span>
+                        <td className="py-1.5 px-2.5 text-[11px] space-y-1">
+                          <div>
+                            <span className={`px-2 py-0.5 rounded-full border ${borderCol}`}>
+                              {n.seen ? 'SEEN' : n.status?.toUpperCase() || 'SENT'}
+                            </span>
+                          </div>
+                          {n.clickedAction && (
+                            <div className="text-[10px] font-bold text-emerald-400">
+                              Clicked: {n.clickedAction}
+                            </div>
+                          )}
                         </td>
                         <td className="py-1.5 px-2.5 text-right space-x-1 whitespace-nowrap">
                           <button
@@ -2503,6 +2716,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                                 message: n.message,
                                 imageUrl: n.imageUrl || '',
                                 soundUrl: n.soundUrl || '',
+                                buttons: Array.isArray(n.buttons) ? n.buttons : [],
                                 createdAt: Date.now(),
                                 status: 'sent',
                                 seen: false,

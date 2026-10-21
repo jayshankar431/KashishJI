@@ -50,7 +50,7 @@ service cloud.firestore {
     // 6. NOTIFICATIONS COLLECTION (Push & real-time in-app + Android background service notifications)
     match /notifications/{notifId} {
       allow read: if true;
-      allow update: if isAdmin() || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['seen', 'seenAt']);
+      allow update: if isAdmin() || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['seen', 'seenAt', 'clickedAction']);
       allow create, delete: if isAdmin();
     }
 

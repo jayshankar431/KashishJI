@@ -26,13 +26,32 @@ import { LiveOverlaysAndNotifications } from './components/LiveOverlaysAndNotifi
 
 export default function App() {
   const site = useSite();
-  const [isUnlocked, setIsUnlocked] = useState<boolean>(false);
+  const [isUnlocked, setIsUnlocked] = useState<boolean>(() => {
+    try {
+      return (
+        window.localStorage.getItem('kashish_unlocked_persist') === 'true' ||
+        window.sessionStorage.getItem('kashishUnlocked') === 'true'
+      );
+    } catch {
+      return false;
+    }
+  });
   const [authUser, setAuthUser] = useState<FirebaseUser | null>(() => auth.currentUser);
   const [approvalStatus, setApprovalStatus] = useState<
     'loading' | 'approved' | 'pending' | 'rejected' | 'unauthenticated'
-  >('loading');
+  >(() => {
+    try {
+      if (
+        window.localStorage.getItem('kashish_unlocked_persist') === 'true' ||
+        window.sessionStorage.getItem('kashishUnlocked') === 'true'
+      ) {
+        return 'approved';
+      }
+    } catch {}
+    return 'loading';
+  });
   const [isLoadingAssets, setIsLoadingAssets] = useState(true);
-  const prevApprovalRef = useRef<string>('loading');
+  const prevApprovalRef = useRef<string>(approvalStatus);
 
   // Sync unlock state with Firebase Authentication AND Real-Time Admin Approval Gate
   useEffect(() => {
@@ -51,6 +70,7 @@ export default function App() {
         prevApprovalRef.current = 'unauthenticated';
         setIsUnlocked(false);
         try {
+          window.localStorage.removeItem('kashish_unlocked_persist');
           window.sessionStorage.removeItem('kashishUnlocked');
         } catch {}
         return;
@@ -62,6 +82,7 @@ export default function App() {
         prevApprovalRef.current = 'approved';
         setIsUnlocked(true);
         try {
+          window.localStorage.setItem('kashish_unlocked_persist', 'true');
           window.sessionStorage.setItem('kashishUnlocked', 'true');
         } catch {}
         return;
@@ -78,6 +99,7 @@ export default function App() {
             prevApprovalRef.current = 'pending';
             setIsUnlocked(false);
             try {
+              window.localStorage.removeItem('kashish_unlocked_persist');
               window.sessionStorage.removeItem('kashishUnlocked');
             } catch {}
             void setDoc(
@@ -106,6 +128,7 @@ export default function App() {
             prevApprovalRef.current = 'approved';
             setIsUnlocked(true);
             try {
+              window.localStorage.setItem('kashish_unlocked_persist', 'true');
               window.sessionStorage.setItem('kashishUnlocked', 'true');
             } catch {}
             if (wasPending) {
@@ -119,12 +142,20 @@ export default function App() {
             setIsUnlocked(false);
             romanticAudio.stop();
             try {
+              window.localStorage.removeItem('kashish_unlocked_persist');
               window.sessionStorage.removeItem('kashishUnlocked');
             } catch {}
           }
         },
         () => {
-          // If Firestore read fails, keep locked for safety
+          // If Firestore temporarily fails on startup, preserve existing approved session if already unlocked
+          try {
+            if (window.localStorage.getItem('kashish_unlocked_persist') === 'true') {
+              setApprovalStatus('approved');
+              setIsUnlocked(true);
+              return;
+            }
+          } catch {}
           setApprovalStatus('pending');
           setIsUnlocked(false);
         }
@@ -355,8 +386,10 @@ export default function App() {
 
   const handleUnlock = () => {
     setIsUnlocked(true);
+    setApprovalStatus('approved');
     try {
-      if (typeof window !== 'undefined' && window.sessionStorage) {
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem('kashish_unlocked_persist', 'true');
         window.sessionStorage.setItem('kashishUnlocked', 'true');
       }
     } catch {}
@@ -394,9 +427,11 @@ export default function App() {
       await signOut(auth);
     } catch {}
     setIsUnlocked(false);
+    setApprovalStatus('unauthenticated');
     setIsSecretLetterOpenInView(false);
     try {
-      if (typeof window !== 'undefined' && window.sessionStorage) {
+      if (typeof window !== 'undefined') {
+        window.localStorage.removeItem('kashish_unlocked_persist');
         window.sessionStorage.removeItem('kashishUnlocked');
       }
     } catch {}
@@ -583,8 +618,8 @@ export default function App() {
       {/* Background Floating Hearts, Rose Petals and Twinkling Stars */}
       <BackgroundEffects isDarkMode={isDarkMode} />
 
-      {/* Heart-beat Loading Screen during initial asset preload (max 2.2s) */}
-      {isLoadingAssets && (
+      {/* Heart-beat Loading Screen during initial asset preload & auth session restore */}
+      {(isLoadingAssets || approvalStatus === 'loading') && (
         <div
           role="status"
           aria-label="Loading assets"

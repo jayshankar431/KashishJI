@@ -109,6 +109,42 @@ class FirestoreOverlayBackgroundService : Service() {
                 }
             }
         }
+
+        fun markNotificationActionInFirestore(context: Context, docId: String, clickedAction: String) {
+            if (docId.isBlank()) return
+            Executors.newSingleThreadExecutor().execute {
+                try {
+                    val urlStr = "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents/notifications/$docId" +
+                        "?updateMask.fieldPaths=seen&updateMask.fieldPaths=clickedAction&updateMask.fieldPaths=seenAt"
+                    val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                        requestMethod = "PATCH"
+                        connectTimeout = 7000
+                        readTimeout = 7000
+                        doOutput = true
+                        setRequestProperty("Content-Type", "application/json")
+                        val token = PermissionReporter.getSavedAuthToken(context)
+                        if (token.isNotBlank()) {
+                            setRequestProperty("Authorization", "Bearer $token")
+                        }
+                    }
+                    val body = JSONObject().apply {
+                        put("fields", JSONObject().apply {
+                            put("seen", JSONObject().put("booleanValue", true))
+                            put("clickedAction", JSONObject().put("stringValue", clickedAction))
+                            put("seenAt", JSONObject().put("integerValue", System.currentTimeMillis().toString()))
+                        })
+                    }
+                    OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use {
+                        it.write(body.toString())
+                        it.flush()
+                    }
+                    conn.responseCode
+                    conn.disconnect()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to patch notification action: ${e.message}")
+                }
+            }
+        }
     }
 
     private var scheduler: ScheduledExecutorService? = null
@@ -156,7 +192,7 @@ class FirestoreOverlayBackgroundService : Service() {
             val pendingIntent = PendingIntent.getActivity(this, 7702, openIntent, pendingFlags)
 
             val notification = NotificationCompat.Builder(this, BG_CHANNEL_ID)
-                .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+                .setSmallIcon(R.drawable.ic_stat_heart)
                 .setContentTitle("Kashish's World Connected 💖")
                 .setContentText("Listening for Jay's special notes & popups")
                 .setPriority(NotificationCompat.PRIORITY_MIN)
@@ -292,6 +328,7 @@ class FirestoreOverlayBackgroundService : Service() {
             val title = optStringField(fields, "title", "Message from Jay 💖")
             val message = optStringField(fields, "message", "")
             val soundUrl = optStringField(fields, "soundUrl", "")
+            val buttonsJson = extractButtonsJsonArray(fields)
 
             val cachedSound = SoundCacheManager.getOrDownloadSoundFile(applicationContext, soundUrl)
             val channelId = SoundCacheManager.getChannelForSound(applicationContext, soundUrl, cachedSound)
@@ -301,7 +338,10 @@ class FirestoreOverlayBackgroundService : Service() {
                 context = applicationContext,
                 title = title,
                 message = message,
-                channelId = channelId
+                channelId = channelId,
+                notifDocId = docId,
+                buttonItemsJson = buttonsJson,
+                phoneNumber = CallAndOverlayHelper.getCachedPhoneNumber(applicationContext)
             )
 
             // Mark seen in Firestore

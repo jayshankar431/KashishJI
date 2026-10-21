@@ -27,6 +27,12 @@ export interface AndroidAppBridge {
   hasNotificationPermission?: () => boolean;
   isNativeApp?: () => boolean;
   showNotification?: (title: string, message: string) => void;
+  showNotificationWithButtons?: (
+    title: string,
+    message: string,
+    buttonsJson: string,
+    notifDocId: string
+  ) => void;
   canDrawOverlays?: () => boolean;
   openOverlayPermission?: () => void;
   requestAudioFocus?: () => void;

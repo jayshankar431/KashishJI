@@ -19,17 +19,25 @@ import java.security.MessageDigest
 /**
  * Downloads, caches, and plays custom notification sounds per notification.
  * Also registers a dedicated high-importance NotificationChannel per sound hash on Android O+.
+ * Note: The Overlay Popup channel is explicitly configured WITHOUT any phone ringtone
+ * so Truecaller-style popups wake the screen silently with a gentle heartbeat vibration.
  */
 object SoundCacheManager {
     private const val TAG = "SoundCacheManager"
     const val DEFAULT_CHANNEL_ID = "kashish_high_priority_default"
-    const val OVERLAY_CHANNEL_ID = "kashish_urgent_overlay_channel"
+    const val OVERLAY_CHANNEL_ID = "kashish_overlay_popup_silent_v2"
+    private const val LEGACY_RINGTONE_CHANNEL_ID = "kashish_urgent_overlay_channel"
 
     private var activePlayer: MediaPlayer? = null
 
     fun ensureDefaultChannels(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        // Delete legacy channel that previously had TYPE_RINGTONE attached
+        try {
+            nm.deleteNotificationChannel(LEGACY_RINGTONE_CHANNEL_ID)
+        } catch (_: Exception) {}
 
         val defaultSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
         val audioAttr = AudioAttributes.Builder()
@@ -44,20 +52,21 @@ object SoundCacheManager {
         ).apply {
             description = "High priority notifications from Jay"
             enableVibration(true)
-            vibrationPattern = longArrayOf(0, 300, 150, 300)
+            vibrationPattern = longArrayOf(0, 220, 120, 220)
             setSound(defaultSound, audioAttr)
             lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
         }
 
+        // Silent high-importance channel for Truecaller-style Overlay Popups (never plays phone ringtone!)
         val overlayChannel = NotificationChannel(
             OVERLAY_CHANNEL_ID,
-            "Urgent Love Popups 🚨",
+            "Love Popups 💖",
             NotificationManager.IMPORTANCE_HIGH
         ).apply {
-            description = "Full-screen urgent popups and call alerts"
+            description = "Truecaller-style screen popups without phone ringtone"
             enableVibration(true)
-            vibrationPattern = longArrayOf(0, 500, 200, 500, 200, 500)
-            setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE), audioAttr)
+            vibrationPattern = longArrayOf(0, 180, 120, 260)
+            setSound(null, null)
             lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
         }
 
@@ -132,7 +141,7 @@ object SoundCacheManager {
             ).apply {
                 description = "Custom notification tone from Jay"
                 enableVibration(true)
-                vibrationPattern = longArrayOf(0, 300, 150, 300)
+                vibrationPattern = longArrayOf(0, 220, 120, 220)
                 setSound(soundUri, audioAttr)
                 lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
             }

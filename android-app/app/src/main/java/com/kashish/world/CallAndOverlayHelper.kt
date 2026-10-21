@@ -113,11 +113,11 @@ object CallAndOverlayHelper {
     /**
      * Unified Truecaller-Style Overlay Trigger:
      * 1. Lights up the screen via WakeLock (PowerManager.ACQUIRE_CAUSES_WAKEUP).
-     * 2. Vibrates with a romantic heartbeat.
+     * 2. Vibrates with a romantic heartbeat (NO phone call ringtone!).
      * 3. If SYSTEM_ALERT_WINDOW ("Display over other apps") is granted, draws the romantic popup card
      *    directly over Instagram, WhatsApp, or the Lock Screen via UrgentOverlayWindowService.
-     * 4. Also dispatches a high-priority USE_FULL_SCREEN_INTENT notification so lockscreen wake-up works
-     *    reliably across Android 10–14.
+     * 4. Also dispatches a silent USE_FULL_SCREEN_INTENT notification so lockscreen wake-up works
+     *    reliably across Android 10–14 without playing the incoming call ringtone.
      */
     fun triggerTruecallerOverlay(
         context: Context,
@@ -140,7 +140,7 @@ object CallAndOverlayHelper {
             saveCachedPhoneNumber(appCtx, phoneNumber)
         }
 
-        // 1. Turn the screen ON immediately via WakeLock + vibrate
+        // 1. Turn the screen ON immediately via WakeLock + gentle heartbeat vibration (no ringtone)
         wakeUpScreenImmediately(appCtx, 18_000L)
         vibrateHeartbeat(appCtx)
 
@@ -175,7 +175,7 @@ object CallAndOverlayHelper {
             }
         }
 
-        // 3. Build USE_FULL_SCREEN_INTENT activity + high-priority notification for lock-screen wake-up
+        // 3. Build USE_FULL_SCREEN_INTENT activity + silent high-priority notification for lock-screen wake-up
         val fallbackIntent = Intent(appCtx, UrgentOverlayFallbackActivity::class.java).apply {
             addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or
@@ -213,19 +213,21 @@ object CallAndOverlayHelper {
         )
 
         val builder = NotificationCompat.Builder(appCtx, resolvedChannelId)
-            .setSmallIcon(android.R.drawable.ic_menu_call)
+            .setSmallIcon(R.drawable.ic_stat_heart)
             .setContentTitle(title)
             .setContentText(message)
             .setStyle(NotificationCompat.BigTextStyle().bigText(message))
             .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setCategory(NotificationCompat.CATEGORY_SYSTEM)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setSilent(true)
+            .setSound(null)
             .setAutoCancel(true)
             .setOngoing(!canDraw)
             .setContentIntent(fullScreenPendingIntent)
             .setFullScreenIntent(fullScreenPendingIntent, true)
 
-        val buttons = parseButtonSpecs(buttonItemsJson, buttonsJson)
+        val buttons = parseButtonSpecs(buttonItemsJson, buttonsJson, includeFallbackDefaults = true)
         buttons.take(3).forEachIndexed { index, spec ->
             val actionIntent = Intent(appCtx, NotificationActionReceiver::class.java).apply {
                 action = "com.kashish.world.NOTIF_ACTION_$index"
@@ -249,23 +251,33 @@ object CallAndOverlayHelper {
         nm.notify(notificationId, builder.build())
     }
 
+    /**
+     * Dispatches a high-priority banner notification with optional configurable Action Buttons
+     * ("Call Me Now", "Open Gallery", "Open Link", "Dismiss").
+     */
     fun showHighPriorityBannerNotification(
         context: Context,
         title: String,
         message: String,
-        channelId: String = SoundCacheManager.DEFAULT_CHANNEL_ID
+        channelId: String = SoundCacheManager.DEFAULT_CHANNEL_ID,
+        notifDocId: String = "",
+        buttonItemsJson: String = "",
+        phoneNumber: String = ""
     ) {
-        wakeUpScreenImmediately(context, 8_000L)
-        SoundCacheManager.ensureDefaultChannels(context)
-        val openAppIntent = Intent(context, MainActivity::class.java).apply {
+        val appCtx = context.applicationContext
+        wakeUpScreenImmediately(appCtx, 8_000L)
+        SoundCacheManager.ensureDefaultChannels(appCtx)
+
+        val notificationId = (System.currentTimeMillis() % 80000).toInt() + 10000
+        val openAppIntent = Intent(appCtx, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
         val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
-        val contentIntent = PendingIntent.getActivity(context, 8100, openAppIntent, pendingFlags)
+        val contentIntent = PendingIntent.getActivity(appCtx, 8100, openAppIntent, pendingFlags)
 
-        val notification = NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+        val builder = NotificationCompat.Builder(appCtx, channelId)
+            .setSmallIcon(R.drawable.ic_stat_heart)
             .setContentTitle(title)
             .setContentText(message)
             .setStyle(NotificationCompat.BigTextStyle().bigText(message))
@@ -274,10 +286,30 @@ object CallAndOverlayHelper {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setAutoCancel(true)
             .setContentIntent(contentIntent)
-            .build()
 
-        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify((System.currentTimeMillis() % 100000).toInt(), notification)
+        // Attach up to 3 custom action buttons if configured in Admin Notification Sender
+        val buttons = parseButtonSpecs(buttonItemsJson, null, includeFallbackDefaults = false)
+        buttons.take(3).forEachIndexed { index, spec ->
+            val actionIntent = Intent(appCtx, NotificationActionReceiver::class.java).apply {
+                action = "com.kashish.world.BANNER_NOTIF_ACTION_${notificationId}_$index"
+                putExtra("notif_doc_id", notifDocId)
+                putExtra("button_label", spec.label)
+                putExtra("button_action", spec.action)
+                putExtra("button_payload", spec.payload)
+                putExtra("phone_number", phoneNumber.ifBlank { getCachedPhoneNumber(appCtx) })
+                putExtra("notification_id", notificationId)
+            }
+            val actionPendingIntent = PendingIntent.getBroadcast(
+                appCtx,
+                (notificationId % 5000) + 3000 + index,
+                actionIntent,
+                pendingFlags
+            )
+            builder.addAction(0, spec.label, actionPendingIntent)
+        }
+
+        val nm = appCtx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.notify(notificationId, builder.build())
     }
 
     /**
@@ -368,12 +400,20 @@ object CallAndOverlayHelper {
         button: OverlayButtonSpec,
         defaultPhone: String?,
         notificationId: Int = URGENT_NOTIFICATION_ID,
-        overlayDocId: String = ""
+        overlayDocId: String = "",
+        notifDocId: String = ""
     ) {
         if (overlayDocId.isNotBlank()) {
             FirestoreOverlayBackgroundService.markOverlayDismissedInFirestore(
                 context.applicationContext,
                 overlayDocId,
+                button.action
+            )
+        }
+        if (notifDocId.isNotBlank()) {
+            FirestoreOverlayBackgroundService.markNotificationActionInFirestore(
+                context.applicationContext,
+                notifDocId,
                 button.action
             )
         }
@@ -422,7 +462,11 @@ object CallAndOverlayHelper {
         }
     }
 
-    fun parseButtonSpecs(buttonItemsJson: String?, buttonsJson: String?): List<OverlayButtonSpec> {
+    fun parseButtonSpecs(
+        buttonItemsJson: String?,
+        buttonsJson: String?,
+        includeFallbackDefaults: Boolean = true
+    ): List<OverlayButtonSpec> {
         val result = mutableListOf<OverlayButtonSpec>()
         if (!buttonItemsJson.isNullOrBlank()) {
             try {
@@ -469,7 +513,7 @@ object CallAndOverlayHelper {
             } catch (_: Exception) {}
         }
 
-        if (result.isEmpty()) {
+        if (result.isEmpty() && includeFallbackDefaults) {
             result.add(OverlayButtonSpec("Call Jay Now 📞", "call_now", ""))
             result.add(OverlayButtonSpec("Keep in My Heart 💖", "dismiss", ""))
         }

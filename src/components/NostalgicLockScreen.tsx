@@ -109,6 +109,11 @@ export const NostalgicLockScreen: React.FC<NostalgicLockScreenProps> = ({
     setIsSuccess(true);
     setFeedbackMessage('');
 
+    try {
+      window.localStorage.setItem('kashish_unlocked_persist', 'true');
+      window.sessionStorage.setItem('kashishUnlocked', 'true');
+    } catch {}
+
     if (typeof window !== 'undefined' && window.AndroidApp?.vibrate) {
       window.AndroidApp.vibrate(40);
     } else {
@@ -754,17 +759,6 @@ export const NostalgicLockScreen: React.FC<NostalgicLockScreenProps> = ({
                   <LogOut className="w-4 h-4" />
                   <span>Sign Out / Use Another Account</span>
                 </button>
-
-                {onShowAdmin && (
-                  <button
-                    type="button"
-                    onClick={onShowAdmin}
-                    className="w-full min-h-[40px] px-4 py-2 rounded-xl text-xs font-semibold text-[var(--text-soft)] hover:text-[var(--accent)] flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
-                  >
-                    <Settings className="w-3.5 h-3.5" />
-                    <span>Admin Control Center</span>
-                  </button>
-                )}
               </div>
             </div>
           ) : (
@@ -1015,15 +1009,6 @@ export const NostalgicLockScreen: React.FC<NostalgicLockScreenProps> = ({
         >
           Made with love, just for you.
         </p>
-        {onShowAdmin && (
-          <button
-            type="button"
-            onClick={onShowAdmin}
-            className="text-[11px] font-semibold text-[var(--text-soft)] opacity-60 hover:opacity-100 hover:text-[var(--accent)] transition-opacity cursor-pointer"
-          >
-            Admin Control Center
-          </button>
-        )}
       </footer>
     </div>
   );
