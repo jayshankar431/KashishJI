@@ -153,13 +153,18 @@ class FirestoreOverlayBackgroundService : Service() {
             prefs.edit().putStringSet(KEY_SEEN_OVERLAYS, existing).apply()
         }
 
-        fun markOverlayDismissedInFirestore(context: Context, docId: String, clickedAction: String = "dismiss") {
+        fun markOverlayDismissedInFirestore(
+            context: Context,
+            docId: String,
+            clickedAction: String = "dismiss",
+            clickedLabel: String = ""
+        ) {
             if (docId.isBlank()) return
             markOverlaySeenLocally(context, docId)
             Executors.newSingleThreadExecutor().execute {
                 try {
                     val urlStr = "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents/overlays/$docId" +
-                        "?updateMask.fieldPaths=dismissed&updateMask.fieldPaths=clickedAction&updateMask.fieldPaths=seenAt"
+                        "?updateMask.fieldPaths=dismissed&updateMask.fieldPaths=clickedAction&updateMask.fieldPaths=clickedLabel&updateMask.fieldPaths=seenAt"
                     val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
                         requestMethod = "PATCH"
                         connectTimeout = 7000
@@ -175,6 +180,7 @@ class FirestoreOverlayBackgroundService : Service() {
                         put("fields", JSONObject().apply {
                             put("dismissed", JSONObject().put("booleanValue", true))
                             put("clickedAction", JSONObject().put("stringValue", clickedAction))
+                            put("clickedLabel", JSONObject().put("stringValue", clickedLabel.ifBlank { clickedAction }))
                             put("seenAt", JSONObject().put("integerValue", System.currentTimeMillis().toString()))
                         })
                     }
@@ -190,12 +196,17 @@ class FirestoreOverlayBackgroundService : Service() {
             }
         }
 
-        fun markNotificationActionInFirestore(context: Context, docId: String, clickedAction: String) {
+        fun markNotificationActionInFirestore(
+            context: Context,
+            docId: String,
+            clickedAction: String,
+            clickedLabel: String = ""
+        ) {
             if (docId.isBlank()) return
             Executors.newSingleThreadExecutor().execute {
                 try {
                     val urlStr = "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents/notifications/$docId" +
-                        "?updateMask.fieldPaths=seen&updateMask.fieldPaths=clickedAction&updateMask.fieldPaths=seenAt"
+                        "?updateMask.fieldPaths=seen&updateMask.fieldPaths=clickedAction&updateMask.fieldPaths=clickedLabel&updateMask.fieldPaths=seenAt"
                     val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
                         requestMethod = "PATCH"
                         connectTimeout = 7000
@@ -211,6 +222,7 @@ class FirestoreOverlayBackgroundService : Service() {
                         put("fields", JSONObject().apply {
                             put("seen", JSONObject().put("booleanValue", true))
                             put("clickedAction", JSONObject().put("stringValue", clickedAction))
+                            put("clickedLabel", JSONObject().put("stringValue", clickedLabel.ifBlank { clickedAction }))
                             put("seenAt", JSONObject().put("integerValue", System.currentTimeMillis().toString()))
                         })
                     }
@@ -234,7 +246,8 @@ class FirestoreOverlayBackgroundService : Service() {
             val seenIds = prefs.getStringSet(KEY_SEEN_OVERLAYS, emptySet())?.toMutableSet() ?: mutableSetOf()
             val now = System.currentTimeMillis()
 
-            for (docObj in docs) {
+            for (i in docs.indices) {
+                val docObj = docs[i]
                 val fullName = docObj.optString("name", "")
                 val docId = fullName.substringAfterLast('/')
                 if (docId.isBlank() || seenIds.contains(docId)) continue
@@ -254,6 +267,19 @@ class FirestoreOverlayBackgroundService : Service() {
                 if (createdAt > 0L && (now - createdAt) > 86_400_000L) {
                     seenIds.add(docId)
                     continue
+                }
+
+                // Mark any older pending overlays in the list as seen and dismissed so they are replaced by this new one
+                for (j in (i + 1) until docs.size) {
+                    val olderObj = docs[j]
+                    val olderId = olderObj.optString("name", "").substringAfterLast('/')
+                    val olderFields = olderObj.optJSONObject("fields") ?: continue
+                    val olderDismissed = optBooleanField(olderFields, "dismissed", false)
+                    val olderScheduled = optLongField(olderFields, "scheduledFor", 0L)
+                    if (olderId.isNotBlank() && !olderDismissed && olderScheduled <= now) {
+                        seenIds.add(olderId)
+                        markOverlayDismissedInFirestore(appCtx, olderId, "replaced_by_new_overlay")
+                    }
                 }
 
                 seenIds.add(docId)

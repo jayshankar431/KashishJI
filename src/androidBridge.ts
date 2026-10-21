@@ -92,7 +92,9 @@ export function isVersionOlder(installedVersion: string, requiredVersion: string
 }
 
 export function openApkDownloadUrl(url: string): void {
-  const target = (url || 'https://kashishji.web.app/Kashishhh.apk').trim();
+  const target = (
+    url || 'https://github.com/sivam1100-creator/Kashish-World/releases/download/latest-apk/Kashishhh.apk'
+  ).trim();
   void logNativeActivity(`📲 Kashish tapped Download Update APK (${target})`, false, 'apk_update_clicked');
   try {
     if (typeof window !== 'undefined' && window.AndroidApp?.openExternalUrl) {
@@ -103,6 +105,56 @@ export function openApkDownloadUrl(url: string): void {
   if (typeof window !== 'undefined') {
     window.location.href = target;
   }
+}
+
+export interface LatestReleaseApkInfo {
+  version: string;
+  apkUrl: string;
+  releasedAt?: string;
+}
+
+export async function fetchLatestReleaseApkInfo(): Promise<LatestReleaseApkInfo | null> {
+  const defaultApkUrl =
+    'https://github.com/sivam1100-creator/Kashish-World/releases/download/latest-apk/Kashishhh.apk';
+  // 1. Check live GitHub Release ('latest-apk') so version only updates AFTER Kashishhh.apk is built & uploaded
+  try {
+    const ghRes = await fetch(
+      `https://api.github.com/repos/sivam1100-creator/Kashish-World/releases/tags/latest-apk?t=${Date.now()}`,
+      { cache: 'no-store' }
+    );
+    if (ghRes.ok) {
+      const ghData = await ghRes.json();
+      const title: string = ghData?.name || ghData?.body || '';
+      const verMatch = title.match(/v?(\d+\.\d+\.\d+)/i);
+      const assets: any[] = Array.isArray(ghData?.assets) ? ghData.assets : [];
+      const kashishAsset =
+        assets.find((a) => a?.name === 'Kashishhh.apk') || assets[0];
+      if (verMatch && verMatch[1]) {
+        return {
+          version: verMatch[1],
+          apkUrl: kashishAsset?.browser_download_url || defaultApkUrl,
+          releasedAt: ghData?.published_at || ghData?.created_at,
+        };
+      }
+    }
+  } catch {}
+
+  // 2. Fallback to /latest-apk.json hosted on the site
+  try {
+    const localRes = await fetch(`/latest-apk.json?t=${Date.now()}`, { cache: 'no-store' });
+    if (localRes.ok) {
+      const localData = await localRes.json();
+      if (localData && typeof localData.version === 'string') {
+        return {
+          version: localData.version.replace(/^v/i, '').trim(),
+          apkUrl: localData.apkUrl || defaultApkUrl,
+          releasedAt: localData.releasedAt,
+        };
+      }
+    }
+  } catch {}
+
+  return null;
 }
 
 export function triggerHaptic(ms: number = 40): void {

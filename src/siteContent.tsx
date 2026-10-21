@@ -204,6 +204,8 @@ export interface SiteContent {
   features: AppFeaturesConfig;
   maintenanceMode: boolean;
   maintenanceMessage: string;
+  maintenanceLinkUrl: string;
+  maintenanceLinkLabel: string;
   forceLock: boolean;
   apkUpdateRequired: boolean;
   apkAutoUpdateOnPush: boolean;
@@ -265,14 +267,16 @@ export const SITE_DEFAULTS: SiteContent = {
     voiceNote: true,
   },
   maintenanceMode: false,
-  maintenanceMessage: 'Currently updating your special world. Please check back in a few minutes.',
+  maintenanceMessage: 'Currently updating your special world. Please download the latest update below to continue!',
+  maintenanceLinkUrl: '',
+  maintenanceLinkLabel: 'Download Updated App (Kashishhh.apk) 💖',
   forceLock: false,
   apkUpdateRequired: false,
   apkAutoUpdateOnPush: true,
   apkLatestVersion: '3.0.0',
-  apkDownloadUrl: 'https://kashishji.web.app/Kashishhh.apk',
+  apkDownloadUrl: 'https://github.com/sivam1100-creator/Kashish-World/releases/download/latest-apk/Kashishhh.apk',
   apkUpdateTitle: 'New Update Available for Kashishhh 💖',
-  apkUpdateNotes: 'A brand new version of your app is ready with new surprises, smoother performance & upgraded icons! Please download & install the update to continue.',
+  apkUpdateNotes: 'A new version of your special app is ready! Please download & install the update below to continue.',
   apkApplyToWeb: false,
 };
 

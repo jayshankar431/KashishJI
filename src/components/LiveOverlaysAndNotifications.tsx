@@ -157,6 +157,11 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
     } catch {}
   };
 
+  const activeOverlayIdRef = React.useRef<string | null>(null);
+  useEffect(() => {
+    activeOverlayIdRef.current = activeOverlay?.id || null;
+  }, [activeOverlay]);
+
   useEffect(() => {
     const seenNotifIds = new Set<string>(
       JSON.parse(localStorage.getItem('kashish_seen_notifs') || '[]')
@@ -219,51 +224,104 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
       JSON.parse(localStorage.getItem('kashish_seen_overlays') || '[]')
     );
 
-    const qOverlays = query(collection(db, 'overlays'), orderBy('createdAt', 'desc'), limit(5));
+    const qOverlays = query(collection(db, 'overlays'), orderBy('createdAt', 'desc'), limit(8));
     const unsubOverlays = onSnapshot(
       qOverlays,
       (snap) => {
         const now = Date.now();
-        snap.forEach((docSnap) => {
-          const d = docSnap.data();
-          if (seenOverlayIds.has(docSnap.id) || d.dismissed) return;
-          if (d.scheduledFor && d.scheduledFor > now) return;
+        const docs = snap.docs;
 
-          if (d.createdAt && now - d.createdAt < 86400000) {
-            seenOverlayIds.add(docSnap.id);
-            try {
-              localStorage.setItem('kashish_seen_overlays', JSON.stringify(Array.from(seenOverlayIds)));
-            } catch {}
-
-            const fullOverlay = {
-              id: docSnap.id,
-              ...d,
-              phoneNumber: defaultCallNumber,
-            };
-
-            // If running inside the Android APK and SYSTEM_ALERT_WINDOW is enabled (or app is in background),
-            // also trigger the native Truecaller-style SYSTEM_ALERT_WINDOW + WakeLock popup!
-            let nativeOverlayDispatched = false;
-            if (typeof document !== 'undefined' && (document.hidden || canDrawOverlays())) {
-              nativeOverlayDispatched = triggerNativeSystemOverlay(fullOverlay);
-            }
-
-            // Play custom overlay sound in Web / WebView if native system overlay isn't already playing it
-            if (!nativeOverlayDispatched && d.soundUrl && d.soundUrl !== 'silent') {
-              resolveFirestoreMediaUrl(d.soundUrl).then((playUrl) => {
-                if (!playUrl) return;
-                stopOverlayAudio();
-                const audio = new Audio(playUrl);
-                audio.volume = 0.9;
-                overlayAudioRef.current = audio;
-                audio.play().catch(() => {});
-              });
-            }
-
-            setActiveOverlay(fullOverlay);
-            triggerHaptic(80);
+        // 1. If the currently open overlay was dismissed remotely (or replaced by a newer overlay), close it
+        const currentOpenId = activeOverlayIdRef.current;
+        if (currentOpenId) {
+          const openDoc = docs.find((d) => d.id === currentOpenId);
+          if (openDoc && openDoc.data().dismissed) {
+            stopOverlayAudio();
+            setActiveOverlay(null);
+            activeOverlayIdRef.current = null;
           }
+        }
+
+        // 2. Find all due, non-dismissed overlays (ordered newest first because of orderBy('createdAt', 'desc'))
+        const validDueDocs = docs.filter((docSnap) => {
+          const d = docSnap.data();
+          if (d.dismissed) return false;
+          if (d.scheduledFor && d.scheduledFor > now) return false;
+          if (!d.createdAt || now - d.createdAt >= 86400000) return false;
+          return true;
         });
+
+        if (validDueDocs.length === 0) return;
+
+        // The first item in validDueDocs is the newest pending overlay
+        const newestDoc = validDueDocs[0];
+        const olderPendingDocs = validDueDocs.slice(1);
+
+        // Automatically dismiss any older pending overlays in Firestore so they never stay pending
+        if (olderPendingDocs.length > 0) {
+          olderPendingDocs.forEach((oldDoc) => {
+            seenOverlayIds.add(oldDoc.id);
+            updateDoc(doc(db, 'overlays', oldDoc.id), {
+              dismissed: true,
+              clickedAction: 'replaced_by_new_overlay',
+              seenAt: now,
+            }).catch(() => {});
+          });
+          try {
+            localStorage.setItem('kashish_seen_overlays', JSON.stringify(Array.from(seenOverlayIds)));
+          } catch {}
+        }
+
+        // Show the newest overlay if it hasn't been seen yet
+        if (!seenOverlayIds.has(newestDoc.id)) {
+          // If an older overlay is currently open on screen, mark it dismissed in Firestore before replacing
+          if (activeOverlayIdRef.current && activeOverlayIdRef.current !== newestDoc.id) {
+            const prevId = activeOverlayIdRef.current;
+            updateDoc(doc(db, 'overlays', prevId), {
+              dismissed: true,
+              clickedAction: 'replaced_by_new_overlay',
+              seenAt: now,
+            }).catch(() => {});
+          }
+
+          seenOverlayIds.add(newestDoc.id);
+          try {
+            localStorage.setItem('kashish_seen_overlays', JSON.stringify(Array.from(seenOverlayIds)));
+          } catch {}
+
+          const d = newestDoc.data();
+          const fullOverlay = {
+            id: newestDoc.id,
+            ...d,
+            phoneNumber: defaultCallNumber,
+          };
+
+          // Stop any previous overlay audio before playing the new overlay
+          stopOverlayAudio();
+
+          // If running inside the Android APK and SYSTEM_ALERT_WINDOW is enabled (or app is in background),
+          // also trigger the native Truecaller-style SYSTEM_ALERT_WINDOW + WakeLock popup!
+          let nativeOverlayDispatched = false;
+          if (typeof document !== 'undefined' && (document.hidden || canDrawOverlays())) {
+            nativeOverlayDispatched = triggerNativeSystemOverlay(fullOverlay);
+          }
+
+          // Play custom overlay sound in Web / WebView if native system overlay isn't already playing it
+          if (!nativeOverlayDispatched && d.soundUrl && d.soundUrl !== 'silent') {
+            resolveFirestoreMediaUrl(d.soundUrl).then((playUrl) => {
+              if (!playUrl) return;
+              stopOverlayAudio();
+              const audio = new Audio(playUrl);
+              audio.volume = 0.9;
+              overlayAudioRef.current = audio;
+              audio.play().catch(() => {});
+            });
+          }
+
+          activeOverlayIdRef.current = newestDoc.id;
+          setActiveOverlay(fullOverlay);
+          triggerHaptic(80);
+        }
       },
       () => {}
     );
@@ -318,6 +376,7 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
     updateDoc(doc(db, 'notifications', notifId), {
       seen: true,
       clickedAction: btn.action,
+      clickedLabel: btn.label || 'Open',
       seenAt: Date.now(),
     }).catch(() => {});
 
@@ -340,6 +399,7 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
     updateDoc(doc(db, 'overlays', overlayId), {
       dismissed: true,
       clickedAction: btn.action,
+      clickedLabel: btn.label || 'Continue',
       seenAt: Date.now(),
     }).catch(() => {});
 
@@ -483,7 +543,12 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
             <button
               onClick={() => {
                 stopOverlayAudio();
-                updateDoc(doc(db, 'overlays', activeOverlay.id), { dismissed: true }).catch(() => {});
+                updateDoc(doc(db, 'overlays', activeOverlay.id), {
+                  dismissed: true,
+                  clickedAction: 'closed_x',
+                  clickedLabel: '✕ Closed Popup',
+                  seenAt: Date.now(),
+                }).catch(() => {});
                 setActiveOverlay(null);
               }}
               aria-label="Close message"
@@ -605,7 +670,12 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
                 <button
                   onClick={() => {
                     stopOverlayAudio();
-                    updateDoc(doc(db, 'overlays', activeOverlay.id), { dismissed: true }).catch(() => {});
+                    updateDoc(doc(db, 'overlays', activeOverlay.id), {
+                      dismissed: true,
+                      clickedAction: 'dismiss',
+                      clickedLabel: 'Keep in My Heart',
+                      seenAt: Date.now(),
+                    }).catch(() => {});
                     setActiveOverlay(null);
                   }}
                   style={{

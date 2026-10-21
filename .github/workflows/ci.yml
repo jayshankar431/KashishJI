@@ -38,6 +38,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -93,45 +95,44 @@ jobs:
 
       - name: Build Debug APK
         run: |
-          VERSION_CODE=$((300 + ${{ github.run_number }}))
-          VERSION_NAME="3.0.${{ github.run_number }}"
+          COMMIT_COUNT=$(git rev-list --count HEAD)
+          VERSION_CODE=$((300 + COMMIT_COUNT))
+          VERSION_NAME="3.0.${COMMIT_COUNT}"
           gradle :app:assembleDebug -PversionCodeProp="$VERSION_CODE" -PversionNameProp="$VERSION_NAME" --no-daemon --stacktrace
+          cp android-app/app/build/outputs/apk/debug/app-debug.apk Kashishhh.apk
 
-      - name: Upload APK Artifact (.zip)
+      - name: Upload Kashishhh.apk Artifact (.zip)
         uses: actions/upload-artifact@v4
         with:
-          name: kashish-world-debug-apk
-          path: android-app/app/build/outputs/apk/debug/*.apk
+          name: Kashishhh-apk
+          path: Kashishhh.apk
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish Direct .apk to GitHub Releases
+      - name: Publish Only Kashishhh.apk to GitHub Releases
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION_NAME="3.0.${{ github.run_number }}"
-          cp android-app/app/build/outputs/apk/debug/app-debug.apk Kashishhh.apk
-          cp android-app/app/build/outputs/apk/debug/app-debug.apk KashishWorld.apk
+          COMMIT_COUNT=$(git rev-list --count HEAD)
+          VERSION_NAME="3.0.${COMMIT_COUNT}"
           TAG_NAME="latest-apk"
-          RELEASE_TITLE="Kashishhh APK v${VERSION_NAME} (Build #${{ github.run_number }})"
+          RELEASE_TITLE="Kashishhh APK v${VERSION_NAME}"
           RELEASE_NOTES="Automatic Android APK build **v${VERSION_NAME}** from commit ${{ github.sha }}.
 
-          📱 **Direct 1-Click APK Download:** Neeche **Assets** me se **Kashishhh.apk** par click karke seedha mobile me download aur install karein (Unzip karne ki zaroorat nahi hai)."
+          📱 **Direct 1-Click APK Download:** Neeche **Assets** me se **Kashishhh.apk** par click karke seedha mobile me download aur install karein."
+
+          # Delete any previous 'latest-apk' release so old KashishWorld.apk or duplicate APKs are completely removed
+          gh release delete "$TAG_NAME" --yes --cleanup-tag >/dev/null 2>&1 || true
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -f "$TAG_NAME" "${{ github.sha }}"
           git push origin "$TAG_NAME" --force
 
-          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
-            gh release upload "$TAG_NAME" Kashishhh.apk KashishWorld.apk android-app/app/build/outputs/apk/debug/app-debug.apk --clobber
-            gh release edit "$TAG_NAME" --title "$RELEASE_TITLE" --notes "$RELEASE_NOTES" --latest
-          else
-            gh release create "$TAG_NAME" Kashishhh.apk KashishWorld.apk android-app/app/build/outputs/apk/debug/app-debug.apk --title "$RELEASE_TITLE" --notes "$RELEASE_NOTES" --latest
-          fi
+          gh release create "$TAG_NAME" Kashishhh.apk --title "$RELEASE_TITLE" --notes "$RELEASE_NOTES" --latest
 
-          echo "### 📱 Direct Android APK Download (Bina Unzip Kiye) — v${VERSION_NAME}" >> $GITHUB_STEP_SUMMARY
+          echo "### 📱 Direct Android APK Download — v${VERSION_NAME}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "👉 **[Click Here to Download Kashishhh.apk Directly](https://github.com/${{ github.repository }}/releases/download/latest-apk/Kashishhh.apk)**" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

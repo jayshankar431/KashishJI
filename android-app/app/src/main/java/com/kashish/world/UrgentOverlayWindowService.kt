@@ -36,6 +36,7 @@ class UrgentOverlayWindowService : Service() {
 
     private var windowManager: WindowManager? = null
     private var overlayRootView: View? = null
+    private var currentOverlayDocId: String = ""
     private val ioExecutor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -176,6 +177,15 @@ class UrgentOverlayWindowService : Service() {
         buttons: List<OverlayButtonSpec>,
         notificationId: Int
     ) {
+        // If an older overlay is still pending on screen without a response, auto-dismiss it in Firestore before replacing
+        if (currentOverlayDocId.isNotBlank() && currentOverlayDocId != overlayDocId) {
+            FirestoreOverlayBackgroundService.markOverlayDismissedInFirestore(
+                this,
+                currentOverlayDocId,
+                "replaced_by_new_overlay"
+            )
+        }
+        currentOverlayDocId = overlayDocId
         removeOverlayView()
 
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -219,11 +229,13 @@ class UrgentOverlayWindowService : Service() {
             gravity = Gravity.CENTER
             background = closeBtnBg
             setOnClickListener {
+                currentOverlayDocId = ""
                 if (overlayDocId.isNotBlank()) {
                     FirestoreOverlayBackgroundService.markOverlayDismissedInFirestore(
                         this@UrgentOverlayWindowService,
                         overlayDocId,
-                        "dismiss"
+                        "closed_x",
+                        "✕ Closed Popup"
                     )
                 }
                 CallAndOverlayHelper.dismissPopupAndNotification(this@UrgentOverlayWindowService, notificationId)
@@ -370,6 +382,7 @@ class UrgentOverlayWindowService : Service() {
                 background = btnDrawable
                 setPadding(dp(16), dp(12), dp(16), dp(12))
                 setOnClickListener {
+                    currentOverlayDocId = ""
                     removeOverlayView()
                     CallAndOverlayHelper.executeButtonSpec(
                         context = this@UrgentOverlayWindowService,

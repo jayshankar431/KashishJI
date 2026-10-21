@@ -21,12 +21,14 @@ import {
   logNativeActivity,
   incrementStat,
   trackSectionVisit,
+  openApkDownloadUrl,
   isNativeApp,
   getInstalledAppVersion,
   isVersionOlder,
-  openApkDownloadUrl,
+  fetchLatestReleaseApkInfo,
+  LatestReleaseApkInfo,
 } from './androidBridge';
-import { Heart, Home, Music, Download, Sparkles, RefreshCw } from 'lucide-react';
+import { Heart, Home, Music, Download, RefreshCw } from 'lucide-react';
 import { DynamicSlot } from './components/DynamicSlot';
 import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
 import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
@@ -233,30 +235,21 @@ export default function App() {
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(() => {
     return typeof window !== 'undefined' && window.location.hash === '#admin';
   });
-  const [liveApkMeta, setLiveApkMeta] = useState<{
-    version?: string;
-    apkUrl?: string;
-    githubReleaseApkUrl?: string;
-  } | null>(null);
+  const [liveReleaseApk, setLiveReleaseApk] = useState<LatestReleaseApkInfo | null>(null);
   const [installedApkVer, setInstalledApkVer] = useState<string>(() => getInstalledAppVersion());
 
-  // Poll /latest-apk.json and sync native installed APK version so any new GitHub push triggers mandatory update
+  // Sync installed APK version and live GitHub Release APK metadata
   useEffect(() => {
     let active = true;
-    const checkLatestBuild = async () => {
-      try {
-        setInstalledApkVer(getInstalledAppVersion());
-        const res = await fetch(`/latest-apk.json?t=${Date.now()}`, { cache: 'no-store' });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (active && data && typeof data.version === 'string') {
-          setLiveApkMeta(data);
-        }
-      } catch {}
+    const syncApkStatus = async () => {
+      setInstalledApkVer(getInstalledAppVersion());
+      const info = await fetchLatestReleaseApkInfo();
+      if (active && info) {
+        setLiveReleaseApk(info);
+      }
     };
-
-    void checkLatestBuild();
-    const timer = window.setInterval(checkLatestBuild, 25000);
+    void syncApkStatus();
+    const timer = window.setInterval(syncApkStatus, 30000);
     const onPermSync = () => setInstalledApkVer(getInstalledAppVersion());
     window.addEventListener('kashish-permissions-updated', onPermSync);
     return () => {
@@ -720,80 +713,63 @@ export default function App() {
         </div>
       )}
 
-      {/* Mandatory APK Update Gate (Blocks app usage until she downloads & installs the latest APK) */}
+      {/* Mandatory APK Update Gate (blocks app usage until updated APK is installed) */}
       {(() => {
-        const isAdminUser = auth.currentUser?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
-        if (isAdminUser) return null;
+        const isAdminViewer =
+          auth.currentUser?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+        if (isAdminViewer && !site.apkApplyToWeb) return null;
 
         const runningInApk = isNativeApp();
-        const shouldCheckDevice = runningInApk || site.apkApplyToWeb === true;
-        if (!shouldCheckDevice) return null;
+        if (!runningInApk && !site.apkApplyToWeb) return null;
 
-        const targetVersion =
-          site.apkAutoUpdateOnPush && liveApkMeta?.version && isVersionOlder(site.apkLatestVersion || '3.0.0', liveApkMeta.version)
-            ? liveApkMeta.version
-            : site.apkLatestVersion || liveApkMeta?.version || '3.0.0';
+        // Determine highest required version between live GitHub Release and Admin config
+        const ciVer = liveReleaseApk?.version || '';
+        const adminVer = site.apkLatestVersion || '3.0.0';
+        const effectiveTargetVer =
+          ciVer && isVersionOlder(adminVer, ciVer) ? ciVer : adminVer;
 
-        const isOutdatedByAutoPush =
-          runningInApk &&
-          site.apkAutoUpdateOnPush !== false &&
-          Boolean(targetVersion) &&
-          isVersionOlder(installedApkVer, targetVersion);
+        const needsUpdateByVersion = isVersionOlder(installedApkVer, effectiveTargetVer);
+        const shouldBlockForUpdate =
+          (site.apkUpdateRequired && (needsUpdateByVersion || site.apkApplyToWeb)) ||
+          (site.apkAutoUpdateOnPush && runningInApk && needsUpdateByVersion);
 
-        const isForcedByAdmin =
-          site.apkUpdateRequired === true &&
-          (!runningInApk || isVersionOlder(installedApkVer, targetVersion));
+        if (!shouldBlockForUpdate) return null;
 
-        if (!isOutdatedByAutoPush && !isForcedByAdmin) return null;
-
-        const defaultUrl = 'https://kashishji.web.app/Kashishhh.apk';
-        const configuredUrl = site.apkDownloadUrl?.trim() || '';
         const downloadUrl =
-          configuredUrl && configuredUrl !== defaultUrl
-            ? configuredUrl
-            : liveApkMeta?.githubReleaseApkUrl ||
-              liveApkMeta?.apkUrl ||
-              configuredUrl ||
-              defaultUrl;
+          site.apkDownloadUrl?.trim() ||
+          liveReleaseApk?.apkUrl ||
+          'https://github.com/sivam1100-creator/Kashish-World/releases/download/latest-apk/Kashishhh.apk';
 
         return (
           <div className="fixed inset-0 z-[1550] bg-[#12071a]/98 backdrop-blur-xl text-white flex flex-col items-center justify-center p-6 text-center select-none">
-            <div className="max-w-md w-full rounded-3xl border border-pink-500/35 bg-gradient-to-b from-[#230e2e] to-[#16081f] p-6 sm:p-7 shadow-[0_0_50px_rgba(244,63,94,0.28)] space-y-5">
+            <div className="max-w-md w-full rounded-3xl border border-pink-500/40 bg-gradient-to-b from-[#250f32] to-[#15071e] p-6 sm:p-7 shadow-[0_0_55px_rgba(244,63,94,0.32)] space-y-5">
               <div className="relative mx-auto w-24 h-24 rounded-full p-1 bg-gradient-to-tr from-pink-500 via-rose-400 to-amber-300 shadow-lg">
                 <img
                   src="/apple-touch-icon.png"
                   alt="Kashishhh"
                   className="w-full h-full rounded-full object-cover"
                 />
-                <span className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-rose-500 border-2 border-[#16081f] flex items-center justify-center shadow">
-                  <Sparkles className="w-4 h-4 text-white" />
+                <span className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-rose-500 border-2 border-[#15071e] flex items-center justify-center shadow">
+                  <Download className="w-4 h-4 text-white" />
                 </span>
               </div>
 
-              <div className="space-y-1.5">
-                <span className="inline-block px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider bg-pink-500/20 text-pink-300 border border-pink-500/30">
-                  Mandatory App Update Required
+              <div className="space-y-2">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider bg-pink-500/20 text-pink-300 border border-pink-400/30">
+                  Mandatory App Update · v{effectiveTargetVer}
                 </span>
-                <h2 className="font-serif text-2xl sm:text-3xl font-bold text-white pt-1">
+                <h2 className="font-serif text-2xl sm:text-3xl font-bold text-white">
                   {site.apkUpdateTitle || 'New Update Available for Kashishhh 💖'}
                 </h2>
-                <p className="text-xs sm:text-sm text-pink-100/80 leading-relaxed">
+                <p className="text-xs sm:text-sm text-pink-100/85 leading-relaxed whitespace-pre-line">
                   {site.apkUpdateNotes ||
-                    'A brand new version of your app is ready with new surprises, smoother performance & upgraded icons! Please download & install the update to continue.'}
+                    'A new version of your special app is ready! Please download & install the update below to continue.'}
                 </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-2.5 p-3 rounded-2xl bg-black/35 border border-white/10 text-xs">
-                <div className="text-left">
-                  <div className="text-pink-200/60 text-[10px] uppercase">Installed Version</div>
-                  <div className="font-bold text-rose-300 text-sm">
-                    {runningInApk ? `v${installedApkVer}` : 'Old Version'}
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="text-pink-200/60 text-[10px] uppercase">New Release Version</div>
-                  <div className="font-bold text-emerald-300 text-sm">v{targetVersion}</div>
-                </div>
+              <div className="rounded-2xl bg-white/5 border border-pink-400/20 px-4 py-2.5 flex items-center justify-between text-xs text-pink-200/90">
+                <span>Installed: v{installedApkVer}</span>
+                <span className="font-bold text-emerald-300">New: v{effectiveTargetVer}</span>
               </div>
 
               <div className="space-y-2.5 pt-1">
@@ -803,28 +779,21 @@ export default function App() {
                   className="w-full py-3.5 px-5 rounded-2xl font-bold text-sm sm:text-base text-white bg-gradient-to-r from-pink-500 via-rose-500 to-pink-600 shadow-[0_8px_25px_rgba(244,63,94,0.45)] flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-transform"
                 >
                   <Download className="w-5 h-5" />
-                  <span>Download & Install Update Now (v{targetVersion})</span>
+                  <span>Download & Update Now (Kashishhh.apk)</span>
                 </button>
-
-                {liveApkMeta?.githubReleaseApkUrl &&
-                  liveApkMeta.githubReleaseApkUrl !== downloadUrl && (
-                    <button
-                      type="button"
-                      onClick={() => openApkDownloadUrl(liveApkMeta.githubReleaseApkUrl!)}
-                      className="w-full py-2.5 px-4 rounded-xl font-semibold text-xs text-pink-200 bg-white/5 border border-white/15 hover:bg-white/10 flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      <span>Mirror Link: Download from GitHub Release</span>
-                    </button>
-                  )}
 
                 <button
                   type="button"
-                  onClick={() => window.location.reload()}
-                  className="w-full py-2 text-[11px] text-pink-200/70 hover:text-white flex items-center justify-center gap-1 cursor-pointer"
+                  onClick={async () => {
+                    setInstalledApkVer(getInstalledAppVersion());
+                    const info = await fetchLatestReleaseApkInfo();
+                    if (info) setLiveReleaseApk(info);
+                    window.location.reload();
+                  }}
+                  className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-pink-200/80 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
                 >
-                  <RefreshCw className="w-3 h-3" />
-                  <span>Already installed the new APK? Tap to Refresh</span>
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Already Installed Update? Tap to Refresh</span>
                 </button>
               </div>
             </div>
@@ -832,12 +801,45 @@ export default function App() {
         );
       })()}
 
-      {/* Maintenance Mode Gate (for non-admin users) */}
+      {/* Maintenance Mode Gate (for non-admin users, with optional Updated APK / Action Link Button) */}
       {site.maintenanceMode && auth.currentUser?.email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase() && (
-        <div className="fixed inset-0 z-[1400] bg-black/95 text-white flex flex-col items-center justify-center p-6 text-center space-y-3">
-          <Heart className="w-10 h-10 text-rose-500 fill-rose-500" />
-          <h2 className="font-serif text-2xl font-bold">{site.name}'s World</h2>
-          <p className="text-sm text-neutral-300 max-w-md">{site.maintenanceMessage}</p>
+        <div className="fixed inset-0 z-[1500] bg-[#12071a]/98 backdrop-blur-xl text-white flex flex-col items-center justify-center p-6 text-center select-none">
+          <div className="max-w-md w-full rounded-3xl border border-pink-500/35 bg-gradient-to-b from-[#230e2e] to-[#16081f] p-6 sm:p-7 shadow-[0_0_50px_rgba(244,63,94,0.28)] space-y-5">
+            <div className="relative mx-auto w-24 h-24 rounded-full p-1 bg-gradient-to-tr from-pink-500 via-rose-400 to-amber-300 shadow-lg">
+              <img
+                src="/apple-touch-icon.png"
+                alt="Kashishhh"
+                className="w-full h-full rounded-full object-cover"
+              />
+              <span className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-rose-500 border-2 border-[#16081f] flex items-center justify-center shadow">
+                <Heart className="w-4 h-4 text-white fill-white" />
+              </span>
+            </div>
+
+            <div className="space-y-2">
+              <h2 className="font-serif text-2xl sm:text-3xl font-bold text-white">
+                {site.name}
+              </h2>
+              <p className="text-xs sm:text-sm text-pink-100/85 leading-relaxed whitespace-pre-line">
+                {site.maintenanceMessage}
+              </p>
+            </div>
+
+            {site.maintenanceLinkUrl && site.maintenanceLinkUrl.trim().length > 0 && (
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => openApkDownloadUrl(site.maintenanceLinkUrl.trim())}
+                  className="w-full py-3.5 px-5 rounded-2xl font-bold text-sm sm:text-base text-white bg-gradient-to-r from-pink-500 via-rose-500 to-pink-600 shadow-[0_8px_25px_rgba(244,63,94,0.45)] flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-transform"
+                >
+                  <Download className="w-5 h-5" />
+                  <span>
+                    {site.maintenanceLinkLabel?.trim() || 'Download Updated App (Kashishhh.apk) 💖'}
+                  </span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

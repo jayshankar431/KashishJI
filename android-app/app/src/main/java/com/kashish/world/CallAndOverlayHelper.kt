@@ -523,14 +523,16 @@ object CallAndOverlayHelper {
             FirestoreOverlayBackgroundService.markOverlayDismissedInFirestore(
                 context.applicationContext,
                 overlayDocId,
-                button.action
+                button.action,
+                button.label
             )
         }
         if (notifDocId.isNotBlank()) {
             FirestoreOverlayBackgroundService.markNotificationActionInFirestore(
                 context.applicationContext,
                 notifDocId,
-                button.action
+                button.action,
+                button.label
             )
         }
 

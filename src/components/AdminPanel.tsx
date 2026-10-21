@@ -27,6 +27,9 @@ import {
   resolveFirestoreMediaUrl,
   deleteFirestoreMediaChunks,
   testCloudinaryConnection,
+  fetchLatestReleaseApkInfo,
+  LatestReleaseApkInfo,
+  isVersionOlder,
 } from '../androidBridge';
 import {
   useSite,
@@ -269,30 +272,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
   const [callNumberInput, setCallNumberInput] = useState<string>(site.callPhoneNumber || '9817905531');
   const [maintMode, setMaintMode] = useState<boolean>(!!site.maintenanceMode);
   const [maintMessage, setMaintMessage] = useState<string>(
-    site.maintenanceMessage || 'Currently updating your special world. Please check back soon.'
+    site.maintenanceMessage || 'Currently updating your special world. Please download the latest update below to continue!'
+  );
+  const [maintLinkUrl, setMaintLinkUrl] = useState<string>(site.maintenanceLinkUrl || '');
+  const [maintLinkLabel, setMaintLinkLabel] = useState<string>(
+    site.maintenanceLinkLabel || 'Download Updated App (Kashishhh.apk) 💖'
   );
   const [forceLockMode, setForceLockMode] = useState<boolean>(!!site.forceLock);
   const [apkUpdateReq, setApkUpdateReq] = useState<boolean>(!!site.apkUpdateRequired);
   const [apkAutoPush, setApkAutoPush] = useState<boolean>(site.apkAutoUpdateOnPush !== false);
   const [apkLatestVer, setApkLatestVer] = useState<string>(site.apkLatestVersion || '3.0.0');
   const [apkUrlInput, setApkUrlInput] = useState<string>(
-    site.apkDownloadUrl || 'https://kashishji.web.app/Kashishhh.apk'
+    site.apkDownloadUrl ||
+      'https://github.com/sivam1100-creator/Kashish-World/releases/download/latest-apk/Kashishhh.apk'
   );
   const [apkTitleInput, setApkTitleInput] = useState<string>(
     site.apkUpdateTitle || 'New Update Available for Kashishhh 💖'
   );
   const [apkNotesInput, setApkNotesInput] = useState<string>(
     site.apkUpdateNotes ||
-      'A brand new version of your app is ready with new surprises, smoother performance & upgraded icons! Please download & install the update to continue.'
+      'A new version of your special app is ready! Please download & install the update below to continue.'
   );
   const [apkApplyWeb, setApkApplyWeb] = useState<boolean>(!!site.apkApplyToWeb);
-  const [liveCiApkMeta, setLiveCiApkMeta] = useState<{
-    version?: string;
-    runNumber?: number;
-    apkUrl?: string;
-    githubReleaseApkUrl?: string;
-    releasedAt?: string;
-  } | null>(null);
+  const [liveCiApkMeta, setLiveCiApkMeta] = useState<LatestReleaseApkInfo | null>(null);
 
   // Section 11 & Media Manager: Cloudinary Free Storage State
   const [newAdminPassword, setNewAdminPassword] = useState<string>('');
@@ -344,25 +346,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     setCallNumberInput(site.callPhoneNumber || '9817905531');
     setMaintMode(!!site.maintenanceMode);
     if (site.maintenanceMessage) setMaintMessage(site.maintenanceMessage);
+    setMaintLinkUrl(site.maintenanceLinkUrl || '');
+    setMaintLinkLabel(site.maintenanceLinkLabel || 'Download Updated App (Kashishhh.apk) 💖');
     setForceLockMode(!!site.forceLock);
     setApkUpdateReq(!!site.apkUpdateRequired);
     setApkAutoPush(site.apkAutoUpdateOnPush !== false);
-    setApkLatestVer(site.apkLatestVersion || '3.0.0');
-    setApkUrlInput(site.apkDownloadUrl || 'https://kashishji.web.app/Kashishhh.apk');
-    setApkTitleInput(site.apkUpdateTitle || 'New Update Available for Kashishhh 💖');
-    setApkNotesInput(
-      site.apkUpdateNotes ||
-        'A brand new version of your app is ready with new surprises, smoother performance & upgraded icons! Please download & install the update to continue.'
-    );
+    if (site.apkLatestVersion) setApkLatestVer(site.apkLatestVersion);
+    if (site.apkDownloadUrl) setApkUrlInput(site.apkDownloadUrl);
+    if (site.apkUpdateTitle) setApkTitleInput(site.apkUpdateTitle);
+    if (site.apkUpdateNotes) setApkNotesInput(site.apkUpdateNotes);
     setApkApplyWeb(!!site.apkApplyToWeb);
-    fetch(`/latest-apk.json?t=${Date.now()}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((meta) => {
-        if (meta && meta.version) {
-          setLiveCiApkMeta(meta);
-        }
-      })
-      .catch(() => {});
+    void fetchLatestReleaseApkInfo().then((info) => {
+      if (info) setLiveCiApkMeta(info);
+    });
     if (site.cloudinaryCloudName) setCloudNameInput(site.cloudinaryCloudName);
     if (site.cloudinaryUploadPreset !== undefined) setUploadPresetInput(site.cloudinaryUploadPreset);
     if (site.cloudinaryApiKey !== undefined) setApiKeyInput(site.cloudinaryApiKey);
@@ -1028,13 +1024,32 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
   };
 
   // Section 6: Send or Schedule Truecaller-Style Overlay
-  const handleSendOverlay = (e: React.FormEvent) => {
+  const handleSendOverlay = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!ovTitle.trim() || !ovMessage.trim()) {
       notifyStatus('Overlay title and message are required.', true);
       return;
     }
+    const now = Date.now();
     const scheduledMs = ovScheduleTime ? new Date(ovScheduleTime).getTime() : null;
+    const isImmediate = !scheduledMs || scheduledMs <= now;
+
+    // If sending a new overlay right now, auto-dismiss any older pending overlays that haven't received a response
+    if (isImmediate && overlaysList.length > 0) {
+      const pendingOldOverlays = overlaysList.filter(
+        (ov) => !ov.dismissed && (!ov.scheduledFor || ov.scheduledFor <= now)
+      );
+      await Promise.all(
+        pendingOldOverlays.map((oldOv) =>
+          updateDoc(doc(db, 'overlays', oldOv.id), {
+            dismissed: true,
+            clickedAction: 'replaced_by_new_overlay',
+            seenAt: now,
+          }).catch(() => {})
+        )
+      );
+    }
+
     const payload = {
       title: ovTitle.trim(),
       message: ovMessage.trim(),
@@ -1045,11 +1060,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       buttons: ovButtons.slice(0, 3),
       createdAt: Date.now(),
       scheduledFor: scheduledMs,
-      status: scheduledMs && scheduledMs > Date.now() ? 'scheduled' : 'sent',
+      status: scheduledMs && scheduledMs > now ? 'scheduled' : 'sent',
       dismissed: false,
     };
 
-    notifyStatus(scheduledMs ? 'Overlay scheduled.' : 'Overlay popup sent to her screen!');
+    notifyStatus(
+      scheduledMs && scheduledMs > now
+        ? 'Overlay scheduled.'
+        : 'New overlay sent! (Any previous pending overlay was automatically dismissed)'
+    );
     void addDoc(collection(db, 'overlays'), payload).catch((err: any) =>
       notifyStatus(`Overlay error: ${err.message}`, true)
     );
@@ -1162,17 +1181,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       callPhoneNumber: callNumberInput.trim() || '9817905531',
       maintenanceMode: maintMode,
       maintenanceMessage: maintMessage.trim(),
+      maintenanceLinkUrl: maintLinkUrl.trim(),
+      maintenanceLinkLabel: maintLinkLabel.trim() || 'Download Updated App (Kashishhh.apk) 💖',
       forceLock: forceLockMode,
       apkUpdateRequired: apkUpdateReq,
       apkAutoUpdateOnPush: apkAutoPush,
       apkLatestVersion: apkLatestVer.trim() || '3.0.0',
-      apkDownloadUrl: apkUrlInput.trim() || 'https://kashishji.web.app/Kashishhh.apk',
+      apkDownloadUrl:
+        apkUrlInput.trim() ||
+        'https://github.com/sivam1100-creator/Kashish-World/releases/download/latest-apk/Kashishhh.apk',
       apkUpdateTitle: apkTitleInput.trim() || 'New Update Available for Kashishhh 💖',
       apkUpdateNotes: apkNotesInput.trim(),
       apkApplyToWeb: apkApplyWeb,
       updatedAt: Date.now(),
     };
-    notifyStatus('App Control & Mandatory APK Update settings saved live!');
+    notifyStatus('App Control, Maintenance & APK Update settings saved live!');
     void setDoc(doc(db, 'settings', 'config'), payload, { merge: true }).catch((err: any) =>
       notifyStatus(`App Control error: ${err.message}`, true)
     );
@@ -1180,7 +1203,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
 
   const handleForcePushApkUpdateAndNotify = async () => {
     const targetVer = apkLatestVer.trim() || liveCiApkMeta?.version || '3.0.0';
-    const targetUrl = apkUrlInput.trim() || liveCiApkMeta?.apkUrl || 'https://kashishji.web.app/Kashishhh.apk';
+    const targetUrl =
+      apkUrlInput.trim() ||
+      liveCiApkMeta?.apkUrl ||
+      'https://github.com/sivam1100-creator/Kashish-World/releases/download/latest-apk/Kashishhh.apk';
     const targetTitle = apkTitleInput.trim() || `New Kashishhh Update (v${targetVer}) 💖`;
     const targetNotes =
       apkNotesInput.trim() ||
@@ -2909,9 +2935,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                               {n.seen ? 'SEEN' : n.status?.toUpperCase() || 'SENT'}
                             </span>
                           </div>
-                          {n.clickedAction && (
+                          {(n.clickedLabel || n.clickedAction) && (
                             <div className="text-[10px] font-bold text-emerald-400">
-                              Clicked: {n.clickedAction}
+                              ✅ Chose: "{n.clickedLabel || n.clickedAction}"
                             </div>
                           )}
                         </td>
@@ -2969,7 +2995,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                 </div>
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={async () => {
+                    const now = Date.now();
+                    const pendingOld = overlaysList.filter(
+                      (ov) => !ov.dismissed && (!ov.scheduledFor || ov.scheduledFor <= now)
+                    );
+                    await Promise.all(
+                      pendingOld.map((oldOv) =>
+                        updateDoc(doc(db, 'overlays', oldOv.id), {
+                          dismissed: true,
+                          clickedAction: 'replaced_by_new_overlay',
+                          clickedLabel: 'Replaced by Newer Overlay',
+                          seenAt: now,
+                        }).catch(() => {})
+                      )
+                    );
                     notifyStatus('Instant Truecaller Wakeup + Overlay popup sent!');
                     void addDoc(collection(db, 'overlays'), {
                       title: ovTitle.trim() || 'Thinking of You, Kashish 💖',
@@ -3369,75 +3409,191 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
               {/* Overlay History */}
               <div className={`rounded-[14px] overflow-hidden border ${borderCol} overflow-x-auto`}>
                 <div className={`px-3 py-1.5 border-b ${borderCol} ${bgSubtle} font-bold text-[12px]`}>
-                  Overlay History ({overlaysList.length})
+                  Overlay History & Her Chosen Options ({overlaysList.length})
                 </div>
                 <table className="w-full text-left border-collapse text-[12px]">
                   <thead>
                     <tr className={`border-b ${borderCol} ${textMuted}`}>
                       <th className="py-1.5 px-2.5">Created</th>
-                      <th className="py-1.5 px-2.5">Title, Message & Sound</th>
-                      <th className="py-1.5 px-2.5">Response</th>
+                      <th className="py-1.5 px-2.5">Title, Message & Options Given</th>
+                      <th className="py-1.5 px-2.5">Option Chosen by Her</th>
                       <th className="py-1.5 px-2.5 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {overlaysList.map((o) => (
-                      <tr key={o.id} className={`border-b ${borderCol}`}>
-                        <td className={`py-1.5 px-2.5 tabular-nums whitespace-nowrap ${textMuted}`}>
-                          {o.createdAt ? new Date(o.createdAt).toLocaleString() : '-'}
-                        </td>
-                        <td className="py-1.5 px-2.5">
-                          <div className="font-bold">{o.title}</div>
-                          <div className={textMuted}>{o.message}</div>
-                          <div className={`text-[10px] ${textMuted} mt-0.5`}>
-                            🔊 Sound: {getSoundLabel(o.soundUrl)}
-                          </div>
-                        </td>
-                        <td className="py-1.5 px-2.5 text-[11px]">
-                          <span className={`px-2 py-0.5 rounded-full border ${borderCol}`}>
-                            {o.clickedAction
-                              ? `CLICKED: ${o.clickedAction}`
-                              : o.dismissed
-                              ? 'DISMISSED'
-                              : 'ACTIVE'}
-                          </span>
-                        </td>
-                        <td className="py-1.5 px-2.5 text-right space-x-1">
-                          <button
-                            onClick={() => {
-                              notifyStatus('Overlay resent.');
-                              void addDoc(collection(db, 'overlays'), {
-                                title: o.title,
-                                message: o.message,
-                                imageUrl: o.imageUrl || '',
-                                theme: o.theme || ovTheme,
-                                fontStyle: o.fontStyle || ovFontStyle,
-                                soundUrl: o.soundUrl !== undefined ? o.soundUrl : (ovSoundUrl === 'silent' ? '' : ovSoundUrl),
-                                buttons: o.buttons || [],
-                                createdAt: Date.now(),
-                                status: 'sent',
-                                dismissed: false,
-                              }).catch((err: any) => notifyStatus(`Resend error: ${err.message}`, true));
-                            }}
-                            className={btnSecondary}
-                          >
-                            Resend
-                          </button>
-                          <button
-                            onClick={() =>
-                              askConfirm('Delete this overlay record?', () => {
-                                setOverlaysList((prev) => prev.filter((x) => x.id !== o.id));
-                                notifyStatus('Overlay record deleted.');
-                                void deleteDoc(doc(db, 'overlays', o.id)).catch(() => {});
-                              })
-                            }
-                            className={btnDanger}
-                          >
-                            Delete
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {overlaysList.map((o) => {
+                      const btns: { label: string; action: string; payload?: string }[] =
+                        Array.isArray(o.buttons) && o.buttons.length > 0
+                          ? o.buttons
+                          : [
+                              { label: 'Call Jay Now 📞', action: 'call_now' },
+                              { label: 'Keep in My Heart 💖', action: 'dismiss' },
+                            ];
+
+                      const isReplaced = o.clickedAction === 'replaced_by_new_overlay';
+                      const isClosedX = o.clickedAction === 'closed_x';
+
+                      // Match which button she chose from the options given
+                      const matchedBtn =
+                        !isReplaced && !isClosedX && (o.clickedLabel || o.clickedAction)
+                          ? btns.find(
+                              (b) =>
+                                (o.clickedLabel && b.label === o.clickedLabel) ||
+                                (!o.clickedLabel && b.action === o.clickedAction)
+                            )
+                          : null;
+
+                      const chosenOptionText =
+                        !isReplaced && !isClosedX
+                          ? o.clickedLabel && o.clickedLabel !== o.clickedAction
+                            ? o.clickedLabel
+                            : matchedBtn?.label || o.clickedAction || ''
+                          : '';
+
+                      return (
+                        <tr key={o.id} className={`border-b ${borderCol}`}>
+                          <td className={`py-2 px-2.5 tabular-nums whitespace-nowrap align-top ${textMuted}`}>
+                            <div>{o.createdAt ? new Date(o.createdAt).toLocaleString() : '-'}</div>
+                            {o.seenAt && (
+                              <div className="text-[10px] text-pink-400 mt-0.5">
+                                Responded: {new Date(Number(o.seenAt)).toLocaleTimeString()}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-2 px-2.5 align-top space-y-1.5">
+                            <div>
+                              <div className="font-bold">{o.title}</div>
+                              <div className={textMuted}>{o.message}</div>
+                              <div className={`text-[10px] ${textMuted} mt-0.5`}>
+                                🔊 Sound: {getSoundLabel(o.soundUrl)}
+                              </div>
+                            </div>
+
+                            {/* Options Given on this Overlay */}
+                            <div className="pt-0.5">
+                              <div className={`text-[10px] font-semibold ${textMuted} mb-1`}>
+                                Options Given on Overlay:
+                              </div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {btns.map((b, bi) => {
+                                  const isThisChosen =
+                                    !isReplaced &&
+                                    !isClosedX &&
+                                    ((o.clickedLabel && b.label === o.clickedLabel) ||
+                                      (!o.clickedLabel &&
+                                        o.clickedAction &&
+                                        b.action === o.clickedAction &&
+                                        matchedBtn?.label === b.label));
+                                  return (
+                                    <span
+                                      key={bi}
+                                      className={`px-2 py-0.5 rounded-lg text-[10px] font-medium border flex items-center gap-1 ${
+                                        isThisChosen
+                                          ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300 font-bold shadow-sm'
+                                          : `${borderCol} ${textMuted}`
+                                      }`}
+                                    >
+                                      <span>
+                                        {bi + 1}. {b.label}
+                                      </span>
+                                      <span className="opacity-70">({b.action})</span>
+                                      {isThisChosen && (
+                                        <span className="ml-0.5 px-1 py-0.2 rounded bg-emerald-500 text-black text-[9px] font-extrabold">
+                                          ✓ CHOSEN
+                                        </span>
+                                      )}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="py-2 px-2.5 text-[11px] align-top">
+                            {chosenOptionText ? (
+                              <div className="space-y-1">
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 font-bold">
+                                  💖 Chose: "{chosenOptionText}"
+                                </span>
+                                {o.clickedAction && (
+                                  <div className={`text-[10px] ${textMuted}`}>
+                                    Action Triggered: <span className="font-semibold">{o.clickedAction}</span>
+                                  </div>
+                                )}
+                              </div>
+                            ) : isClosedX ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-amber-500/15 border border-amber-400/40 text-amber-300 font-semibold">
+                                ✕ Closed Popup (No option selected)
+                              </span>
+                            ) : isReplaced ? (
+                              <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-xl border ${borderCol} ${textMuted}`}>
+                                ⏭️ Auto-Dismissed (Replaced by New Overlay)
+                              </span>
+                            ) : o.dismissed ? (
+                              <span className={`px-2 py-0.5 rounded-full border ${borderCol}`}>
+                                DISMISSED
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-pink-500/15 border border-pink-400/40 text-pink-300 font-semibold">
+                                ⏳ Pending (Waiting for her choice)
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2 px-2.5 text-right space-x-1 align-top whitespace-nowrap">
+                            <button
+                              onClick={async () => {
+                                const now = Date.now();
+                                const pendingOld = overlaysList.filter(
+                                  (ov) => !ov.dismissed && (!ov.scheduledFor || ov.scheduledFor <= now)
+                                );
+                                await Promise.all(
+                                  pendingOld.map((oldOv) =>
+                                    updateDoc(doc(db, 'overlays', oldOv.id), {
+                                      dismissed: true,
+                                      clickedAction: 'replaced_by_new_overlay',
+                                      clickedLabel: 'Replaced by Newer Overlay',
+                                      seenAt: now,
+                                    }).catch(() => {})
+                                  )
+                                );
+                                notifyStatus('Overlay resent.');
+                                void addDoc(collection(db, 'overlays'), {
+                                  title: o.title,
+                                  message: o.message,
+                                  imageUrl: o.imageUrl || '',
+                                  theme: o.theme || ovTheme,
+                                  fontStyle: o.fontStyle || ovFontStyle,
+                                  soundUrl:
+                                    o.soundUrl !== undefined
+                                      ? o.soundUrl
+                                      : ovSoundUrl === 'silent'
+                                      ? ''
+                                      : ovSoundUrl,
+                                  buttons: o.buttons || [],
+                                  createdAt: Date.now(),
+                                  status: 'sent',
+                                  dismissed: false,
+                                }).catch((err: any) => notifyStatus(`Resend error: ${err.message}`, true));
+                              }}
+                              className={btnSecondary}
+                            >
+                              Resend
+                            </button>
+                            <button
+                              onClick={() =>
+                                askConfirm('Delete this overlay record?', () => {
+                                  setOverlaysList((prev) => prev.filter((x) => x.id !== o.id));
+                                  notifyStatus('Overlay record deleted.');
+                                  void deleteDoc(doc(db, 'overlays', o.id)).catch(() => {});
+                                })
+                              }
+                              className={btnDanger}
+                            >
+                              Delete
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -4200,7 +4356,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                   </div>
                 </div>
 
-                <div className={`pt-2 border-t ${borderCol} space-y-2`}>
+                <div className={`pt-2 border-t ${borderCol} space-y-2.5`}>
                   <div className="flex flex-wrap gap-4">
                     <label className="flex items-center gap-2 font-bold cursor-pointer">
                       <input
@@ -4208,7 +4364,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                         checked={maintMode}
                         onChange={(e) => setMaintMode(e.target.checked)}
                       />
-                      <span>Maintenance Mode (Shows maintenance screen to her)</span>
+                      <span>Maintenance Mode (Shows maintenance / update screen to her)</span>
                     </label>
 
                     <label className="flex items-center gap-2 font-bold cursor-pointer">
@@ -4227,8 +4383,49 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                       type="text"
                       value={maintMessage}
                       onChange={(e) => setMaintMessage(e.target.value)}
+                      placeholder="e.g. New update available! Please download the updated app below to continue."
                       className={inputCls}
                     />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <label className={`block text-[11px] ${textMuted}`}>
+                          Maintenance Screen Link (Updated APK Link — Optional)
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setMaintLinkUrl(
+                              'https://github.com/sivam1100-creator/Kashish-World/releases/download/latest-apk/Kashishhh.apk'
+                            )
+                          }
+                          className="text-[10px] text-pink-400 hover:underline font-bold cursor-pointer"
+                        >
+                          + Fill GitHub Release APK Link
+                        </button>
+                      </div>
+                      <input
+                        type="text"
+                        value={maintLinkUrl}
+                        onChange={(e) => setMaintLinkUrl(e.target.value)}
+                        placeholder="https://github.com/.../releases/download/latest-apk/Kashishhh.apk"
+                        className={inputCls}
+                      />
+                    </div>
+                    <div>
+                      <label className={`block text-[11px] ${textMuted} mb-1`}>
+                        Link Button Text (Shown when link is added)
+                      </label>
+                      <input
+                        type="text"
+                        value={maintLinkLabel}
+                        onChange={(e) => setMaintLinkLabel(e.target.value)}
+                        placeholder="Download Updated App (Kashishhh.apk) 💖"
+                        className={inputCls}
+                      />
+                    </div>
                   </div>
                 </div>
 
@@ -4238,89 +4435,31 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
               </div>
 
               {/* Mandatory APK Force Update & GitHub Release Gate */}
-              <div className={`p-3.5 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-3`}>
+              <div className={`p-3 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-3`}>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <div className="font-bold text-[12px] flex items-center gap-1.5">
-                      <Download className="w-3.5 h-3.5 text-pink-400" />
-                      <span>Mandatory APK Update Gate (GitHub Release Auto-Sync)</span>
+                    <div className="font-bold text-[12px] text-pink-400">
+                      📲 Mandatory APK Update & GitHub Release Gate
                     </div>
-                    <p className={`text-[11px] ${textMuted} mt-0.5`}>
-                      Jab bhi aap code push karenge ya yahan se Force Update ON karenge, jab tak Kashish naya APK download & install nahi karegi tab tak app poori tarah lock rahegi (Update Now screen dikhegi).
-                    </p>
+                    <div className={`text-[11px] ${textMuted}`}>
+                      Jab bhi nayi release aayegi ya aap Force Update ON karoge, app me mandatory update popup aayega jab tak wo naya `Kashishhh.apk` install na kar le.
+                    </div>
                   </div>
-                  <span
-                    className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${
-                      apkUpdateReq || apkAutoPush
-                        ? 'bg-pink-500/20 text-pink-300 border-pink-500/40'
-                        : `${borderCol} ${textMuted}`
-                    }`}
-                  >
-                    {apkUpdateReq
-                      ? `FORCE UPDATE ON (v${apkLatestVer})`
-                      : apkAutoPush
-                      ? 'AUTO-PUSH SYNC ON'
-                      : 'UPDATE GATE OFF'}
-                  </span>
-                </div>
-
-                {/* Live Phone Version vs Latest Release Status */}
-                <div className={`p-2.5 rounded-[12px] border ${borderCol} grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]`}>
-                  <div>
-                    <span className={textMuted}>Her Phone Installed APK:</span>{' '}
-                    <b className="text-pink-400">
-                      v{deviceStatusDoc.appVersion || '2.2.0'}
-                    </b>
-                    {deviceStatusDoc.deviceModel ? ` (${deviceStatusDoc.deviceModel})` : ''}
-                  </div>
-                  <div>
-                    <span className={textMuted}>Latest CI / Release Build:</span>{' '}
-                    <b className="text-emerald-400">
-                      v{liveCiApkMeta?.version || apkLatestVer || '3.0.0'}
-                    </b>
-                    {liveCiApkMeta?.runNumber ? ` (Build #${liveCiApkMeta.runNumber})` : ''}
-                  </div>
-                  <div className="flex items-center gap-2 sm:justify-end">
-                    {liveCiApkMeta?.version && liveCiApkMeta.version !== apkLatestVer && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setApkLatestVer(liveCiApkMeta.version || '3.0.0');
-                          if (liveCiApkMeta.githubReleaseApkUrl) {
-                            setApkUrlInput(liveCiApkMeta.githubReleaseApkUrl);
-                          }
-                          notifyStatus(`Synced version v${liveCiApkMeta.version} from latest build!`);
-                        }}
-                        className={btnSecondary}
-                      >
-                        Use Latest Build (v{liveCiApkMeta.version})
-                      </button>
-                    )}
+                  <div className="flex items-center gap-2 text-[11px]">
+                    <span className="px-2 py-1 rounded-lg bg-pink-500/15 border border-pink-500/30 font-semibold">
+                      Her Installed APK: v{deviceStatusDoc?.appVersion || '2.2.0'}
+                    </span>
+                    <span className="px-2 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-semibold">
+                      Latest Release: v{liveCiApkMeta?.version || apkLatestVer}
+                    </span>
                   </div>
                 </div>
 
-                {/* Toggles */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <label className={`p-2.5 rounded-[12px] border ${borderCol} flex items-center justify-between cursor-pointer`}>
+                  <label className={`p-2.5 rounded-[12px] border ${borderCol} flex items-center justify-between gap-2 cursor-pointer`}>
                     <div>
-                      <div className="font-bold text-[11px]">Auto-Require Update on Code Push</div>
-                      <div className={`text-[10px] ${textMuted}`}>
-                        Jab bhi GitHub par naya code push ho aur nayi APK release bane, automatically update maange
-                      </div>
-                    </div>
-                    <input
-                      type="checkbox"
-                      checked={apkAutoPush}
-                      onChange={(e) => setApkAutoPush(e.target.checked)}
-                    />
-                  </label>
-
-                  <label className={`p-2.5 rounded-[12px] border ${borderCol} flex items-center justify-between cursor-pointer`}>
-                    <div>
-                      <div className="font-bold text-[11px]">Force Mandatory APK Update Now</div>
-                      <div className={`text-[10px] ${textMuted}`}>
-                        Abhi turant uski screen par non-dismissible Update Required lock lagayein
-                      </div>
+                      <div className="font-bold text-[11px]">Force Update Required</div>
+                      <div className={`text-[10px] ${textMuted}`}>Blocks app if version is older</div>
                     </div>
                     <input
                       type="checkbox"
@@ -4329,12 +4468,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                     />
                   </label>
 
-                  <label className={`p-2.5 rounded-[12px] border ${borderCol} flex items-center justify-between cursor-pointer`}>
+                  <label className={`p-2.5 rounded-[12px] border ${borderCol} flex items-center justify-between gap-2 cursor-pointer`}>
                     <div>
-                      <div className="font-bold text-[11px]">Also Show on Web Browser</div>
-                      <div className={`text-[10px] ${textMuted}`}>
-                        Agar wo Chrome/browser me khole tab bhi APK update screen dikhayein
-                      </div>
+                      <div className="font-bold text-[11px]">Auto-Update on GitHub Release</div>
+                      <div className={`text-[10px] ${textMuted}`}>Auto-prompts on new CI APK</div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={apkAutoPush}
+                      onChange={(e) => setApkAutoPush(e.target.checked)}
+                    />
+                  </label>
+
+                  <label className={`p-2.5 rounded-[12px] border ${borderCol} flex items-center justify-between gap-2 cursor-pointer`}>
+                    <div>
+                      <div className="font-bold text-[11px]">Test / Show on Website Too</div>
+                      <div className={`text-[10px] ${textMuted}`}>Preview update gate on web</div>
                     </div>
                     <input
                       type="checkbox"
@@ -4344,76 +4493,57 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                   </label>
                 </div>
 
-                {/* Version & Direct APK URL Inputs */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div>
-                    <label className={`block text-[11px] ${textMuted} mb-1`}>
-                      Required / Latest APK Version
-                    </label>
-                    <div className="flex gap-1.5">
-                      <input
-                        type="text"
-                        value={apkLatestVer}
-                        onChange={(e) => setApkLatestVer(e.target.value)}
-                        placeholder="e.g. 3.0.15"
-                        className={inputCls}
-                      />
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <label className={`block text-[11px] ${textMuted}`}>
+                        Required Latest APK Version
+                      </label>
                       <button
                         type="button"
-                        onClick={() => {
-                          const parts = (apkLatestVer || '3.0.0')
-                            .replace(/^v/i, '')
-                            .split('.')
-                            .map((n) => parseInt(n, 10) || 0);
-                          while (parts.length < 3) parts.push(0);
-                          parts[2] = parts[2] + 1;
-                          setApkLatestVer(parts.join('.'));
+                        onClick={async () => {
+                          const info = await fetchLatestReleaseApkInfo();
+                          if (info) {
+                            setLiveCiApkMeta(info);
+                            setApkLatestVer(info.version);
+                            setApkUrlInput(info.apkUrl);
+                            notifyStatus(`Synced version v${info.version} from GitHub Releases!`);
+                          } else {
+                            notifyStatus('Could not fetch GitHub Release version right now.', true);
+                          }
                         }}
-                        className={btnSecondary}
-                        title="Bump Version +1"
+                        className="text-[10px] text-pink-400 hover:underline font-bold cursor-pointer"
                       >
-                        +1
+                        ↻ Sync from GitHub Release
                       </button>
                     </div>
+                    <input
+                      type="text"
+                      value={apkLatestVer}
+                      onChange={(e) => setApkLatestVer(e.target.value)}
+                      placeholder="3.0.45"
+                      className={inputCls}
+                    />
                   </div>
 
-                  <div className="sm:col-span-2">
+                  <div>
                     <label className={`block text-[11px] ${textMuted} mb-1`}>
-                      Direct 1-Click APK Download URL (Hosted or GitHub Release)
+                      Direct APK Download URL (GitHub Release Kashishhh.apk)
                     </label>
                     <input
                       type="text"
                       value={apkUrlInput}
                       onChange={(e) => setApkUrlInput(e.target.value)}
-                      placeholder="https://kashishji.web.app/Kashishhh.apk"
+                      placeholder="https://github.com/sivam1100-creator/Kashish-World/releases/download/latest-apk/Kashishhh.apk"
                       className={inputCls}
                     />
-                    <div className="flex flex-wrap gap-1.5 mt-1">
-                      <button
-                        type="button"
-                        onClick={() => setApkUrlInput('https://kashishji.web.app/Kashishhh.apk')}
-                        className="text-[10px] px-2 py-0.5 rounded border border-pink-500/30 text-pink-300 hover:bg-pink-500/10"
-                      >
-                        Use Direct Firebase Hosted APK (kashishji.web.app/Kashishhh.apk)
-                      </button>
-                      {liveCiApkMeta?.githubReleaseApkUrl && (
-                        <button
-                          type="button"
-                          onClick={() => setApkUrlInput(liveCiApkMeta.githubReleaseApkUrl!)}
-                          className="text-[10px] px-2 py-0.5 rounded border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/10"
-                        >
-                          Use GitHub Release Direct APK
-                        </button>
-                      )}
-                    </div>
                   </div>
                 </div>
 
-                {/* Custom Title & Release Notes */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div>
                     <label className={`block text-[11px] ${textMuted} mb-1`}>
-                      Update Screen Heading
+                      Update Screen Title
                     </label>
                     <input
                       type="text"
@@ -4423,53 +4553,32 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                       className={inputCls}
                     />
                   </div>
+
                   <div>
                     <label className={`block text-[11px] ${textMuted} mb-1`}>
-                      What's New / Update Message
+                      Update Message / What's New
                     </label>
                     <input
                       type="text"
                       value={apkNotesInput}
                       onChange={(e) => setApkNotesInput(e.target.value)}
-                      placeholder="Please download & install the latest update to continue..."
+                      placeholder="A new version of your special app is ready! Please download & install the update below."
                       className={inputCls}
                     />
                   </div>
                 </div>
 
-                {/* Action Buttons */}
-                <div className="flex flex-wrap items-center gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={handleSaveAppControl}
-                    className={btnPrimary}
-                  >
-                    Save APK Update Settings
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <button onClick={handleSaveAppControl} className={btnPrimary}>
+                    Save Update Gate Settings
                   </button>
                   <button
                     type="button"
                     onClick={handleForcePushApkUpdateAndNotify}
-                    className="px-3 py-1.5 rounded-[10px] text-[12px] font-bold bg-gradient-to-r from-pink-600 to-rose-500 text-white shadow cursor-pointer hover:opacity-95"
+                    className={btnSecondary}
                   >
-                    🚀 Activate Mandatory Update & Send Push Alert Now
+                    🚀 Force Push Update & Send Push Alert to Her Phone
                   </button>
-                  {apkUpdateReq && (
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        setApkUpdateReq(false);
-                        await setDoc(
-                          doc(db, 'settings', 'config'),
-                          { apkUpdateRequired: false, updatedAt: Date.now() },
-                          { merge: true }
-                        );
-                        notifyStatus('Mandatory APK Update turned OFF.');
-                      }}
-                      className={btnDanger}
-                    >
-                      Turn Off Force Update
-                    </button>
-                  )}
                 </div>
               </div>
             </div>
