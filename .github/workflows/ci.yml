@@ -33,6 +33,8 @@ jobs:
   android:
     name: Build Android APK Artifact
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -92,10 +94,41 @@ jobs:
       - name: Build Debug APK
         run: gradle :app:assembleDebug --no-daemon --stacktrace
 
-      - name: Upload APK Artifact
+      - name: Upload APK Artifact (.zip)
         uses: actions/upload-artifact@v4
         with:
           name: kashish-world-debug-apk
           path: android-app/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish Direct .apk to GitHub Releases
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp android-app/app/build/outputs/apk/debug/app-debug.apk KashishWorld.apk
+          TAG_NAME="latest-apk"
+          RELEASE_TITLE="Kashish's World APK (Build #${{ github.run_number }})"
+          RELEASE_NOTES="Automatic Android APK build from commit ${{ github.sha }}.
+
+          📱 **Direct 1-Click APK Download:** Neeche **Assets** me se **KashishWorld.apk** par click karke seedha mobile me download aur install karein (Unzip karne ki zaroorat nahi hai)."
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f "$TAG_NAME" "${{ github.sha }}"
+          git push origin "$TAG_NAME" --force
+
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release upload "$TAG_NAME" KashishWorld.apk android-app/app/build/outputs/apk/debug/app-debug.apk --clobber
+            gh release edit "$TAG_NAME" --title "$RELEASE_TITLE" --notes "$RELEASE_NOTES" --latest
+          else
+            gh release create "$TAG_NAME" KashishWorld.apk android-app/app/build/outputs/apk/debug/app-debug.apk --title "$RELEASE_TITLE" --notes "$RELEASE_NOTES" --latest
+          fi
+
+          echo "### 📱 Direct Android APK Download (Bina Unzip Kiye)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "👉 **[Click Here to Download KashishWorld.apk Directly](https://github.com/${{ github.repository }}/releases/download/latest-apk/KashishWorld.apk)**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🔗 Or open the **[GitHub Releases Page](https://github.com/${{ github.repository }}/releases/tag/latest-apk)**" >> $GITHUB_STEP_SUMMARY
+
