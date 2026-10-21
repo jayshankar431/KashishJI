@@ -99,6 +99,7 @@ class AndroidAppInterface(private val context: Context) {
             val imageUrl = obj.optString("imageUrl", "")
             val theme = obj.optString("theme", "velvet-rose")
             val fontStyle = obj.optString("fontStyle", "romantic-serif")
+            val soundUrl = obj.optString("soundUrl", "")
             val phoneNumber = obj.optString("phoneNumber", CallAndOverlayHelper.getCachedPhoneNumber(context))
             val buttonsArr = obj.optJSONArray("buttons")?.toString() ?: ""
 
@@ -111,6 +112,7 @@ class AndroidAppInterface(private val context: Context) {
                     imageUrl = imageUrl,
                     theme = theme,
                     fontStyle = fontStyle,
+                    soundUrl = soundUrl,
                     buttonItemsJson = buttonsArr,
                     phoneNumber = phoneNumber
                 )

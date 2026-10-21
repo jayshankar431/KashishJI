@@ -189,8 +189,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     { label: 'Call Me Now 📞', action: 'call_now', payload: '9817905531' },
     { label: 'Open Our Gallery ✨', action: 'open_section', payload: 'gallery' },
   ]);
-  const [customSounds, setCustomSounds] = useState<{ name: string; url: string }[]>([]);
+  const [customSounds, setCustomSounds] = useState<{ id?: string; name: string; url: string }[]>(() => {
+    const saved = site.savedSounds || [];
+    const defaultUrls = new Set(DEFAULT_SAVED_SOUNDS.map((d) => d.url));
+    return saved.filter((s) => s.url && !defaultUrls.has(s.url));
+  });
   const [uploadingSound, setUploadingSound] = useState<boolean>(false);
+  const [previewingSoundUrl, setPreviewingSoundUrl] = useState<string>('');
 
   // Section 6: Overlay Popup Sender State
   const [ovTitle, setOvTitle] = useState<string>('Thinking of You, Kashish');
@@ -198,6 +203,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
   const [ovImage, setOvImage] = useState<string>('');
   const [ovTheme, setOvTheme] = useState<OverlayThemeId>('velvet-rose');
   const [ovFontStyle, setOvFontStyle] = useState<OverlayFontId>('romantic-serif');
+  const [ovSoundUrl, setOvSoundUrl] = useState<string>(DEFAULT_SAVED_SOUNDS[0].url);
   const [ovScheduleTime, setOvScheduleTime] = useState<string>('');
   const [ovButtons, setOvButtons] = useState<PopupButtonItem[]>([
     { label: 'Call Me Now', action: 'call_now', payload: '9817905531' },
@@ -304,6 +310,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     if (site.cloudinaryUploadPreset !== undefined) setUploadPresetInput(site.cloudinaryUploadPreset);
     if (site.cloudinaryApiKey !== undefined) setApiKeyInput(site.cloudinaryApiKey);
     if (site.cloudinaryApiSecret !== undefined) setApiSecretInput(site.cloudinaryApiSecret);
+    if (Array.isArray(site.savedSounds) && site.savedSounds.length > 0) {
+      const defaultUrls = new Set(DEFAULT_SAVED_SOUNDS.map((d) => d.url));
+      setCustomSounds(site.savedSounds.filter((s) => s.url && !defaultUrls.has(s.url)));
+    }
   }, [isOpen]);
 
   const isAdminAuthenticated =
@@ -835,6 +845,91 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     }
   };
 
+  const allAvailableSounds = useMemo(() => {
+    const merged: { id?: string; name: string; url: string }[] = [...DEFAULT_SAVED_SOUNDS];
+    const seen = new Set(merged.map((s) => s.url));
+    customSounds.forEach((c) => {
+      if (c.url && !seen.has(c.url)) {
+        seen.add(c.url);
+        merged.push(c);
+      }
+    });
+    return merged;
+  }, [customSounds]);
+
+  const getSoundLabel = (url?: string) => {
+    if (!url || url === 'silent') return 'Silent (Vibration Only)';
+    const found = allAvailableSounds.find((s) => s.url === url);
+    if (found) return found.name;
+    return 'Custom Audio Tone';
+  };
+
+  const handlePreviewSoundUrl = async (rawUrl: string) => {
+    if (!audioEl) return;
+    if (!rawUrl || rawUrl === 'silent') {
+      audioEl.pause();
+      setPreviewingSoundUrl('');
+      notifyStatus('Silent mode selected (Heartbeat vibration only, no audio).');
+      return;
+    }
+    if (previewingSoundUrl === rawUrl) {
+      audioEl.pause();
+      setPreviewingSoundUrl('');
+      return;
+    }
+    const playUrl = await resolveFirestoreMediaUrl(rawUrl);
+    if (!playUrl) {
+      notifyStatus('Could not load sound preview.', true);
+      return;
+    }
+    audioEl.pause();
+    audioEl.src = playUrl;
+    audioEl.currentTime = 0;
+    setPreviewingSoundUrl(rawUrl);
+    audioEl.onended = () => setPreviewingSoundUrl('');
+    audioEl.onerror = () => {
+      setPreviewingSoundUrl('');
+      notifyStatus('Could not preview this audio file.', true);
+    };
+    audioEl.play().catch((err: any) => {
+      setPreviewingSoundUrl('');
+      notifyStatus(`Preview error: ${err?.message || 'Blocked'}`, true);
+    });
+  };
+
+  const handleUploadCustomSoundFile = async (file: File, target: 'notif' | 'overlay') => {
+    setUploadingSound(true);
+    notifyStatus(`Uploading custom sound "${file.name}"...`);
+    try {
+      const res = await uploadFileToFirebaseStorage(file, 'sounds', file.name);
+      const newSoundItem = {
+        id: `custom_snd_${Date.now()}`,
+        name: `🎵 ${file.name}`,
+        url: res.url,
+      };
+      const nextCustom = [...customSounds, newSoundItem];
+      setCustomSounds(nextCustom);
+      if (target === 'overlay') {
+        setOvSoundUrl(res.url);
+      } else {
+        setNotifSoundUrl(res.url);
+      }
+      await setDoc(
+        doc(db, 'settings', 'config'),
+        {
+          savedSounds: [...DEFAULT_SAVED_SOUNDS, ...nextCustom],
+          updatedAt: Date.now(),
+        },
+        { merge: true }
+      );
+      notifyStatus(`Custom sound "${file.name}" uploaded & selected!`);
+    } catch (err: any) {
+      notifyStatus(`Sound upload error: ${err.message}`, true);
+    } finally {
+      setUploadingSound(false);
+    }
+  };
+
   // Section 5: Send or Schedule Notification
   const handleSendNotification = (e: React.FormEvent) => {
     e.preventDefault();
@@ -856,7 +951,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       title: notifTitle.trim(),
       message: notifMessage.trim(),
       imageUrl: notifImage.trim(),
-      soundUrl: notifSoundUrl,
+      soundUrl: notifSoundUrl === 'silent' ? '' : notifSoundUrl,
       buttons: cleanedButtons,
       createdAt: Date.now(),
       scheduledFor: scheduledMs,
@@ -889,6 +984,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       imageUrl: ovImage.trim(),
       theme: ovTheme,
       fontStyle: ovFontStyle,
+      soundUrl: ovSoundUrl === 'silent' ? '' : ovSoundUrl,
       buttons: ovButtons.slice(0, 3),
       createdAt: Date.now(),
       scheduledFor: scheduledMs,
@@ -2450,21 +2546,31 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 items-end">
                   <div>
                     <label className={`block text-[11px] ${textMuted} mb-1`}>Notification Sound</label>
-                    <select
-                      value={notifSoundUrl}
-                      onChange={(e) => setNotifSoundUrl(e.target.value)}
-                      className={inputCls}
-                    >
-                      {[...DEFAULT_SAVED_SOUNDS, ...customSounds].map((s, i) => (
-                        <option key={i} value={s.url}>
-                          {s.name}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="flex gap-1.5">
+                      <select
+                        value={notifSoundUrl}
+                        onChange={(e) => setNotifSoundUrl(e.target.value)}
+                        className={inputCls}
+                      >
+                        {allAvailableSounds.map((s, i) => (
+                          <option key={i} value={s.url}>
+                            {s.name}
+                          </option>
+                        ))}
+                        <option value="silent">Silent (Vibration Only)</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => void handlePreviewSoundUrl(notifSoundUrl)}
+                        className={btnSecondary}
+                      >
+                        {previewingSoundUrl === notifSoundUrl && notifSoundUrl !== 'silent' ? '⏸ Stop' : '▶ Test'}
+                      </button>
+                    </div>
                   </div>
 
                   <div>
-                    <label className={`block text-[11px] ${textMuted} mb-1`}>Upload Custom Sound (/sounds)</label>
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>Upload Custom Sound (MP3 / Audio)</label>
                     <input
                       type="file"
                       accept="audio/*"
@@ -2472,18 +2578,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                       onChange={async (e) => {
                         const file = e.target.files?.[0];
                         if (!file) return;
-                        setUploadingSound(true);
-                        try {
-                          const res = await uploadFileToFirebaseStorage(file, 'sounds', file.name);
-                          setCustomSounds((prev) => [...prev, { name: file.name, url: res.url }]);
-                          setNotifSoundUrl(res.url);
-                          notifyStatus('Custom sound uploaded.');
-                        } catch (err: any) {
-                          notifyStatus(`Sound upload error: ${err.message}`, true);
-                        } finally {
-                          setUploadingSound(false);
-                          e.target.value = '';
-                        }
+                        await handleUploadCustomSoundFile(file, 'notif');
+                        e.target.value = '';
                       }}
                       className={inputCls}
                     />
@@ -2771,6 +2867,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                       imageUrl: ovImage.trim(),
                       theme: ovTheme,
                       fontStyle: ovFontStyle,
+                      soundUrl: ovSoundUrl === 'silent' ? '' : ovSoundUrl,
                       buttons: ovButtons.slice(0, 3),
                       createdAt: Date.now(),
                       scheduledFor: null,
@@ -2902,6 +2999,63 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                           </option>
                         ))}
                       </select>
+                    </div>
+                  </div>
+
+                  {/* Custom Overlay Notification Sound & Audio Uploader */}
+                  <div className={`p-2.5 rounded-[12px] border ${borderCol} space-y-2`}>
+                    <div className="flex flex-wrap items-center justify-between gap-1">
+                      <span className="text-[11px] font-bold">
+                        🔊 Custom Overlay Popup Sound (Plays on Her Screen When Popup Appears)
+                      </span>
+                      <span className={`text-[10px] ${textMuted}`}>
+                        Automatically stops as soon as she taps any button or closes the popup
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-end">
+                      <div>
+                        <label className={`block text-[11px] ${textMuted} mb-1`}>Select Popup Sound</label>
+                        <div className="flex gap-1.5">
+                          <select
+                            value={ovSoundUrl}
+                            onChange={(e) => setOvSoundUrl(e.target.value)}
+                            className={inputCls}
+                          >
+                            {allAvailableSounds.map((s, i) => (
+                              <option key={i} value={s.url}>
+                                {s.name}
+                              </option>
+                            ))}
+                            <option value="silent">🔇 Silent (Heartbeat Vibration Only · No Sound)</option>
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => void handlePreviewSoundUrl(ovSoundUrl)}
+                            className={btnSecondary}
+                          >
+                            {previewingSoundUrl === ovSoundUrl && ovSoundUrl !== 'silent' ? '⏸ Stop' : '▶ Test'}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className={`block text-[11px] ${textMuted} mb-1`}>
+                          Upload Custom Sound / Voice / Song Clip (MP3, WAV, M4A)
+                        </label>
+                        <input
+                          type="file"
+                          accept="audio/*"
+                          disabled={uploadingSound}
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            await handleUploadCustomSoundFile(file, 'overlay');
+                            e.target.value = '';
+                          }}
+                          className={inputCls}
+                        />
+                      </div>
                     </div>
                   </div>
 
@@ -3091,8 +3245,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                           ))}
                         </div>
                       </div>
-                      <div className={`text-[10px] ${textMuted} mt-2`}>
-                        Triggers immediately on her screen with this exact theme & font.
+                      <div className={`text-[10px] ${textMuted} mt-2 flex items-center justify-between gap-2`}>
+                        <span>Triggers immediately on her screen with this exact theme & font.</span>
+                        <span className="font-semibold">🔊 {getSoundLabel(ovSoundUrl)}</span>
                       </div>
                     </div>
                   );
@@ -3108,7 +3263,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                   <thead>
                     <tr className={`border-b ${borderCol} ${textMuted}`}>
                       <th className="py-1.5 px-2.5">Created</th>
-                      <th className="py-1.5 px-2.5">Title & Message</th>
+                      <th className="py-1.5 px-2.5">Title, Message & Sound</th>
                       <th className="py-1.5 px-2.5">Response</th>
                       <th className="py-1.5 px-2.5 text-right">Actions</th>
                     </tr>
@@ -3122,6 +3277,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                         <td className="py-1.5 px-2.5">
                           <div className="font-bold">{o.title}</div>
                           <div className={textMuted}>{o.message}</div>
+                          <div className={`text-[10px] ${textMuted} mt-0.5`}>
+                            🔊 Sound: {getSoundLabel(o.soundUrl)}
+                          </div>
                         </td>
                         <td className="py-1.5 px-2.5 text-[11px]">
                           <span className={`px-2 py-0.5 rounded-full border ${borderCol}`}>
@@ -3142,6 +3300,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                                 imageUrl: o.imageUrl || '',
                                 theme: o.theme || ovTheme,
                                 fontStyle: o.fontStyle || ovFontStyle,
+                                soundUrl: o.soundUrl !== undefined ? o.soundUrl : (ovSoundUrl === 'silent' ? '' : ovSoundUrl),
                                 buttons: o.buttons || [],
                                 createdAt: Date.now(),
                                 status: 'sent',

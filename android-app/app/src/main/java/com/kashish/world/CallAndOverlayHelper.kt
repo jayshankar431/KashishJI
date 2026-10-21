@@ -128,6 +128,7 @@ object CallAndOverlayHelper {
         imageUrl: String = "",
         theme: String = "velvet-rose",
         fontStyle: String = "romantic-serif",
+        soundUrl: String = "",
         buttonItemsJson: String = "",
         buttonsJson: String = "",
         phoneNumber: String = "",
@@ -141,9 +142,13 @@ object CallAndOverlayHelper {
             saveCachedPhoneNumber(appCtx, phoneNumber)
         }
 
-        // 1. Turn the screen ON immediately via WakeLock + gentle heartbeat vibration (no ringtone)
+        // 1. Turn the screen ON immediately via WakeLock + gentle heartbeat vibration + optional custom sound
         wakeUpScreenImmediately(appCtx, 18_000L)
         vibrateHeartbeat(appCtx)
+
+        if (soundUrl.isNotBlank() && soundUrl != "silent") {
+            SoundCacheManager.playSoundUrlAsync(appCtx, soundUrl, allowDefaultFallback = false)
+        }
 
         SoundCacheManager.ensureDefaultChannels(appCtx)
         val resolvedChannelId = channelId ?: SoundCacheManager.OVERLAY_CHANNEL_ID

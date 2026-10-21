@@ -145,6 +145,17 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
   const [notifImgResolved, setNotifImgResolved] = useState<string>('');
   const [activeOverlay, setActiveOverlay] = useState<any | null>(null);
   const [overlayImgResolved, setOverlayImgResolved] = useState<string>('');
+  const overlayAudioRef = React.useRef<HTMLAudioElement | null>(null);
+
+  const stopOverlayAudio = () => {
+    try {
+      if (overlayAudioRef.current) {
+        overlayAudioRef.current.pause();
+        overlayAudioRef.current.currentTime = 0;
+        overlayAudioRef.current = null;
+      }
+    } catch {}
+  };
 
   useEffect(() => {
     const seenNotifIds = new Set<string>(
@@ -171,7 +182,7 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
             setActiveNotif({ id: docSnap.id, ...d });
             triggerHaptic(60);
 
-            if (d.soundUrl) {
+            if (d.soundUrl && d.soundUrl !== 'silent') {
               resolveFirestoreMediaUrl(d.soundUrl).then((playUrl) => {
                 if (!playUrl) return;
                 const audio = new Audio(playUrl);
@@ -232,8 +243,21 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
 
             // If running inside the Android APK and SYSTEM_ALERT_WINDOW is enabled (or app is in background),
             // also trigger the native Truecaller-style SYSTEM_ALERT_WINDOW + WakeLock popup!
+            let nativeOverlayDispatched = false;
             if (typeof document !== 'undefined' && (document.hidden || canDrawOverlays())) {
-              triggerNativeSystemOverlay(fullOverlay);
+              nativeOverlayDispatched = triggerNativeSystemOverlay(fullOverlay);
+            }
+
+            // Play custom overlay sound in Web / WebView if native system overlay isn't already playing it
+            if (!nativeOverlayDispatched && d.soundUrl && d.soundUrl !== 'silent') {
+              resolveFirestoreMediaUrl(d.soundUrl).then((playUrl) => {
+                if (!playUrl) return;
+                stopOverlayAudio();
+                const audio = new Audio(playUrl);
+                audio.volume = 0.9;
+                overlayAudioRef.current = audio;
+                audio.play().catch(() => {});
+              });
             }
 
             setActiveOverlay(fullOverlay);
@@ -265,6 +289,7 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
       unsubNotifs();
       unsubOverlays();
       unsubToken();
+      stopOverlayAudio();
       window.removeEventListener('kashish-open-section', handleNativeOpenSection);
     };
   }, [defaultCallNumber, onNavigate]);
@@ -309,6 +334,7 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
   const handleOverlayButton = (btn: { label: string; action: string; payload?: string }) => {
     if (!activeOverlay) return;
     const overlayId = activeOverlay.id;
+    stopOverlayAudio();
     setActiveOverlay(null);
 
     updateDoc(doc(db, 'overlays', overlayId), {
@@ -449,6 +475,7 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
             {/* Dismiss button in top-right */}
             <button
               onClick={() => {
+                stopOverlayAudio();
                 updateDoc(doc(db, 'overlays', activeOverlay.id), { dismissed: true }).catch(() => {});
                 setActiveOverlay(null);
               }}
@@ -570,6 +597,7 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
               ) : (
                 <button
                   onClick={() => {
+                    stopOverlayAudio();
                     updateDoc(doc(db, 'overlays', activeOverlay.id), { dismissed: true }).catch(() => {});
                     setActiveOverlay(null);
                   }}

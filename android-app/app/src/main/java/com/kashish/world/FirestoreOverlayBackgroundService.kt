@@ -315,6 +315,7 @@ class FirestoreOverlayBackgroundService : Service() {
                 val imageUrl = optStringField(fields, "imageUrl", "")
                 val theme = optStringField(fields, "theme", "velvet-rose")
                 val fontStyle = optStringField(fields, "fontStyle", "romantic-serif")
+                val soundUrl = optStringField(fields, "soundUrl", "")
                 val buttonsJson = extractButtonsJsonArray(fields)
 
                 mainHandler.post {
@@ -326,6 +327,7 @@ class FirestoreOverlayBackgroundService : Service() {
                         imageUrl = imageUrl,
                         theme = theme,
                         fontStyle = fontStyle,
+                        soundUrl = soundUrl,
                         buttonItemsJson = buttonsJson,
                         phoneNumber = CallAndOverlayHelper.getCachedPhoneNumber(appCtx)
                     )

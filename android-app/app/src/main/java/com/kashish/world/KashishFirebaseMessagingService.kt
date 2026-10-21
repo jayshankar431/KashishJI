@@ -64,8 +64,6 @@ class KashishFirebaseMessagingService : FirebaseMessagingService() {
                 SoundCacheManager.getChannelForSound(applicationContext, soundUrl, cachedSoundFile)
             }
 
-            SoundCacheManager.playCachedSound(applicationContext, cachedSoundFile)
-
             if (type == "overlay") {
                 CallAndOverlayHelper.triggerTruecallerOverlay(
                     context = applicationContext,
@@ -75,12 +73,14 @@ class KashishFirebaseMessagingService : FirebaseMessagingService() {
                     imageUrl = imageUrl,
                     theme = theme,
                     fontStyle = fontStyle,
+                    soundUrl = soundUrl,
                     buttonItemsJson = buttonItemsJson,
                     buttonsJson = buttonsJson,
                     phoneNumber = phoneNumber,
                     channelId = channelId
                 )
             } else {
+                SoundCacheManager.playCachedSound(applicationContext, cachedSoundFile)
                 CallAndOverlayHelper.showHighPriorityBannerNotification(
                     context = applicationContext,
                     title = title,
