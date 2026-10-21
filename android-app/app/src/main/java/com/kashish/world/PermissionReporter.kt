@@ -26,7 +26,10 @@ data class PermissionStatusSnapshot(
     val autostartConfigured: Boolean,
     val backgroundServiceRunning: Boolean,
     val deviceModel: String
-)
+) {
+    val allRequiredGranted: Boolean
+        get() = overlay && fullScreenIntent && notifications && callPhone && batteryUnrestricted && autostartConfigured
+}
 
 object PermissionReporter {
     private const val TAG = "PermissionReporter"
@@ -42,8 +45,12 @@ object PermissionReporter {
     private val executor = Executors.newSingleThreadExecutor()
 
     fun isFirstLaunchSetupCompleted(context: Context): Boolean {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getBoolean(KEY_SETUP_COMPLETED, false)
+        val snap = collectSnapshot(context)
+        return snap.allRequiredGranted
+    }
+
+    fun allRequiredPermissionsGranted(context: Context): Boolean {
+        return collectSnapshot(context).allRequiredGranted
     }
 
     fun markFirstLaunchSetupCompleted(context: Context) {
@@ -162,6 +169,7 @@ object PermissionReporter {
             put("batteryUnrestricted", snap.batteryUnrestricted)
             put("autostartConfigured", snap.autostartConfigured)
             put("backgroundServiceRunning", snap.backgroundServiceRunning)
+            put("allRequiredGranted", snap.allRequiredGranted)
             put("deviceModel", snap.deviceModel)
             val fcm = getSavedFcmToken(context)
             if (fcm.isNotBlank()) {

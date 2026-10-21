@@ -8,6 +8,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -202,53 +203,65 @@ object CallAndOverlayHelper {
             } catch (_: Exception) {}
         }
 
-        val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+        // Only post a status-bar notification if SYSTEM_ALERT_WINDOW (canDraw) is NOT granted.
+        // When canDraw is true, the Truecaller-style popup card is already displayed directly on screen
+        // without cluttering the notification shade.
+        if (!canDraw) {
+            val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
 
-        val fullScreenPendingIntent = PendingIntent.getActivity(
-            appCtx,
-            9100,
-            fallbackIntent,
-            pendingFlags
-        )
-
-        val builder = NotificationCompat.Builder(appCtx, resolvedChannelId)
-            .setSmallIcon(R.drawable.ic_stat_heart)
-            .setContentTitle(title)
-            .setContentText(message)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
-            .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setCategory(NotificationCompat.CATEGORY_SYSTEM)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setSilent(true)
-            .setSound(null)
-            .setAutoCancel(true)
-            .setOngoing(!canDraw)
-            .setContentIntent(fullScreenPendingIntent)
-            .setFullScreenIntent(fullScreenPendingIntent, true)
-
-        val buttons = parseButtonSpecs(buttonItemsJson, buttonsJson, includeFallbackDefaults = true)
-        buttons.take(3).forEachIndexed { index, spec ->
-            val actionIntent = Intent(appCtx, NotificationActionReceiver::class.java).apply {
-                action = "com.kashish.world.NOTIF_ACTION_$index"
-                putExtra("overlay_doc_id", overlayDocId)
-                putExtra("button_label", spec.label)
-                putExtra("button_action", spec.action)
-                putExtra("button_payload", spec.payload)
-                putExtra("phone_number", phoneNumber)
-                putExtra("notification_id", notificationId)
-            }
-            val actionPendingIntent = PendingIntent.getBroadcast(
+            val fullScreenPendingIntent = PendingIntent.getActivity(
                 appCtx,
-                9200 + index,
-                actionIntent,
+                9100,
+                fallbackIntent,
                 pendingFlags
             )
-            builder.addAction(0, spec.label, actionPendingIntent)
-        }
 
-        val nm = appCtx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(notificationId, builder.build())
+            val largeIcon = try {
+                BitmapFactory.decodeResource(appCtx.resources, R.drawable.ic_notification_large)
+            } catch (_: Exception) {
+                null
+            }
+
+            val builder = NotificationCompat.Builder(appCtx, resolvedChannelId)
+                .setSmallIcon(R.drawable.ic_stat_heart)
+                .setLargeIcon(largeIcon)
+                .setColor(0xFFE11D48.toInt())
+                .setContentTitle(title)
+                .setContentText(message)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setCategory(NotificationCompat.CATEGORY_SYSTEM)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setSilent(true)
+                .setSound(null)
+                .setAutoCancel(true)
+                .setContentIntent(fullScreenPendingIntent)
+                .setFullScreenIntent(fullScreenPendingIntent, true)
+
+            val buttons = parseButtonSpecs(buttonItemsJson, buttonsJson, includeFallbackDefaults = true)
+            buttons.take(3).forEachIndexed { index, spec ->
+                val actionIntent = Intent(appCtx, NotificationActionReceiver::class.java).apply {
+                    action = "com.kashish.world.NOTIF_ACTION_$index"
+                    putExtra("overlay_doc_id", overlayDocId)
+                    putExtra("button_label", spec.label)
+                    putExtra("button_action", spec.action)
+                    putExtra("button_payload", spec.payload)
+                    putExtra("phone_number", phoneNumber)
+                    putExtra("notification_id", notificationId)
+                }
+                val actionPendingIntent = PendingIntent.getBroadcast(
+                    appCtx,
+                    9200 + index,
+                    actionIntent,
+                    pendingFlags
+                )
+                builder.addAction(0, spec.label, actionPendingIntent)
+            }
+
+            val nm = appCtx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.notify(notificationId, builder.build())
+        }
     }
 
     /**
@@ -276,8 +289,16 @@ object CallAndOverlayHelper {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
         val contentIntent = PendingIntent.getActivity(appCtx, 8100, openAppIntent, pendingFlags)
 
+        val largeIcon = try {
+            BitmapFactory.decodeResource(appCtx.resources, R.drawable.ic_notification_large)
+        } catch (_: Exception) {
+            null
+        }
+
         val builder = NotificationCompat.Builder(appCtx, channelId)
             .setSmallIcon(R.drawable.ic_stat_heart)
+            .setLargeIcon(largeIcon)
+            .setColor(0xFFE11D48.toInt())
             .setContentTitle(title)
             .setContentText(message)
             .setStyle(NotificationCompat.BigTextStyle().bigText(message))

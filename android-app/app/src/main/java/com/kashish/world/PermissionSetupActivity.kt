@@ -32,6 +32,9 @@ import androidx.appcompat.app.AppCompatActivity
 class PermissionSetupActivity : AppCompatActivity() {
 
     private lateinit var rowsContainer: LinearLayout
+    private lateinit var continueBtn: Button
+    private lateinit var continueBtnBg: GradientDrawable
+    private lateinit var progressStatusView: TextView
 
     private val notificationPermLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -58,6 +61,17 @@ class PermissionSetupActivity : AppCompatActivity() {
         refreshUiAndReport()
     }
 
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (PermissionReporter.allRequiredPermissionsGranted(this)) {
+            @Suppress("DEPRECATION")
+            super.onBackPressed()
+        } else {
+            // Prevent bypassing the permission gate with the hardware Back button; minimize app to Home instead
+            moveTaskToBack(true)
+        }
+    }
+
     private fun buildLayout() {
         val scroll = ScrollView(this).apply {
             setBackgroundColor(Color.parseColor("#12071A"))
@@ -70,7 +84,7 @@ class PermissionSetupActivity : AppCompatActivity() {
         }
 
         val headerBadge = TextView(this).apply {
-            text = "💖 KASHISH'S WORLD · TRUECALLER POPUP SETUP"
+            text = "💖 KASHISH'S WORLD · REQUIRED PERMISSIONS"
             setTextColor(Color.parseColor("#FB7185"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
             typeface = Typeface.DEFAULT_BOLD
@@ -78,21 +92,30 @@ class PermissionSetupActivity : AppCompatActivity() {
         root.addView(headerBadge)
 
         val title = TextView(this).apply {
-            text = "Enable Instant Love Popups"
+            text = "Allow All Permissions to Continue"
             setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 23f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
             typeface = Typeface.DEFAULT_BOLD
             setPadding(0, dp(6), 0, dp(6))
         }
         root.addView(title)
 
         val subtitle = TextView(this).apply {
-            text = "Allow 'Display over other apps' (SYSTEM_ALERT_WINDOW) and 'Lock-Screen Wakeup' (USE_FULL_SCREEN_INTENT + WakeLock) so Jay's romantic popup card appears even over Instagram/WhatsApp or when the phone screen is locked."
+            text = "Please allow all 6 permissions below so Truecaller-style love popups, lock-screen wakeup, notifications, and 1-tap calls work smoothly. The Continue button will unlock automatically once all 6 are allowed."
             setTextColor(Color.parseColor("#D8B4E2"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            setPadding(0, 0, 0, dp(18))
+            setPadding(0, 0, 0, dp(10))
         }
         root.addView(subtitle)
+
+        progressStatusView = TextView(this).apply {
+            text = "⏳ 0 / 6 Permissions Allowed"
+            setTextColor(Color.parseColor("#FBBF24"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, 0, 0, dp(14))
+        }
+        root.addView(progressStatusView)
 
         rowsContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -138,21 +161,32 @@ class PermissionSetupActivity : AppCompatActivity() {
             ).apply { topMargin = dp(10) }
         )
 
-        val continueBtnBg = GradientDrawable().apply {
+        continueBtnBg = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = dp(18).toFloat()
-            setColor(Color.parseColor("#E11D48"))
+            setColor(Color.parseColor("#3B234A"))
         }
 
-        val continueBtn = Button(this).apply {
-            text = "Continue to Kashish's World 💖"
+        continueBtn = Button(this).apply {
+            text = "🔒 Allow All 6 Permissions to Continue"
             isAllCaps = false
-            setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15.5f)
+            isEnabled = false
+            alpha = 0.55f
+            setTextColor(Color.parseColor("#9CA3AF"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             typeface = Typeface.DEFAULT_BOLD
             background = continueBtnBg
             setPadding(dp(20), dp(14), dp(20), dp(14))
             setOnClickListener {
+                if (!PermissionReporter.allRequiredPermissionsGranted(this@PermissionSetupActivity)) {
+                    android.widget.Toast.makeText(
+                        this@PermissionSetupActivity,
+                        "Please allow all 6 permissions above first 💖",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                    refreshUiAndReport()
+                    return@setOnClickListener
+                }
                 PermissionReporter.markFirstLaunchSetupCompleted(this@PermissionSetupActivity)
                 FirestoreOverlayBackgroundService.startServiceSafely(this@PermissionSetupActivity)
                 PermissionReporter.reportStatusAsync(this@PermissionSetupActivity)
@@ -175,6 +209,37 @@ class PermissionSetupActivity : AppCompatActivity() {
     private fun refreshUiAndReport() {
         val snap = PermissionReporter.collectSnapshot(this)
         rowsContainer.removeAllViews()
+
+        val checks = listOf(
+            snap.overlay,
+            snap.fullScreenIntent,
+            snap.notifications,
+            snap.callPhone,
+            snap.batteryUnrestricted,
+            snap.autostartConfigured
+        )
+        val grantedCount = checks.count { it }
+        val totalCount = checks.size
+        val allGranted = snap.allRequiredGranted
+
+        if (allGranted) {
+            progressStatusView.text = "✅ All $totalCount / $totalCount Permissions Allowed! You can continue now."
+            progressStatusView.setTextColor(Color.parseColor("#34D399"))
+            continueBtn.isEnabled = true
+            continueBtn.alpha = 1f
+            continueBtn.text = "Continue to Kashish's World 💖"
+            continueBtn.setTextColor(Color.WHITE)
+            continueBtnBg.setColor(Color.parseColor("#E11D48"))
+        } else {
+            val remaining = totalCount - grantedCount
+            progressStatusView.text = "⏳ $grantedCount / $totalCount Permissions Allowed ($remaining remaining)"
+            progressStatusView.setTextColor(Color.parseColor("#FBBF24"))
+            continueBtn.isEnabled = false
+            continueBtn.alpha = 0.55f
+            continueBtn.text = "🔒 Allow All Permissions to Continue ($grantedCount/$totalCount)"
+            continueBtn.setTextColor(Color.parseColor("#D1D5DB"))
+            continueBtnBg.setColor(Color.parseColor("#3B234A"))
+        }
 
         // 1. Display over other apps (SYSTEM_ALERT_WINDOW)
         rowsContainer.addView(

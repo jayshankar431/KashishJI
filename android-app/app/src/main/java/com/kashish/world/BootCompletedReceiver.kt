@@ -6,8 +6,8 @@ import android.content.Intent
 import android.util.Log
 
 /**
- * Automatically starts the Truecaller-style Firebase Overlay Background Service
- * whenever the phone boots up or the app is updated.
+ * Automatically starts the silent Truecaller-style Firebase Overlay Background Watcher
+ * whenever the phone boots up, the app is updated, or the silent heartbeat alarm fires.
  */
 class BootCompletedReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
@@ -16,9 +16,10 @@ class BootCompletedReceiver : BroadcastReceiver() {
             action == Intent.ACTION_BOOT_COMPLETED ||
             action == Intent.ACTION_MY_PACKAGE_REPLACED ||
             action == "android.intent.action.QUICKBOOT_POWERON" ||
-            action == "com.htc.intent.action.QUICKBOOT_POWERON"
+            action == "com.htc.intent.action.QUICKBOOT_POWERON" ||
+            action == FirestoreOverlayBackgroundService.ACTION_SILENT_HEARTBEAT
         ) {
-            Log.d("BootCompletedReceiver", "Starting FirestoreOverlayBackgroundService on $action")
+            Log.d("BootCompletedReceiver", "Ensuring silent FirestoreOverlayBackgroundService on $action")
             FirestoreOverlayBackgroundService.startServiceSafely(context)
         }
     }

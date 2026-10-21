@@ -66,8 +66,8 @@ class MainActivity : AppCompatActivity() {
 
         configureWebView()
 
-        // First-launch Permission Setup Screen
-        if (!PermissionReporter.isFirstLaunchSetupCompleted(this)) {
+        // Mandatory Permission Gate: Do not allow entering the app until all 6 permissions are granted
+        if (!PermissionReporter.allRequiredPermissionsGranted(this)) {
             startActivity(Intent(this, PermissionSetupActivity::class.java))
         } else {
             checkInitialPermissions()
@@ -86,6 +86,10 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         FirestoreOverlayBackgroundService.startServiceSafely(this)
+        if (!PermissionReporter.allRequiredPermissionsGranted(this)) {
+            startActivity(Intent(this, PermissionSetupActivity::class.java))
+            return
+        }
         PermissionReporter.reportStatusAsync(this)
         syncPermissionsIntoWebView()
         handleIncomingSectionIntent(intent)

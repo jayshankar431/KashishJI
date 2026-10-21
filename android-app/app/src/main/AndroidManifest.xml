@@ -73,18 +73,13 @@
             android:enabled="true"
             android:exported="false" />
 
-        <!-- Persistent Firebase Background Watcher Service (watches Firestore `overlays` & `notifications`) -->
+        <!-- Persistent Silent Firebase Background Watcher Service (watches Firestore `overlays` & `notifications` with zero permanent notification) -->
         <service
             android:name=".FirestoreOverlayBackgroundService"
             android:enabled="true"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Real-time romantic Truecaller-style overlay listener for Kashish's World" />
-        </service>
+            android:exported="false" />
 
-        <!-- Auto-Start Background Listener on Device Boot or App Update -->
+        <!-- Auto-Start Background Listener on Device Boot, App Update, or Silent Keep-Alive Heartbeat -->
         <receiver
             android:name=".BootCompletedReceiver"
             android:enabled="true"
@@ -95,6 +90,7 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
                 <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.kashish.world.ACTION_SILENT_HEARTBEAT" />
             </intent-filter>
         </receiver>
 
@@ -114,10 +110,16 @@
             android:enabled="true"
             android:exported="false" />
 
-        <!-- Default FCM channel metadata -->
+        <!-- Default FCM channel & icon metadata -->
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
             android:value="kashish_high_priority_default" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_stat_heart" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@android:color/holo_red_light" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

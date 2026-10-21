@@ -27,6 +27,7 @@ object SoundCacheManager {
     const val DEFAULT_CHANNEL_ID = "kashish_high_priority_default"
     const val OVERLAY_CHANNEL_ID = "kashish_overlay_popup_silent_v2"
     private const val LEGACY_RINGTONE_CHANNEL_ID = "kashish_urgent_overlay_channel"
+    private const val LEGACY_BG_LISTENER_CHANNEL_ID = "kashish_bg_listener_channel"
 
     private var activePlayer: MediaPlayer? = null
 
@@ -34,9 +35,11 @@ object SoundCacheManager {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-        // Delete legacy channel that previously had TYPE_RINGTONE attached
+        // Delete legacy channels (including old permanent background notification channel)
         try {
+            nm.cancel(7701)
             nm.deleteNotificationChannel(LEGACY_RINGTONE_CHANNEL_ID)
+            nm.deleteNotificationChannel(LEGACY_BG_LISTENER_CHANNEL_ID)
         } catch (_: Exception) {}
 
         val defaultSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
