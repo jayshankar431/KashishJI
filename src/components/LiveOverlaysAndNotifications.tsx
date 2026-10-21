@@ -390,12 +390,19 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
             {notifImgResolved ? (
               <img
                 src={notifImgResolved}
-                alt=""
-                className="w-13 h-13 rounded-[14px] object-cover shrink-0 border border-pink-400/40"
+                alt="Kashishhh"
+                className="w-12 h-12 rounded-full object-cover shrink-0 border-2 border-pink-400/60"
               />
             ) : (
-              <div className="w-11 h-11 rounded-full bg-rose-500/20 border border-pink-400/35 flex items-center justify-center shrink-0">
-                <Heart className="w-5 h-5 text-rose-400 fill-rose-400 animate-heartbeat" />
+              <div className="relative w-12 h-12 shrink-0">
+                <img
+                  src="/apple-touch-icon.png"
+                  alt="Kashishhh"
+                  className="w-12 h-12 rounded-full object-cover border-2 border-pink-400/60 shadow-sm"
+                />
+                <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-rose-500 border border-[#160824] flex items-center justify-center">
+                  <Heart className="w-2.5 h-2.5 text-white fill-white" />
+                </div>
               </div>
             )}
 

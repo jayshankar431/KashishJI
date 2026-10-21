@@ -84,7 +84,7 @@ class PermissionSetupActivity : AppCompatActivity() {
         }
 
         val headerBadge = TextView(this).apply {
-            text = "💖 KASHISH'S WORLD · REQUIRED PERMISSIONS"
+            text = "💖 KASHISHHH · REQUIRED PERMISSIONS"
             setTextColor(Color.parseColor("#FB7185"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
             typeface = Typeface.DEFAULT_BOLD
@@ -227,7 +227,7 @@ class PermissionSetupActivity : AppCompatActivity() {
             progressStatusView.setTextColor(Color.parseColor("#34D399"))
             continueBtn.isEnabled = true
             continueBtn.alpha = 1f
-            continueBtn.text = "Continue to Kashish's World 💖"
+            continueBtn.text = "Continue to Kashishhh 💖"
             continueBtn.setTextColor(Color.WHITE)
             continueBtnBg.setColor(Color.parseColor("#E11D48"))
         } else {

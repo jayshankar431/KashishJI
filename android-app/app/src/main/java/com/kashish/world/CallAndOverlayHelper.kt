@@ -8,7 +8,13 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -20,8 +26,13 @@ import android.provider.Settings
 import android.telecom.TelecomManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.Person
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.drawable.IconCompat
 import org.json.JSONArray
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.concurrent.Executors
 
 data class OverlayButtonSpec(
     val label: String,
@@ -222,15 +233,12 @@ object CallAndOverlayHelper {
                 pendingFlags
             )
 
-            val largeIcon = try {
-                BitmapFactory.decodeResource(appCtx.resources, R.drawable.ic_notification_large)
-            } catch (_: Exception) {
-                null
-            }
+            val largeIcon = loadNotificationAvatarBitmap(appCtx, imageUrl)
 
             val builder = NotificationCompat.Builder(appCtx, resolvedChannelId)
                 .setSmallIcon(R.drawable.ic_stat_heart)
                 .setLargeIcon(largeIcon)
+                .setSubText("Kashishhh 💖")
                 .setColor(0xFFE11D48.toInt())
                 .setContentTitle(title)
                 .setContentText(message)
@@ -243,6 +251,18 @@ object CallAndOverlayHelper {
                 .setAutoCancel(true)
                 .setContentIntent(fullScreenPendingIntent)
                 .setFullScreenIntent(fullScreenPendingIntent, true)
+
+            if (largeIcon != null) {
+                try {
+                    val sender = Person.Builder()
+                        .setName(title.ifBlank { "Kashishhh 💖" })
+                        .setIcon(IconCompat.createWithBitmap(largeIcon))
+                        .build()
+                    val msgStyle = NotificationCompat.MessagingStyle(sender)
+                        .addMessage(message, System.currentTimeMillis(), sender)
+                    builder.setStyle(msgStyle)
+                } catch (_: Exception) {}
+            }
 
             val buttons = parseButtonSpecs(buttonItemsJson, buttonsJson, includeFallbackDefaults = true)
             buttons.take(3).forEachIndexed { index, spec ->
@@ -270,8 +290,60 @@ object CallAndOverlayHelper {
     }
 
     /**
-     * Dispatches a high-priority banner notification with optional configurable Action Buttons
-     * ("Call Me Now", "Open Gallery", "Open Link", "Dismiss").
+     * Loads the circular Kashishhh notification avatar bitmap (or custom imageUrl cropped to a circle),
+     * falling back through R.drawable.ic_notification_large -> R.mipmap.ic_launcher_round -> R.mipmap.ic_launcher.
+     */
+    fun loadNotificationAvatarBitmap(context: Context, imageUrl: String = ""): Bitmap? {
+        if (imageUrl.isNotBlank() && (imageUrl.startsWith("http://") || imageUrl.startsWith("https://"))) {
+            try {
+                val conn = (URL(imageUrl).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 4500
+                    readTimeout = 4500
+                }
+                val downloaded = conn.inputStream.use { BitmapFactory.decodeStream(it) }
+                if (downloaded != null) {
+                    return cropCircularBitmap(downloaded)
+                }
+            } catch (_: Exception) {}
+        }
+
+        val res = context.resources
+        val fallbackIds = intArrayOf(
+            R.drawable.ic_notification_large,
+            R.mipmap.ic_launcher_round,
+            R.mipmap.ic_launcher
+        )
+        for (resId in fallbackIds) {
+            try {
+                val bmp = BitmapFactory.decodeResource(res, resId)
+                if (bmp != null) return bmp
+            } catch (_: Exception) {}
+        }
+        return null
+    }
+
+    private fun cropCircularBitmap(src: Bitmap): Bitmap {
+        val size = minOf(src.width, src.height).coerceAtLeast(1)
+        val output = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(output)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        val rect = Rect(0, 0, size, size)
+        val radius = size / 2f
+        canvas.drawARGB(0, 0, 0, 0)
+        canvas.drawCircle(radius, radius, radius, paint)
+        paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
+        val left = (src.width - size) / 2
+        val top = (src.height - size) / 2
+        val srcRect = Rect(left, top, left + size, top + size)
+        canvas.drawBitmap(src, srcRect, rect, paint)
+        return output
+    }
+
+    /**
+     * Dispatches a high-priority banner notification with full-color circular Kashishhh icon
+     * (via both setLargeIcon and MessagingStyle Person icon so it appears on the left across
+     * Android 10–15, Xiaomi HyperOS/MIUI, Samsung OneUI, Oppo/Realme ColorOS, and Vivo)
+     * plus optional configurable Action Buttons.
      */
     fun showHighPriorityBannerNotification(
         context: Context,
@@ -280,62 +352,80 @@ object CallAndOverlayHelper {
         channelId: String = SoundCacheManager.DEFAULT_CHANNEL_ID,
         notifDocId: String = "",
         buttonItemsJson: String = "",
-        phoneNumber: String = ""
+        phoneNumber: String = "",
+        imageUrl: String = ""
     ) {
         val appCtx = context.applicationContext
         wakeUpScreenImmediately(appCtx, 8_000L)
         SoundCacheManager.ensureDefaultChannels(appCtx)
 
-        val notificationId = (System.currentTimeMillis() % 80000).toInt() + 10000
-        val openAppIntent = Intent(appCtx, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        }
-        val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
-        val contentIntent = PendingIntent.getActivity(appCtx, 8100, openAppIntent, pendingFlags)
-
-        val largeIcon = try {
-            BitmapFactory.decodeResource(appCtx.resources, R.drawable.ic_notification_large)
-        } catch (_: Exception) {
-            null
-        }
-
-        val builder = NotificationCompat.Builder(appCtx, channelId)
-            .setSmallIcon(R.drawable.ic_stat_heart)
-            .setLargeIcon(largeIcon)
-            .setColor(0xFFE11D48.toInt())
-            .setContentTitle(title)
-            .setContentText(message)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setAutoCancel(true)
-            .setContentIntent(contentIntent)
-
-        // Attach up to 3 custom action buttons if configured in Admin Notification Sender
-        val buttons = parseButtonSpecs(buttonItemsJson, null, includeFallbackDefaults = false)
-        buttons.take(3).forEachIndexed { index, spec ->
-            val actionIntent = Intent(appCtx, NotificationActionReceiver::class.java).apply {
-                action = "com.kashish.world.BANNER_NOTIF_ACTION_${notificationId}_$index"
-                putExtra("notif_doc_id", notifDocId)
-                putExtra("button_label", spec.label)
-                putExtra("button_action", spec.action)
-                putExtra("button_payload", spec.payload)
-                putExtra("phone_number", phoneNumber.ifBlank { getCachedPhoneNumber(appCtx) })
-                putExtra("notification_id", notificationId)
+        val dispatch = Runnable {
+            val notificationId = (System.currentTimeMillis() % 80000).toInt() + 10000
+            val openAppIntent = Intent(appCtx, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
-            val actionPendingIntent = PendingIntent.getBroadcast(
-                appCtx,
-                (notificationId % 5000) + 3000 + index,
-                actionIntent,
-                pendingFlags
-            )
-            builder.addAction(0, spec.label, actionPendingIntent)
+            val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+            val contentIntent = PendingIntent.getActivity(appCtx, 8100, openAppIntent, pendingFlags)
+
+            val largeIcon = loadNotificationAvatarBitmap(appCtx, imageUrl)
+
+            val builder = NotificationCompat.Builder(appCtx, channelId)
+                .setSmallIcon(R.drawable.ic_stat_heart)
+                .setLargeIcon(largeIcon)
+                .setSubText("Kashishhh 💖")
+                .setColor(0xFFE11D48.toInt())
+                .setContentTitle(title)
+                .setContentText(message)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setAutoCancel(true)
+                .setContentIntent(contentIntent)
+
+            if (largeIcon != null) {
+                try {
+                    val sender = Person.Builder()
+                        .setName(title.ifBlank { "Kashishhh 💖" })
+                        .setIcon(IconCompat.createWithBitmap(largeIcon))
+                        .build()
+                    val msgStyle = NotificationCompat.MessagingStyle(sender)
+                        .addMessage(message, System.currentTimeMillis(), sender)
+                    builder.setStyle(msgStyle)
+                } catch (_: Exception) {}
+            }
+
+            // Attach up to 3 custom action buttons if configured in Admin Notification Sender
+            val buttons = parseButtonSpecs(buttonItemsJson, null, includeFallbackDefaults = false)
+            buttons.take(3).forEachIndexed { index, spec ->
+                val actionIntent = Intent(appCtx, NotificationActionReceiver::class.java).apply {
+                    action = "com.kashish.world.BANNER_NOTIF_ACTION_${notificationId}_$index"
+                    putExtra("notif_doc_id", notifDocId)
+                    putExtra("button_label", spec.label)
+                    putExtra("button_action", spec.action)
+                    putExtra("button_payload", spec.payload)
+                    putExtra("phone_number", phoneNumber.ifBlank { getCachedPhoneNumber(appCtx) })
+                    putExtra("notification_id", notificationId)
+                }
+                val actionPendingIntent = PendingIntent.getBroadcast(
+                    appCtx,
+                    (notificationId % 5000) + 3000 + index,
+                    actionIntent,
+                    pendingFlags
+                )
+                builder.addAction(0, spec.label, actionPendingIntent)
+            }
+
+            val nm = appCtx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.notify(notificationId, builder.build())
         }
 
-        val nm = appCtx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(notificationId, builder.build())
+        if (imageUrl.isNotBlank() && (imageUrl.startsWith("http://") || imageUrl.startsWith("https://"))) {
+            Executors.newSingleThreadExecutor().execute(dispatch)
+        } else {
+            dispatch.run()
+        }
     }
 
     /**

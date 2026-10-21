@@ -176,6 +176,15 @@ class UrgentOverlayFallbackActivity : AppCompatActivity() {
             ).apply { bottomMargin = dp(12) }
         )
 
+        val defaultAvatarView = ImageView(this).apply {
+            setImageResource(R.drawable.ic_notification_large)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+        }
+        card.addView(
+            defaultAvatarView,
+            LinearLayout.LayoutParams(dp(72), dp(72)).apply { bottomMargin = dp(12) }
+        )
+
         val titleView = TextView(this).apply {
             text = title
             setTextColor(titleColor)

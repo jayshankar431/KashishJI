@@ -370,6 +370,7 @@ class FirestoreOverlayBackgroundService : Service() {
                 val title = optStringField(fields, "title", "Message from Jay 💖")
                 val message = optStringField(fields, "message", "")
                 val soundUrl = optStringField(fields, "soundUrl", "")
+                val imageUrl = optStringField(fields, "imageUrl", "")
                 val buttonsJson = extractButtonsJsonArray(fields)
 
                 val cachedSound = SoundCacheManager.getOrDownloadSoundFile(appCtx, soundUrl)
@@ -383,7 +384,8 @@ class FirestoreOverlayBackgroundService : Service() {
                     channelId = channelId,
                     notifDocId = docId,
                     buttonItemsJson = buttonsJson,
-                    phoneNumber = CallAndOverlayHelper.getCachedPhoneNumber(appCtx)
+                    phoneNumber = CallAndOverlayHelper.getCachedPhoneNumber(appCtx),
+                    imageUrl = imageUrl
                 )
 
                 markNotificationSeenInFirestore(appCtx, docId)

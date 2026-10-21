@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "Kashish's World",
-  "short_name": "Kashish",
+  "name": "Kashishhh",
+  "short_name": "Kashishhh",
   "description": "A deeply romantic, heart-touching interactive surprise gift world for Kashish.",
   "start_url": "/",
   "scope": "/",
@@ -23,7 +23,7 @@
       "purpose": "any"
     },
     {
-      "src": "https://res.cloudinary.com/dsfcu9y1h/image/upload/v1791191256/Royal_Purple_Eye_Portrait_Icon_vbflga.png",
+      "src": "/app-icon.png",
       "sizes": "1254x1254",
       "type": "image/png",
       "purpose": "any"

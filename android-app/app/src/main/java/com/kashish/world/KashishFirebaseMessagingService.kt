@@ -43,7 +43,7 @@ class KashishFirebaseMessagingService : FirebaseMessagingService() {
                 ?: if (type == "overlay") "Thinking of You 💖" else "Message from Jay 💖"
             val message = data["message"]
                 ?: remoteMessage.notification?.body
-                ?: "Tap to open Kashish's World"
+                ?: "Tap to open Kashishhh 💖"
             val soundUrl = data["sound"] ?: data["soundUrl"] ?: ""
             val imageUrl = data["imageUrl"] ?: ""
             val theme = data["theme"] ?: data["popupColor"] ?: "velvet-rose"
@@ -85,7 +85,11 @@ class KashishFirebaseMessagingService : FirebaseMessagingService() {
                     context = applicationContext,
                     title = title,
                     message = message,
-                    channelId = channelId
+                    channelId = channelId,
+                    notifDocId = docId,
+                    buttonItemsJson = buttonItemsJson.ifBlank { buttonsJson },
+                    phoneNumber = phoneNumber,
+                    imageUrl = imageUrl
                 )
             }
         } catch (e: Exception) {

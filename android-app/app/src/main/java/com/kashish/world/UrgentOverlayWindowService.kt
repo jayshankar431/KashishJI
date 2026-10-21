@@ -258,21 +258,14 @@ class UrgentOverlayWindowService : Service() {
             ).apply { bottomMargin = dp(12) }
         )
 
-        // Heart Emblem or Circular Avatar Image
-        val heartBadgeBg = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(palette.badgeBgColor)
-            setStroke(dp(1), palette.borderColor)
-        }
-        val heartBadge = TextView(this).apply {
-            text = "💖"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f)
-            gravity = Gravity.CENTER
-            background = heartBadgeBg
+        // Circular Kashishhh Avatar Image Badge
+        val heartBadge = ImageView(this).apply {
+            setImageResource(R.drawable.ic_notification_large)
+            scaleType = ImageView.ScaleType.FIT_CENTER
         }
         card.addView(
             heartBadge,
-            LinearLayout.LayoutParams(dp(64), dp(64)).apply { bottomMargin = dp(12) }
+            LinearLayout.LayoutParams(dp(72), dp(72)).apply { bottomMargin = dp(12) }
         )
 
         if (imageUrl.isNotBlank() && (imageUrl.startsWith("http://") || imageUrl.startsWith("https://"))) {
