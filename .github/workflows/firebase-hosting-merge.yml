@@ -13,6 +13,71 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Set up Gradle 8.7
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Prepare google-services.json from GOOGLE_SERVICES_JSON secret
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            let raw = (process.env.GOOGLE_SERVICES_JSON || "").trim();
+            if (!raw) process.exit(0);
+            if ((raw.startsWith("\"") && raw.endsWith("\"")) || (raw.startsWith("\x27") && raw.endsWith("\x27"))) {
+              raw = raw.slice(1, -1).trim();
+            }
+            if (!raw.startsWith("{")) {
+              try {
+                const decoded = Buffer.from(raw, "base64").toString("utf8").trim();
+                if (decoded.startsWith("{")) raw = decoded;
+              } catch {}
+            }
+            try {
+              const parsed = JSON.parse(raw);
+              if (Array.isArray(parsed.client) && parsed.client.length > 0) {
+                const targetPkg = "com.kashish.world";
+                const hasPkg = parsed.client.some(
+                  (c) => c?.client_info?.android_client_info?.package_name === targetPkg
+                );
+                if (!hasPkg) {
+                  const cloned = JSON.parse(JSON.stringify(parsed.client[0]));
+                  cloned.client_info = cloned.client_info || {};
+                  cloned.client_info.android_client_info = { package_name: targetPkg };
+                  parsed.client.push(cloned);
+                }
+              }
+              fs.writeFileSync("android-app/app/google-services.json", JSON.stringify(parsed, null, 2));
+            } catch {}
+          '
+
+      - name: Build Android APK with run_number version
+        run: |
+          VERSION_CODE=$((300 + ${{ github.run_number }}))
+          VERSION_NAME="3.0.${{ github.run_number }}"
+          gradle :app:assembleDebug -PversionCodeProp="$VERSION_CODE" -PversionNameProp="$VERSION_NAME" --no-daemon --stacktrace
+          cp android-app/app/build/outputs/apk/debug/app-debug.apk public/Kashishhh.apk
+          cat > public/latest-apk.json <<EOF
+          {
+            "version": "$VERSION_NAME",
+            "versionCode": $VERSION_CODE,
+            "runNumber": ${{ github.run_number }},
+            "commitSha": "${{ github.sha }}",
+            "repo": "${{ github.repository }}",
+            "apkUrl": "https://kashishji.web.app/Kashishhh.apk",
+            "githubReleaseApkUrl": "https://github.com/${{ github.repository }}/releases/download/latest-apk/Kashishhh.apk",
+            "releasedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          }
+          EOF
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -32,3 +97,4 @@ jobs:
           firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_KASHISHJI }}'
           channelId: live
           projectId: kashishji
+

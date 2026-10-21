@@ -238,6 +238,39 @@ class AndroidAppInterface(private val context: Context) {
 
     @JavascriptInterface
     fun getAppVersion(): String {
-        return "2.2.0"
+        return try {
+            val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            pInfo.versionName ?: "2.3.0"
+        } catch (_: Exception) {
+            "2.3.0"
+        }
+    }
+
+    @JavascriptInterface
+    fun getAppVersionCode(): Int {
+        return try {
+            val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                pInfo.longVersionCode.toInt()
+            } else {
+                @Suppress("DEPRECATION")
+                pInfo.versionCode
+            }
+        } catch (_: Exception) {
+            4
+        }
+    }
+
+    @JavascriptInterface
+    fun openExternalUrl(url: String) {
+        try {
+            val clean = url.trim()
+            if (clean.isEmpty()) return
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(clean)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        } catch (_: Exception) {}
     }
 }
+

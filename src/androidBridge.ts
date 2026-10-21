@@ -41,6 +41,8 @@ export interface AndroidAppBridge {
   makePhoneCall?: (phoneNumber?: string) => void;
   openPermissionSetup?: () => void;
   getAppVersion?: () => string;
+  getAppVersionCode?: () => number;
+  openExternalUrl?: (url: string) => void;
   showSystemOverlay?: (overlayJson: string) => void;
   setAuthToken?: (token: string) => void;
   getPermissionStatusJson?: () => string;
@@ -57,6 +59,50 @@ declare global {
 export function isNativeApp(): boolean {
   if (typeof window === 'undefined') return false;
   return window.isNativeApp === true || !!window.AndroidApp;
+}
+
+export function getInstalledAppVersion(): string {
+  try {
+    if (typeof window !== 'undefined' && window.AndroidApp?.getAppVersion) {
+      const v = window.AndroidApp.getAppVersion();
+      if (v && typeof v === 'string' && v.trim()) return v.trim();
+    }
+    if (typeof window !== 'undefined' && window.__KASHISH_PERMISSIONS__?.appVersion) {
+      return String(window.__KASHISH_PERMISSIONS__.appVersion).trim();
+    }
+  } catch {}
+  return '2.2.0';
+}
+
+export function isVersionOlder(installedVersion: string, requiredVersion: string): boolean {
+  const cleanA = (installedVersion || '').replace(/^v/i, '').trim();
+  const cleanB = (requiredVersion || '').replace(/^v/i, '').trim();
+  if (!cleanB) return false;
+  if (cleanA === cleanB) return false;
+  const partsA = cleanA.split('.').map((n) => parseInt(n, 10) || 0);
+  const partsB = cleanB.split('.').map((n) => parseInt(n, 10) || 0);
+  const maxLen = Math.max(partsA.length, partsB.length, 3);
+  for (let i = 0; i < maxLen; i++) {
+    const a = partsA[i] || 0;
+    const b = partsB[i] || 0;
+    if (a < b) return true;
+    if (a > b) return false;
+  }
+  return false;
+}
+
+export function openApkDownloadUrl(url: string): void {
+  const target = (url || 'https://kashishji.web.app/Kashishhh.apk').trim();
+  void logNativeActivity(`📲 Kashish tapped Download Update APK (${target})`, false, 'apk_update_clicked');
+  try {
+    if (typeof window !== 'undefined' && window.AndroidApp?.openExternalUrl) {
+      window.AndroidApp.openExternalUrl(target);
+      return;
+    }
+  } catch {}
+  if (typeof window !== 'undefined') {
+    window.location.href = target;
+  }
 }
 
 export function triggerHaptic(ms: number = 40): void {

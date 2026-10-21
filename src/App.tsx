@@ -15,8 +15,18 @@ import { OpenWhenSection } from './components/OpenWhenSection';
 import { BreatheSection } from './components/BreatheSection';
 import { GallerySection } from './components/GallerySection';
 import { loadProgress, saveProgress, resetProgress, UserProgressData } from './storage';
-import { triggerHaptic, showNativeToast, logNativeActivity, incrementStat, trackSectionVisit } from './androidBridge';
-import { Heart, Home, Music } from 'lucide-react';
+import {
+  triggerHaptic,
+  showNativeToast,
+  logNativeActivity,
+  incrementStat,
+  trackSectionVisit,
+  isNativeApp,
+  getInstalledAppVersion,
+  isVersionOlder,
+  openApkDownloadUrl,
+} from './androidBridge';
+import { Heart, Home, Music, Download, Sparkles, RefreshCw } from 'lucide-react';
 import { DynamicSlot } from './components/DynamicSlot';
 import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
 import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
@@ -223,6 +233,38 @@ export default function App() {
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(() => {
     return typeof window !== 'undefined' && window.location.hash === '#admin';
   });
+  const [liveApkMeta, setLiveApkMeta] = useState<{
+    version?: string;
+    apkUrl?: string;
+    githubReleaseApkUrl?: string;
+  } | null>(null);
+  const [installedApkVer, setInstalledApkVer] = useState<string>(() => getInstalledAppVersion());
+
+  // Poll /latest-apk.json and sync native installed APK version so any new GitHub push triggers mandatory update
+  useEffect(() => {
+    let active = true;
+    const checkLatestBuild = async () => {
+      try {
+        setInstalledApkVer(getInstalledAppVersion());
+        const res = await fetch(`/latest-apk.json?t=${Date.now()}`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (active && data && typeof data.version === 'string') {
+          setLiveApkMeta(data);
+        }
+      } catch {}
+    };
+
+    void checkLatestBuild();
+    const timer = window.setInterval(checkLatestBuild, 25000);
+    const onPermSync = () => setInstalledApkVer(getInstalledAppVersion());
+    window.addEventListener('kashish-permissions-updated', onPermSync);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener('kashish-permissions-updated', onPermSync);
+    };
+  }, []);
 
   // Restore on-device progress safely from localStorage
   const [progress, setProgress] = useState<UserProgressData>(() => loadProgress());
@@ -267,21 +309,49 @@ export default function App() {
     }
   }, [site.musicVolume]);
 
+  const prevMusicSessionRef = useRef<number>(site.musicSessionId || 0);
+
   useEffect(() => {
+    const targetUrl =
+      activeTab === 'secret-letter' && isSecretLetterOpenInView && site.secretLetterMusicUrl
+        ? site.secretLetterMusicUrl
+        : site.musicUrl;
+
+    const adminTriggeredChange =
+      Boolean(site.musicSessionId) && site.musicSessionId !== prevMusicSessionRef.current;
+    if (site.musicSessionId) {
+      prevMusicSessionRef.current = site.musicSessionId;
+    }
+
     if (site.musicEnabled === false) {
       if (romanticAudio.getIsPlaying()) {
         romanticAudio.stop();
       }
-    } else if (isUnlocked && site.musicUrl) {
-      const targetUrl =
-        activeTab === 'secret-letter' && isSecretLetterOpenInView && site.secretLetterMusicUrl
-          ? site.secretLetterMusicUrl
-          : site.musicUrl;
-      if (romanticAudio.getIsPlaying() && romanticAudio.getCurrentUrl() !== targetUrl) {
-        romanticAudio.playTrack(targetUrl);
-      }
+      return;
     }
-  }, [site.musicEnabled, site.musicUrl, site.secretLetterMusicUrl, isUnlocked, activeTab, isSecretLetterOpenInView]);
+
+    if (!targetUrl) return;
+
+    if (adminTriggeredChange && isUnlocked) {
+      // Admin just saved new music settings live — play/switch track immediately on both Site & APK
+      romanticAudio.playTrack(targetUrl, true);
+      return;
+    }
+
+    if (isUnlocked && romanticAudio.getIsPlaying() && romanticAudio.getCurrentUrl() !== targetUrl) {
+      romanticAudio.playTrack(targetUrl);
+    } else {
+      romanticAudio.init(targetUrl);
+    }
+  }, [
+    site.musicEnabled,
+    site.musicUrl,
+    site.musicSessionId,
+    site.secretLetterMusicUrl,
+    isUnlocked,
+    activeTab,
+    isSecretLetterOpenInView,
+  ]);
 
   // Universal first-touch audio warmup to unblock AudioContext & media autoplay in Android WebView / browser
   useEffect(() => {
@@ -649,6 +719,114 @@ export default function App() {
           </p>
         </div>
       )}
+
+      {/* Mandatory APK Update Gate (Blocks app usage until she downloads & installs the latest APK) */}
+      {(() => {
+        const isAdminUser = auth.currentUser?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+        if (isAdminUser) return null;
+
+        const runningInApk = isNativeApp();
+        const shouldCheckDevice = runningInApk || site.apkApplyToWeb === true;
+        if (!shouldCheckDevice) return null;
+
+        const targetVersion =
+          site.apkAutoUpdateOnPush && liveApkMeta?.version && isVersionOlder(site.apkLatestVersion || '3.0.0', liveApkMeta.version)
+            ? liveApkMeta.version
+            : site.apkLatestVersion || liveApkMeta?.version || '3.0.0';
+
+        const isOutdatedByAutoPush =
+          runningInApk &&
+          site.apkAutoUpdateOnPush !== false &&
+          Boolean(targetVersion) &&
+          isVersionOlder(installedApkVer, targetVersion);
+
+        const isForcedByAdmin =
+          site.apkUpdateRequired === true &&
+          (!runningInApk || isVersionOlder(installedApkVer, targetVersion));
+
+        if (!isOutdatedByAutoPush && !isForcedByAdmin) return null;
+
+        const downloadUrl =
+          site.apkDownloadUrl?.trim() ||
+          liveApkMeta?.apkUrl ||
+          liveApkMeta?.githubReleaseApkUrl ||
+          'https://kashishji.web.app/Kashishhh.apk';
+
+        return (
+          <div className="fixed inset-0 z-[1550] bg-[#12071a]/98 backdrop-blur-xl text-white flex flex-col items-center justify-center p-6 text-center select-none">
+            <div className="max-w-md w-full rounded-3xl border border-pink-500/35 bg-gradient-to-b from-[#230e2e] to-[#16081f] p-6 sm:p-7 shadow-[0_0_50px_rgba(244,63,94,0.28)] space-y-5">
+              <div className="relative mx-auto w-24 h-24 rounded-full p-1 bg-gradient-to-tr from-pink-500 via-rose-400 to-amber-300 shadow-lg">
+                <img
+                  src="/apple-touch-icon.png"
+                  alt="Kashishhh"
+                  className="w-full h-full rounded-full object-cover"
+                />
+                <span className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-rose-500 border-2 border-[#16081f] flex items-center justify-center shadow">
+                  <Sparkles className="w-4 h-4 text-white" />
+                </span>
+              </div>
+
+              <div className="space-y-1.5">
+                <span className="inline-block px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider bg-pink-500/20 text-pink-300 border border-pink-500/30">
+                  Mandatory App Update Required
+                </span>
+                <h2 className="font-serif text-2xl sm:text-3xl font-bold text-white pt-1">
+                  {site.apkUpdateTitle || 'New Update Available for Kashishhh 💖'}
+                </h2>
+                <p className="text-xs sm:text-sm text-pink-100/80 leading-relaxed">
+                  {site.apkUpdateNotes ||
+                    'A brand new version of your app is ready with new surprises, smoother performance & upgraded icons! Please download & install the update to continue.'}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5 p-3 rounded-2xl bg-black/35 border border-white/10 text-xs">
+                <div className="text-left">
+                  <div className="text-pink-200/60 text-[10px] uppercase">Installed Version</div>
+                  <div className="font-bold text-rose-300 text-sm">
+                    {runningInApk ? `v${installedApkVer}` : 'Old Version'}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-pink-200/60 text-[10px] uppercase">New Release Version</div>
+                  <div className="font-bold text-emerald-300 text-sm">v{targetVersion}</div>
+                </div>
+              </div>
+
+              <div className="space-y-2.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => openApkDownloadUrl(downloadUrl)}
+                  className="w-full py-3.5 px-5 rounded-2xl font-bold text-sm sm:text-base text-white bg-gradient-to-r from-pink-500 via-rose-500 to-pink-600 shadow-[0_8px_25px_rgba(244,63,94,0.45)] flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-transform"
+                >
+                  <Download className="w-5 h-5" />
+                  <span>Download & Install Update Now (v{targetVersion})</span>
+                </button>
+
+                {liveApkMeta?.githubReleaseApkUrl &&
+                  liveApkMeta.githubReleaseApkUrl !== downloadUrl && (
+                    <button
+                      type="button"
+                      onClick={() => openApkDownloadUrl(liveApkMeta.githubReleaseApkUrl!)}
+                      className="w-full py-2.5 px-4 rounded-xl font-semibold text-xs text-pink-200 bg-white/5 border border-white/15 hover:bg-white/10 flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Mirror Link: Download from GitHub Release</span>
+                    </button>
+                  )}
+
+                <button
+                  type="button"
+                  onClick={() => window.location.reload()}
+                  className="w-full py-2 text-[11px] text-pink-200/70 hover:text-white flex items-center justify-center gap-1 cursor-pointer"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  <span>Already installed the new APK? Tap to Refresh</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Maintenance Mode Gate (for non-admin users) */}
       {site.maintenanceMode && auth.currentUser?.email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase() && (

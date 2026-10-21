@@ -92,7 +92,10 @@ jobs:
           '
 
       - name: Build Debug APK
-        run: gradle :app:assembleDebug --no-daemon --stacktrace
+        run: |
+          VERSION_CODE=$((300 + ${{ github.run_number }}))
+          VERSION_NAME="3.0.${{ github.run_number }}"
+          gradle :app:assembleDebug -PversionCodeProp="$VERSION_CODE" -PversionNameProp="$VERSION_NAME" --no-daemon --stacktrace
 
       - name: Upload APK Artifact (.zip)
         uses: actions/upload-artifact@v4
@@ -107,11 +110,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          VERSION_NAME="3.0.${{ github.run_number }}"
           cp android-app/app/build/outputs/apk/debug/app-debug.apk Kashishhh.apk
           cp android-app/app/build/outputs/apk/debug/app-debug.apk KashishWorld.apk
           TAG_NAME="latest-apk"
-          RELEASE_TITLE="Kashishhh APK (Build #${{ github.run_number }})"
-          RELEASE_NOTES="Automatic Android APK build from commit ${{ github.sha }}.
+          RELEASE_TITLE="Kashishhh APK v${VERSION_NAME} (Build #${{ github.run_number }})"
+          RELEASE_NOTES="Automatic Android APK build **v${VERSION_NAME}** from commit ${{ github.sha }}.
 
           📱 **Direct 1-Click APK Download:** Neeche **Assets** me se **Kashishhh.apk** par click karke seedha mobile me download aur install karein (Unzip karne ki zaroorat nahi hai)."
 
@@ -127,9 +131,10 @@ jobs:
             gh release create "$TAG_NAME" Kashishhh.apk KashishWorld.apk android-app/app/build/outputs/apk/debug/app-debug.apk --title "$RELEASE_TITLE" --notes "$RELEASE_NOTES" --latest
           fi
 
-          echo "### 📱 Direct Android APK Download (Bina Unzip Kiye)" >> $GITHUB_STEP_SUMMARY
+          echo "### 📱 Direct Android APK Download (Bina Unzip Kiye) — v${VERSION_NAME}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "👉 **[Click Here to Download Kashishhh.apk Directly](https://github.com/${{ github.repository }}/releases/download/latest-apk/Kashishhh.apk)**" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "🔗 Or open the **[GitHub Releases Page](https://github.com/${{ github.repository }}/releases/tag/latest-apk)**" >> $GITHUB_STEP_SUMMARY
+
 

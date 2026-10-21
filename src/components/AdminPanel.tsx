@@ -30,6 +30,7 @@ import {
 } from '../androidBridge';
 import {
   useSite,
+  useSiteOverrides,
   DEFAULT_NAME_MEANINGS,
   DEFAULT_POEMS,
   DEFAULT_SAVED_SOUNDS,
@@ -37,7 +38,9 @@ import {
   Poem,
   PopupButtonAction,
   PopupButtonItem,
+  SavedMusicTrack,
 } from '../siteContent';
+import { CONFIG } from '../config';
 import {
   OVERLAY_THEMES,
   OVERLAY_FONTS,
@@ -237,17 +240,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
   const [newPoemLines, setNewPoemLines] = useState<string>('');
 
   // Section 9: Music Manager State
-  const [musicTracks, setMusicTracks] = useState<{ id: string; name: string; url: string }[]>([
-    {
+  const rawOverrides = useSiteOverrides();
+  const [musicTracks, setMusicTracks] = useState<SavedMusicTrack[]>(() => {
+    const defaultTrack: SavedMusicTrack = {
       id: 'default_saiyaara',
       name: 'Saiyaara Sad BGM (Default)',
-      url: site.musicUrl,
-    },
-  ]);
-  const [selectedMusicUrl, setSelectedMusicUrl] = useState<string>(site.musicUrl);
+      url: CONFIG.musicUrl,
+    };
+    const saved = Array.isArray(site.savedMusicTracks) ? site.savedMusicTracks : [];
+    const filtered = saved.filter((t) => t && t.url && t.url !== CONFIG.musicUrl);
+    return [defaultTrack, ...filtered];
+  });
+  const [selectedMusicUrl, setSelectedMusicUrl] = useState<string>(
+    rawOverrides.musicUrl || site.musicUrl || CONFIG.musicUrl
+  );
   const [musicVol, setMusicVol] = useState<number>(site.musicVolume ?? 0.9);
   const [musicOn, setMusicOn] = useState<boolean>(site.musicEnabled !== false);
   const [uploadingMusic, setUploadingMusic] = useState<boolean>(false);
+  const [musicUploadPct, setMusicUploadPct] = useState<number>(0);
 
   // Section 10: App Control State
   const [featGames, setFeatGames] = useState<boolean>(site.features?.games !== false);
@@ -262,6 +272,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     site.maintenanceMessage || 'Currently updating your special world. Please check back soon.'
   );
   const [forceLockMode, setForceLockMode] = useState<boolean>(!!site.forceLock);
+  const [apkUpdateReq, setApkUpdateReq] = useState<boolean>(!!site.apkUpdateRequired);
+  const [apkAutoPush, setApkAutoPush] = useState<boolean>(site.apkAutoUpdateOnPush !== false);
+  const [apkLatestVer, setApkLatestVer] = useState<string>(site.apkLatestVersion || '3.0.0');
+  const [apkUrlInput, setApkUrlInput] = useState<string>(
+    site.apkDownloadUrl || 'https://kashishji.web.app/Kashishhh.apk'
+  );
+  const [apkTitleInput, setApkTitleInput] = useState<string>(
+    site.apkUpdateTitle || 'New Update Available for Kashishhh 💖'
+  );
+  const [apkNotesInput, setApkNotesInput] = useState<string>(
+    site.apkUpdateNotes ||
+      'A brand new version of your app is ready with new surprises, smoother performance & upgraded icons! Please download & install the update to continue.'
+  );
+  const [apkApplyWeb, setApkApplyWeb] = useState<boolean>(!!site.apkApplyToWeb);
+  const [liveCiApkMeta, setLiveCiApkMeta] = useState<{
+    version?: string;
+    runNumber?: number;
+    apkUrl?: string;
+    githubReleaseApkUrl?: string;
+    releasedAt?: string;
+  } | null>(null);
 
   // Section 11 & Media Manager: Cloudinary Free Storage State
   const [newAdminPassword, setNewAdminPassword] = useState<string>('');
@@ -293,7 +324,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     if (site.nameMeanings?.length) setEditNameMeanings(site.nameMeanings);
     if (site.poems?.length) setEditPoems(site.poems);
     if (site.compliments?.length) setEditCompliments(site.compliments);
-    setSelectedMusicUrl(site.musicUrl);
+    const defaultTrack: SavedMusicTrack = {
+      id: 'default_saiyaara',
+      name: 'Saiyaara Sad BGM (Default)',
+      url: CONFIG.musicUrl,
+    };
+    const saved = Array.isArray(site.savedMusicTracks) ? site.savedMusicTracks : [];
+    const filtered = saved.filter((t) => t && t.url && t.url !== CONFIG.musicUrl);
+    setMusicTracks([defaultTrack, ...filtered]);
+    setSelectedMusicUrl(rawOverrides.musicUrl || site.musicUrl || CONFIG.musicUrl);
     setMusicVol(site.musicVolume ?? 0.9);
     setMusicOn(site.musicEnabled !== false);
     setFeatGames(site.features?.games !== false);
@@ -306,6 +345,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     setMaintMode(!!site.maintenanceMode);
     if (site.maintenanceMessage) setMaintMessage(site.maintenanceMessage);
     setForceLockMode(!!site.forceLock);
+    setApkUpdateReq(!!site.apkUpdateRequired);
+    setApkAutoPush(site.apkAutoUpdateOnPush !== false);
+    setApkLatestVer(site.apkLatestVersion || '3.0.0');
+    setApkUrlInput(site.apkDownloadUrl || 'https://kashishji.web.app/Kashishhh.apk');
+    setApkTitleInput(site.apkUpdateTitle || 'New Update Available for Kashishhh 💖');
+    setApkNotesInput(
+      site.apkUpdateNotes ||
+        'A brand new version of your app is ready with new surprises, smoother performance & upgraded icons! Please download & install the update to continue.'
+    );
+    setApkApplyWeb(!!site.apkApplyToWeb);
+    fetch(`/latest-apk.json?t=${Date.now()}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((meta) => {
+        if (meta && meta.version) {
+          setLiveCiApkMeta(meta);
+        }
+      })
+      .catch(() => {});
     if (site.cloudinaryCloudName) setCloudNameInput(site.cloudinaryCloudName);
     if (site.cloudinaryUploadPreset !== undefined) setUploadPresetInput(site.cloudinaryUploadPreset);
     if (site.cloudinaryApiKey !== undefined) setApiKeyInput(site.cloudinaryApiKey);
@@ -1106,12 +1163,67 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       maintenanceMode: maintMode,
       maintenanceMessage: maintMessage.trim(),
       forceLock: forceLockMode,
+      apkUpdateRequired: apkUpdateReq,
+      apkAutoUpdateOnPush: apkAutoPush,
+      apkLatestVersion: apkLatestVer.trim() || '3.0.0',
+      apkDownloadUrl: apkUrlInput.trim() || 'https://kashishji.web.app/Kashishhh.apk',
+      apkUpdateTitle: apkTitleInput.trim() || 'New Update Available for Kashishhh 💖',
+      apkUpdateNotes: apkNotesInput.trim(),
+      apkApplyToWeb: apkApplyWeb,
       updatedAt: Date.now(),
     };
-    notifyStatus('App Control settings saved and applied live!');
+    notifyStatus('App Control & Mandatory APK Update settings saved live!');
     void setDoc(doc(db, 'settings', 'config'), payload, { merge: true }).catch((err: any) =>
       notifyStatus(`App Control error: ${err.message}`, true)
     );
+  };
+
+  const handleForcePushApkUpdateAndNotify = async () => {
+    const targetVer = apkLatestVer.trim() || liveCiApkMeta?.version || '3.0.0';
+    const targetUrl = apkUrlInput.trim() || liveCiApkMeta?.apkUrl || 'https://kashishji.web.app/Kashishhh.apk';
+    const targetTitle = apkTitleInput.trim() || `New Kashishhh Update (v${targetVer}) 💖`;
+    const targetNotes =
+      apkNotesInput.trim() ||
+      'A new version of Kashishhh is ready! Tap below to download & install the update.';
+
+    setApkUpdateReq(true);
+    setApkLatestVer(targetVer);
+    setApkUrlInput(targetUrl);
+
+    try {
+      await setDoc(
+        doc(db, 'settings', 'config'),
+        {
+          apkUpdateRequired: true,
+          apkAutoUpdateOnPush: apkAutoPush,
+          apkLatestVersion: targetVer,
+          apkDownloadUrl: targetUrl,
+          apkUpdateTitle: targetTitle,
+          apkUpdateNotes: targetNotes,
+          apkApplyToWeb: apkApplyWeb,
+          updatedAt: Date.now(),
+        },
+        { merge: true }
+      );
+
+      await addDoc(collection(db, 'notifications'), {
+        title: targetTitle,
+        message: `${targetNotes} (v${targetVer})`,
+        imageUrl: '',
+        soundUrl: DEFAULT_SAVED_SOUNDS[0].url,
+        buttons: [
+          { label: 'Download Update APK 📲', action: 'open_url', payload: targetUrl },
+        ],
+        createdAt: Date.now(),
+        scheduledFor: null,
+        status: 'sent',
+        seen: false,
+      });
+
+      notifyStatus(`Mandatory APK Update v${targetVer} activated & push alert sent to her phone!`);
+    } catch (err: any) {
+      notifyStatus(`Update push error: ${err.message}`, true);
+    }
   };
 
   // Section 11: Backup JSON & Clear Logs
@@ -3759,17 +3871,39 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
           {/* 9. MUSIC MANAGER */}
           {activeSection === 'music' && (
             <div className="space-y-4">
-              <div className={`border-b ${borderCol} pb-2`}>
-                <h2 className="text-[13px] font-bold uppercase tracking-wider">9. Music Manager</h2>
+              <div className={`border-b ${borderCol} pb-2 flex items-center justify-between`}>
+                <h2 className="text-[13px] font-bold uppercase tracking-wider">
+                  9. Music Manager (Live Sync on Website & Android APK)
+                </h2>
+                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${borderCol}`}>
+                  {musicOn ? '🎵 MUSIC ON' : '🔇 MUSIC OFF'}
+                </span>
               </div>
 
-              <div className={`p-3 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-3`}>
-                <div className="flex items-center justify-between">
+              <div className={`p-3.5 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-3.5`}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <label className="flex items-center gap-2 font-bold cursor-pointer">
                     <input
                       type="checkbox"
                       checked={musicOn}
-                      onChange={(e) => setMusicOn(e.target.checked)}
+                      onChange={async (e) => {
+                        const nextOn = e.target.checked;
+                        setMusicOn(nextOn);
+                        await setDoc(
+                          doc(db, 'settings', 'config'),
+                          {
+                            musicEnabled: nextOn,
+                            musicSessionId: Date.now(),
+                            updatedAt: Date.now(),
+                          },
+                          { merge: true }
+                        ).catch(() => {});
+                        notifyStatus(
+                          nextOn
+                            ? 'Background music enabled live on Website & APK!'
+                            : 'Background music paused/disabled live on Website & APK!'
+                        );
+                      }}
                     />
                     <span>Background Music Enabled ({musicOn ? 'ON' : 'OFF'})</span>
                   </label>
@@ -3792,33 +3926,156 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                 </div>
 
                 <div>
-                  <label className={`block text-[11px] ${textMuted} mb-1`}>Active Background Music URL</label>
+                  <label className={`block text-[11px] ${textMuted} mb-1`}>
+                    Select Preset / Uploaded Track ({musicTracks.length} available)
+                  </label>
+                  <div className="flex gap-2">
+                    <select
+                      value={selectedMusicUrl}
+                      onChange={async (e) => {
+                        const nextUrl = e.target.value;
+                        setSelectedMusicUrl(nextUrl);
+                        await setDoc(
+                          doc(db, 'settings', 'config'),
+                          {
+                            musicUrl: nextUrl,
+                            musicEnabled: true,
+                            musicVolume: musicVol,
+                            savedMusicTracks: musicTracks,
+                            musicSessionId: Date.now(),
+                            updatedAt: Date.now(),
+                          },
+                          { merge: true }
+                        ).catch(() => {});
+                        setMusicOn(true);
+                        notifyStatus('Switched active song live on Website & APK!');
+                      }}
+                      className={inputCls}
+                    >
+                      {musicTracks.map((t) => (
+                        <option key={t.id} value={t.url}>
+                          {t.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => handlePreviewSound(selectedMusicUrl)}
+                      className={btnSecondary}
+                    >
+                      {previewingSoundUrl === selectedMusicUrl ? 'Stop Preview' : '▶ Test Play'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Saved Music Tracks List with 1-Click Activate & Delete */}
+                <div className={`p-2.5 rounded-[12px] border ${borderCol} space-y-1.5`}>
+                  <div className="text-[11px] font-bold">Saved Music Library (Synced in Firestore)</div>
+                  <div className="space-y-1 max-h-48 overflow-y-auto">
+                    {musicTracks.map((t) => {
+                      const isSelected = selectedMusicUrl === t.url;
+                      const isDefault = t.id === 'default_saiyaara' || t.url === CONFIG.musicUrl;
+                      return (
+                        <div
+                          key={t.id}
+                          className={`p-2 rounded-[10px] border ${
+                            isSelected ? 'border-pink-500/60 bg-pink-500/10' : borderCol
+                          } flex items-center justify-between gap-2 text-[11px]`}
+                        >
+                          <div className="truncate font-medium">
+                            {isSelected ? '🎶 ' : '🎵 '}
+                            {t.name}
+                            {isSelected && (
+                              <span className="ml-2 px-1.5 py-0.5 rounded bg-pink-500/20 text-pink-300 text-[10px] font-bold">
+                                ACTIVE ON SITE & APK
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => handlePreviewSound(t.url)}
+                              className={btnSecondary}
+                            >
+                              {previewingSoundUrl === t.url ? 'Stop' : 'Play'}
+                            </button>
+                            {!isSelected && (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  setSelectedMusicUrl(t.url);
+                                  setMusicOn(true);
+                                  await setDoc(
+                                    doc(db, 'settings', 'config'),
+                                    {
+                                      musicUrl: t.url,
+                                      musicEnabled: true,
+                                      musicVolume: musicVol,
+                                      savedMusicTracks: musicTracks,
+                                      musicSessionId: Date.now(),
+                                      updatedAt: Date.now(),
+                                    },
+                                    { merge: true }
+                                  ).catch(() => {});
+                                  notifyStatus(`"${t.name}" is now playing on Website & APK!`);
+                                }}
+                                className={btnPrimary}
+                              >
+                                Use Song
+                              </button>
+                            )}
+                            {!isDefault && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  askConfirm(`Delete song "${t.name}"?`, async () => {
+                                    await deleteFirestoreMediaChunks(t.storagePath || t.url, t.url, 'audio');
+                                    const nextTracks = musicTracks.filter((x) => x.id !== t.id);
+                                    setMusicTracks(nextTracks);
+                                    const nextUrl =
+                                      selectedMusicUrl === t.url ? CONFIG.musicUrl : selectedMusicUrl;
+                                    setSelectedMusicUrl(nextUrl);
+                                    await setDoc(
+                                      doc(db, 'settings', 'config'),
+                                      {
+                                        musicUrl: nextUrl,
+                                        savedMusicTracks: nextTracks,
+                                        musicSessionId: Date.now(),
+                                        updatedAt: Date.now(),
+                                      },
+                                      { merge: true }
+                                    ).catch(() => {});
+                                    notifyStatus(`Deleted "${t.name}".`);
+                                  });
+                                }}
+                                className={btnDanger}
+                              >
+                                Delete
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <label className={`block text-[11px] ${textMuted} mb-1`}>
+                    Active Background Music URL (Or Paste Direct MP3 Link)
+                  </label>
                   <input
                     type="text"
                     value={selectedMusicUrl}
                     onChange={(e) => setSelectedMusicUrl(e.target.value)}
+                    placeholder="https://... or upload an MP3 below"
                     className={inputCls}
                   />
                 </div>
 
                 <div>
-                  <label className={`block text-[11px] ${textMuted} mb-1`}>Select Preset / Uploaded Track</label>
-                  <select
-                    value={selectedMusicUrl}
-                    onChange={(e) => setSelectedMusicUrl(e.target.value)}
-                    className={inputCls}
-                  >
-                    {musicTracks.map((t) => (
-                      <option key={t.id} value={t.url}>
-                        {t.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
                   <label className={`block text-[11px] ${textMuted} mb-1`}>
-                    Upload New Music File (/music in Firebase Storage)
+                    Upload New Music File (MP3 / Audio — Auto-Saves & Activates on Site + APK)
                   </label>
                   <input
                     type="file"
@@ -3828,27 +4085,59 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                       const file = e.target.files?.[0];
                       if (!file) return;
                       setUploadingMusic(true);
+                      setMusicUploadPct(10);
+                      notifyStatus(`Uploading "${file.name}"...`);
                       try {
-                        const res = await uploadFileToFirebaseStorage(file, 'music', file.name);
-                        setMusicTracks((prev) => [
-                          ...prev,
-                          { id: `track_${Date.now()}`, name: file.name, url: res.url },
-                        ]);
+                        const res = await uploadFileToFirebaseStorage(
+                          file,
+                          'music',
+                          file.name,
+                          (pct) => setMusicUploadPct(pct)
+                        );
+                        const newTrack: SavedMusicTrack = {
+                          id: `track_${Date.now()}`,
+                          name: file.name,
+                          url: res.url,
+                          storagePath: res.storagePath,
+                        };
+                        const nextTracks = [...musicTracks, newTrack];
+                        setMusicTracks(nextTracks);
                         setSelectedMusicUrl(res.url);
-                        notifyStatus('Music uploaded and selected.');
+                        setMusicOn(true);
+                        await setDoc(
+                          doc(db, 'settings', 'config'),
+                          {
+                            musicUrl: res.url,
+                            musicVolume: musicVol,
+                            musicEnabled: true,
+                            savedMusicTracks: nextTracks,
+                            musicSessionId: Date.now(),
+                            updatedAt: Date.now(),
+                          },
+                          { merge: true }
+                        );
+                        notifyStatus(
+                          `Uploaded "${file.name}" & activated live on both Website and Android APK!`
+                        );
                       } catch (err: any) {
                         notifyStatus(`Music upload error: ${err.message}`, true);
                       } finally {
                         setUploadingMusic(false);
+                        setMusicUploadPct(0);
                         e.target.value = '';
                       }
                     }}
                     className={inputCls}
                   />
+                  {uploadingMusic && (
+                    <div className="text-[11px] text-pink-400 font-bold mt-1">
+                      Uploading song... {musicUploadPct}%
+                    </div>
+                  )}
                 </div>
 
                 <button onClick={handleSaveMusicSettings} className={btnPrimary}>
-                  Save & Apply Music Settings Live
+                  Save & Apply Music Settings Live (Site + APK)
                 </button>
               </div>
             </div>
@@ -3946,6 +4235,242 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                 <button onClick={handleSaveAppControl} className={btnPrimary}>
                   Save App Control Settings
                 </button>
+              </div>
+
+              {/* Mandatory APK Force Update & GitHub Release Gate */}
+              <div className={`p-3.5 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-3`}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="font-bold text-[12px] flex items-center gap-1.5">
+                      <Download className="w-3.5 h-3.5 text-pink-400" />
+                      <span>Mandatory APK Update Gate (GitHub Release Auto-Sync)</span>
+                    </div>
+                    <p className={`text-[11px] ${textMuted} mt-0.5`}>
+                      Jab bhi aap code push karenge ya yahan se Force Update ON karenge, jab tak Kashish naya APK download & install nahi karegi tab tak app poori tarah lock rahegi (Update Now screen dikhegi).
+                    </p>
+                  </div>
+                  <span
+                    className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${
+                      apkUpdateReq || apkAutoPush
+                        ? 'bg-pink-500/20 text-pink-300 border-pink-500/40'
+                        : `${borderCol} ${textMuted}`
+                    }`}
+                  >
+                    {apkUpdateReq
+                      ? `FORCE UPDATE ON (v${apkLatestVer})`
+                      : apkAutoPush
+                      ? 'AUTO-PUSH SYNC ON'
+                      : 'UPDATE GATE OFF'}
+                  </span>
+                </div>
+
+                {/* Live Phone Version vs Latest Release Status */}
+                <div className={`p-2.5 rounded-[12px] border ${borderCol} grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px]`}>
+                  <div>
+                    <span className={textMuted}>Her Phone Installed APK:</span>{' '}
+                    <b className="text-pink-400">
+                      v{deviceStatusDoc.appVersion || '2.2.0'}
+                    </b>
+                    {deviceStatusDoc.deviceModel ? ` (${deviceStatusDoc.deviceModel})` : ''}
+                  </div>
+                  <div>
+                    <span className={textMuted}>Latest CI / Release Build:</span>{' '}
+                    <b className="text-emerald-400">
+                      v{liveCiApkMeta?.version || apkLatestVer || '3.0.0'}
+                    </b>
+                    {liveCiApkMeta?.runNumber ? ` (Build #${liveCiApkMeta.runNumber})` : ''}
+                  </div>
+                  <div className="flex items-center gap-2 sm:justify-end">
+                    {liveCiApkMeta?.version && liveCiApkMeta.version !== apkLatestVer && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setApkLatestVer(liveCiApkMeta.version || '3.0.0');
+                          if (liveCiApkMeta.githubReleaseApkUrl) {
+                            setApkUrlInput(liveCiApkMeta.githubReleaseApkUrl);
+                          }
+                          notifyStatus(`Synced version v${liveCiApkMeta.version} from latest build!`);
+                        }}
+                        className={btnSecondary}
+                      >
+                        Use Latest Build (v{liveCiApkMeta.version})
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Toggles */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <label className={`p-2.5 rounded-[12px] border ${borderCol} flex items-center justify-between cursor-pointer`}>
+                    <div>
+                      <div className="font-bold text-[11px]">Auto-Require Update on Code Push</div>
+                      <div className={`text-[10px] ${textMuted}`}>
+                        Jab bhi GitHub par naya code push ho aur nayi APK release bane, automatically update maange
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={apkAutoPush}
+                      onChange={(e) => setApkAutoPush(e.target.checked)}
+                    />
+                  </label>
+
+                  <label className={`p-2.5 rounded-[12px] border ${borderCol} flex items-center justify-between cursor-pointer`}>
+                    <div>
+                      <div className="font-bold text-[11px]">Force Mandatory APK Update Now</div>
+                      <div className={`text-[10px] ${textMuted}`}>
+                        Abhi turant uski screen par non-dismissible Update Required lock lagayein
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={apkUpdateReq}
+                      onChange={(e) => setApkUpdateReq(e.target.checked)}
+                    />
+                  </label>
+
+                  <label className={`p-2.5 rounded-[12px] border ${borderCol} flex items-center justify-between cursor-pointer`}>
+                    <div>
+                      <div className="font-bold text-[11px]">Also Show on Web Browser</div>
+                      <div className={`text-[10px] ${textMuted}`}>
+                        Agar wo Chrome/browser me khole tab bhi APK update screen dikhayein
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={apkApplyWeb}
+                      onChange={(e) => setApkApplyWeb(e.target.checked)}
+                    />
+                  </label>
+                </div>
+
+                {/* Version & Direct APK URL Inputs */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div>
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>
+                      Required / Latest APK Version
+                    </label>
+                    <div className="flex gap-1.5">
+                      <input
+                        type="text"
+                        value={apkLatestVer}
+                        onChange={(e) => setApkLatestVer(e.target.value)}
+                        placeholder="e.g. 3.0.15"
+                        className={inputCls}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const parts = (apkLatestVer || '3.0.0')
+                            .replace(/^v/i, '')
+                            .split('.')
+                            .map((n) => parseInt(n, 10) || 0);
+                          while (parts.length < 3) parts.push(0);
+                          parts[2] = parts[2] + 1;
+                          setApkLatestVer(parts.join('.'));
+                        }}
+                        className={btnSecondary}
+                        title="Bump Version +1"
+                      >
+                        +1
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>
+                      Direct 1-Click APK Download URL (Hosted or GitHub Release)
+                    </label>
+                    <input
+                      type="text"
+                      value={apkUrlInput}
+                      onChange={(e) => setApkUrlInput(e.target.value)}
+                      placeholder="https://kashishji.web.app/Kashishhh.apk"
+                      className={inputCls}
+                    />
+                    <div className="flex flex-wrap gap-1.5 mt-1">
+                      <button
+                        type="button"
+                        onClick={() => setApkUrlInput('https://kashishji.web.app/Kashishhh.apk')}
+                        className="text-[10px] px-2 py-0.5 rounded border border-pink-500/30 text-pink-300 hover:bg-pink-500/10"
+                      >
+                        Use Direct Firebase Hosted APK (kashishji.web.app/Kashishhh.apk)
+                      </button>
+                      {liveCiApkMeta?.githubReleaseApkUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setApkUrlInput(liveCiApkMeta.githubReleaseApkUrl!)}
+                          className="text-[10px] px-2 py-0.5 rounded border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/10"
+                        >
+                          Use GitHub Release Direct APK
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Custom Title & Release Notes */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div>
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>
+                      Update Screen Heading
+                    </label>
+                    <input
+                      type="text"
+                      value={apkTitleInput}
+                      onChange={(e) => setApkTitleInput(e.target.value)}
+                      placeholder="New Update Available for Kashishhh 💖"
+                      className={inputCls}
+                    />
+                  </div>
+                  <div>
+                    <label className={`block text-[11px] ${textMuted} mb-1`}>
+                      What's New / Update Message
+                    </label>
+                    <input
+                      type="text"
+                      value={apkNotesInput}
+                      onChange={(e) => setApkNotesInput(e.target.value)}
+                      placeholder="Please download & install the latest update to continue..."
+                      className={inputCls}
+                    />
+                  </div>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleSaveAppControl}
+                    className={btnPrimary}
+                  >
+                    Save APK Update Settings
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleForcePushApkUpdateAndNotify}
+                    className="px-3 py-1.5 rounded-[10px] text-[12px] font-bold bg-gradient-to-r from-pink-600 to-rose-500 text-white shadow cursor-pointer hover:opacity-95"
+                  >
+                    🚀 Activate Mandatory Update & Send Push Alert Now
+                  </button>
+                  {apkUpdateReq && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setApkUpdateReq(false);
+                        await setDoc(
+                          doc(db, 'settings', 'config'),
+                          { apkUpdateRequired: false, updatedAt: Date.now() },
+                          { merge: true }
+                        );
+                        notifyStatus('Mandatory APK Update turned OFF.');
+                      }}
+                      className={btnDanger}
+                    >
+                      Turn Off Force Update
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           )}

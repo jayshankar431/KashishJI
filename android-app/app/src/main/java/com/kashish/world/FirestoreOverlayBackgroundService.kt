@@ -61,9 +61,6 @@ class FirestoreOverlayBackgroundService : Service() {
         @Volatile
         private var sharedScheduler: ScheduledExecutorService? = null
 
-        @Volatile
-        private var keepAlivePixelView: View? = null
-
         private val mainHandler = Handler(Looper.getMainLooper())
 
         fun clearLegacyPermanentNotification(context: Context) {
@@ -80,14 +77,11 @@ class FirestoreOverlayBackgroundService : Service() {
             val appCtx = context.applicationContext
             clearLegacyPermanentNotification(appCtx)
             ensureWatcherRunning(appCtx)
-            attachSilentKeepAlivePixel(appCtx)
             scheduleSilentHeartbeatAlarm(appCtx)
             try {
                 val intent = Intent(appCtx, FirestoreOverlayBackgroundService::class.java)
                 appCtx.startService(intent)
             } catch (e: Exception) {
-                // Even if startService is restricted while app is in background,
-                // ensureWatcherRunning(appCtx) + silent keep-alive pixel + heartbeat alarm are already active!
                 Log.d(TAG, "Background watcher active via process singleton: ${e.message}")
             }
         }
@@ -114,51 +108,6 @@ class FirestoreOverlayBackgroundService : Service() {
                 4L,
                 TimeUnit.SECONDS
             )
-        }
-
-        /**
-         * Attaches a 1x1 pixel, 0% alpha, untouchable, non-focusable overlay view to WindowManager.
-         * Because SYSTEM_ALERT_WINDOW is granted, Android OS treats the process as having a visible window token
-         * and never kills it in the background — without showing any status bar notification!
-         */
-        fun attachSilentKeepAlivePixel(context: Context) {
-            val appCtx = context.applicationContext
-            mainHandler.post {
-                try {
-                    if (keepAlivePixelView != null) return@post
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(appCtx)) {
-                        return@post
-                    }
-                    val wm = appCtx.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: return@post
-                    val pixel = View(appCtx).apply {
-                        setBackgroundColor(Color.TRANSPARENT)
-                        alpha = 0f
-                    }
-                    val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                    } else {
-                        @Suppress("DEPRECATION")
-                        WindowManager.LayoutParams.TYPE_PHONE
-                    }
-                    val params = WindowManager.LayoutParams(
-                        1,
-                        1,
-                        type,
-                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                        PixelFormat.TRANSLUCENT
-                    ).apply {
-                        gravity = Gravity.TOP or Gravity.START
-                        x = 0
-                        y = 0
-                        alpha = 0f
-                    }
-                    wm.addView(pixel, params)
-                    keepAlivePixelView = pixel
-                } catch (_: Exception) {}
-            }
         }
 
         fun scheduleSilentHeartbeatAlarm(context: Context) {

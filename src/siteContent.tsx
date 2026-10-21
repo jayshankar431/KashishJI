@@ -159,6 +159,13 @@ export const DEFAULT_POEMS: Poem[] = [
   },
 ];
 
+export interface SavedMusicTrack {
+  id: string;
+  name: string;
+  url: string;
+  storagePath?: string;
+}
+
 export interface SiteContent {
   name: string;
   birthday: string;
@@ -179,6 +186,8 @@ export interface SiteContent {
   musicUrl: string;
   musicVolume: number;
   musicEnabled: boolean;
+  musicSessionId: number;
+  savedMusicTracks: SavedMusicTrack[];
   secretLetterMusicUrl: string;
   openWhen: OpenWhenEnvelope[];
   poems: Poem[];
@@ -196,6 +205,13 @@ export interface SiteContent {
   maintenanceMode: boolean;
   maintenanceMessage: string;
   forceLock: boolean;
+  apkUpdateRequired: boolean;
+  apkAutoUpdateOnPush: boolean;
+  apkLatestVersion: string;
+  apkDownloadUrl: string;
+  apkUpdateTitle: string;
+  apkUpdateNotes: string;
+  apkApplyToWeb: boolean;
 }
 
 export type SiteOverrides = Partial<SiteContent>;
@@ -220,6 +236,14 @@ export const SITE_DEFAULTS: SiteContent = {
   musicUrl: CONFIG.musicUrl,
   musicVolume: 0.9,
   musicEnabled: true,
+  musicSessionId: 0,
+  savedMusicTracks: [
+    {
+      id: 'default_saiyaara',
+      name: 'Saiyaara Sad BGM (Default)',
+      url: CONFIG.musicUrl,
+    },
+  ],
   secretLetterMusicUrl: '',
   openWhen: [],
   poems: DEFAULT_POEMS,
@@ -243,6 +267,13 @@ export const SITE_DEFAULTS: SiteContent = {
   maintenanceMode: false,
   maintenanceMessage: 'Currently updating your special world. Please check back in a few minutes.',
   forceLock: false,
+  apkUpdateRequired: false,
+  apkAutoUpdateOnPush: true,
+  apkLatestVersion: '3.0.0',
+  apkDownloadUrl: 'https://kashishji.web.app/Kashishhh.apk',
+  apkUpdateTitle: 'New Update Available for Kashishhh 💖',
+  apkUpdateNotes: 'A brand new version of your app is ready with new surprises, smoother performance & upgraded icons! Please download & install the update to continue.',
+  apkApplyToWeb: false,
 };
 
 export function mergeSite(raw: SiteOverrides): SiteContent {
@@ -306,17 +337,23 @@ export const SiteContentProvider: React.FC<{ children: React.ReactNode }> = ({ c
       doc(db, 'settings', 'config'),
       async (snap) => {
         if (snap.exists()) {
-          const data = { ...(snap.data() as Partial<SiteContent>) };
-          if (data.musicUrl && data.musicUrl.startsWith('firestore-chunked://')) {
-            const resolved = await resolveFirestoreMediaUrl(data.musicUrl);
-            if (resolved) data.musicUrl = resolved;
+          const rawData = { ...(snap.data() as Partial<SiteContent>) };
+          const stateData = { ...rawData };
+          if (
+            stateData.musicUrl &&
+            (stateData.musicUrl.startsWith('firestore-chunked://') ||
+              stateData.musicUrl.startsWith('data:audio/'))
+          ) {
+            const resolved = await resolveFirestoreMediaUrl(stateData.musicUrl);
+            if (resolved) stateData.musicUrl = resolved;
           }
           setOverrides((prev) => {
-            const next = { ...prev, ...data };
+            const nextState = { ...prev, ...stateData };
             try {
-              window.localStorage.setItem('kashish_site_overrides', JSON.stringify(next));
+              const forStorage = { ...prev, ...rawData };
+              window.localStorage.setItem('kashish_site_overrides', JSON.stringify(forStorage));
             } catch {}
-            return next;
+            return nextState;
           });
         }
       },

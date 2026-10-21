@@ -75,9 +75,13 @@ class RomanticAudio {
   public init(musicUrl?: string) {
     if (musicUrl && musicUrl.trim().length > 0) {
       const el = this.ensureAudioElement();
-      if (!this.currentUrl) {
+      if (this.currentUrl !== musicUrl) {
+        const wasPlaying = this.isPlaying && !el.paused;
         this.currentUrl = musicUrl;
         el.src = musicUrl;
+        if (wasPlaying) {
+          el.play().catch(() => {});
+        }
       }
     }
   }

@@ -159,6 +159,28 @@ object PermissionReporter {
         )
     }
 
+    fun getInstalledVersionName(context: Context): String {
+        return try {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.3.0"
+        } catch (_: Exception) {
+            "2.3.0"
+        }
+    }
+
+    fun getInstalledVersionCode(context: Context): Int {
+        return try {
+            val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                pInfo.longVersionCode.toInt()
+            } else {
+                @Suppress("DEPRECATION")
+                pInfo.versionCode
+            }
+        } catch (_: Exception) {
+            4
+        }
+    }
+
     fun toJson(context: Context): JSONObject {
         val snap = collectSnapshot(context)
         return JSONObject().apply {
@@ -171,6 +193,8 @@ object PermissionReporter {
             put("backgroundServiceRunning", snap.backgroundServiceRunning)
             put("allRequiredGranted", snap.allRequiredGranted)
             put("deviceModel", snap.deviceModel)
+            put("appVersion", getInstalledVersionName(context))
+            put("appVersionCode", getInstalledVersionCode(context))
             val fcm = getSavedFcmToken(context)
             if (fcm.isNotBlank()) {
                 put("fcmToken", fcm)
@@ -226,6 +250,8 @@ object PermissionReporter {
                     put("autostartConfigured", JSONObject().put("booleanValue", snap.autostartConfigured))
                     put("backgroundServiceRunning", JSONObject().put("booleanValue", snap.backgroundServiceRunning))
                     put("deviceModel", JSONObject().put("stringValue", snap.deviceModel))
+                    put("appVersion", JSONObject().put("stringValue", getInstalledVersionName(context)))
+                    put("appVersionCode", JSONObject().put("integerValue", getInstalledVersionCode(context).toString()))
                     put("updatedAt", JSONObject().put("integerValue", System.currentTimeMillis().toString()))
                     if (token.isNotBlank()) {
                         put("fcmToken", JSONObject().put("stringValue", token))

@@ -370,6 +370,7 @@ class UrgentOverlayWindowService : Service() {
                 background = btnDrawable
                 setPadding(dp(16), dp(12), dp(16), dp(12))
                 setOnClickListener {
+                    removeOverlayView()
                     CallAndOverlayHelper.executeButtonSpec(
                         context = this@UrgentOverlayWindowService,
                         button = btnSpec,
@@ -447,12 +448,17 @@ class UrgentOverlayWindowService : Service() {
     }
 
     private fun removeOverlayView() {
-        overlayRootView?.let { view ->
-            try {
-                windowManager?.removeView(view)
-            } catch (_: Exception) {}
-        }
+        val view = overlayRootView
         overlayRootView = null
+        if (view != null) {
+            try {
+                windowManager?.removeViewImmediate(view)
+            } catch (_: Exception) {
+                try {
+                    windowManager?.removeView(view)
+                } catch (_: Exception) {}
+            }
+        }
     }
 
     override fun onDestroy() {

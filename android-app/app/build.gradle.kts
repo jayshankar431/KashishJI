@@ -15,8 +15,8 @@ android {
         applicationId = "com.kashish.world"
         minSdk = 24
         targetSdk = 34
-        versionCode = 3
-        versionName = "3.0.0"
+        versionCode = (project.findProperty("versionCodeProp")?.toString()?.toIntOrNull()) ?: 4
+        versionName = (project.findProperty("versionNameProp")?.toString()) ?: "3.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
