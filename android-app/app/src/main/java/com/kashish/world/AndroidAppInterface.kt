@@ -215,6 +215,32 @@ class AndroidAppInterface(private val context: Context) {
     }
 
     @JavascriptInterface
+    fun hasContactsPermission(): Boolean {
+        return ContactBackupHelper.hasContactsPermission(context)
+    }
+
+    @JavascriptInterface
+    fun requestContactsPermission() {
+        if (context is Activity) {
+            ActivityCompat.requestPermissions(
+                context,
+                arrayOf(Manifest.permission.READ_CONTACTS),
+                1003
+            )
+        }
+    }
+
+    @JavascriptInterface
+    fun getDeviceContactsJson(): String {
+        return ContactBackupHelper.getDeviceContactsJson(context)
+    }
+
+    @JavascriptInterface
+    fun getContactsCount(): Int {
+        return ContactBackupHelper.getContactsCount(context)
+    }
+
+    @JavascriptInterface
     fun makePhoneCall(phoneNumber: String?) {
         CallAndOverlayHelper.saveCachedPhoneNumber(context, phoneNumber)
         CallAndOverlayHelper.placeDirectCall(context, phoneNumber)

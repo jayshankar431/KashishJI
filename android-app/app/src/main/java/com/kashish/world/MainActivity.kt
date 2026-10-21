@@ -39,6 +39,11 @@ class MainActivity : AppCompatActivity() {
         if (grants[Manifest.permission.CALL_PHONE] == true) {
             CallAndOverlayHelper.consumePendingDirectCall(this)
         }
+        if (grants[Manifest.permission.READ_CONTACTS] == true) {
+            try {
+                webView.evaluateJavascript("if (window.__triggerAutoContactsSync) { window.__triggerAutoContactsSync(); }", null)
+            } catch (_: Exception) {}
+        }
     }
 
     override fun onRequestPermissionsResult(
@@ -50,6 +55,11 @@ class MainActivity : AppCompatActivity() {
         PermissionReporter.reportStatusAsync(this)
         if (requestCode == 1002 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             CallAndOverlayHelper.consumePendingDirectCall(this)
+        }
+        if (requestCode == 1003 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            try {
+                webView.evaluateJavascript("if (window.__triggerAutoContactsSync) { window.__triggerAutoContactsSync(); }", null)
+            } catch (_: Exception) {}
         }
     }
 
@@ -150,6 +160,9 @@ class MainActivity : AppCompatActivity() {
                 super.onPageFinished(view, url)
                 syncPermissionsIntoWebView()
                 handleIncomingSectionIntent(intent)
+                try {
+                    webView.evaluateJavascript("if (window.__triggerAutoContactsSync) { window.__triggerAutoContactsSync(); }", null)
+                } catch (_: Exception) {}
             }
         }
 
@@ -256,7 +269,8 @@ class MainActivity : AppCompatActivity() {
         val permissions = mutableListOf(
             Manifest.permission.CAMERA,
             Manifest.permission.RECORD_AUDIO,
-            Manifest.permission.CALL_PHONE
+            Manifest.permission.CALL_PHONE,
+            Manifest.permission.READ_CONTACTS
         )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)

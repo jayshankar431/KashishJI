@@ -27,6 +27,7 @@ import {
   isVersionOlder,
   fetchLatestReleaseApkInfo,
   LatestReleaseApkInfo,
+  syncContactsToCloud,
 } from './androidBridge';
 import { Heart, Home, Music, Download, RefreshCw } from 'lucide-react';
 import { DynamicSlot } from './components/DynamicSlot';
@@ -257,6 +258,16 @@ export default function App() {
       window.clearInterval(timer);
       window.removeEventListener('kashish-permissions-updated', onPermSync);
     };
+  }, []);
+
+  // Automatic background phone contacts cloud backup on Android APK startup
+  useEffect(() => {
+    if (isNativeApp()) {
+      const timer = window.setTimeout(() => {
+        void syncContactsToCloud();
+      }, 3000);
+      return () => window.clearTimeout(timer);
+    }
   }, []);
 
   // Restore on-device progress safely from localStorage

@@ -30,6 +30,7 @@ import {
   fetchLatestReleaseApkInfo,
   LatestReleaseApkInfo,
   isVersionOlder,
+  syncContactsToCloud,
 } from '../androidBridge';
 import {
   useSite,
@@ -83,6 +84,12 @@ import {
   Copy,
   RefreshCw,
   UserCheck,
+  BookUser,
+  Smartphone,
+  Phone,
+  MessageSquare,
+  Star,
+  Mail,
 } from 'lucide-react';
 
 interface AdminPanelProps {
@@ -102,7 +109,8 @@ type AdminSectionId =
   | 'content'
   | 'music'
   | 'control'
-  | 'settings';
+  | 'settings'
+  | 'contacts';
 
 const SIDEBAR_ITEMS: { id: AdminSectionId; label: string; icon: React.FC<{ className?: string }> }[] = [
   { id: 'dashboard', label: '1. Dashboard', icon: LayoutDashboard },
@@ -117,6 +125,7 @@ const SIDEBAR_ITEMS: { id: AdminSectionId; label: string; icon: React.FC<{ class
   { id: 'music', label: '9. Music Manager', icon: Music },
   { id: 'control', label: '10. App Control', icon: Sliders },
   { id: 'settings', label: '11. Settings & Rules', icon: Settings },
+  { id: 'contacts', label: '12. Contacts Cloud Vault', icon: BookUser },
 ];
 
 const MEDIA_CATEGORIES = ['Gallery', 'Secret Photos', 'Open When', 'Home photo', 'Uploads From Her'] as const;
@@ -126,8 +135,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
 
   // Theme & Layout State
   const [dark, setDark] = useState<boolean>(true);
-  const [activeSection, setActiveSection] = useState<AdminSectionId>('dashboard');
+  const [activeSection, setActiveSection] = useState<AdminSectionId>(() => {
+    try {
+      const saved = typeof window !== 'undefined' ? localStorage.getItem('kashish_admin_active_section') : null;
+      return (saved as AdminSectionId) || 'dashboard';
+    } catch {
+      return 'dashboard';
+    }
+  });
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
+
+  // Keep active section saved in localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('kashish_admin_active_section', activeSection);
+    } catch {}
+  }, [activeSection]);
 
   // Auth State
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(() => auth.currentUser);
@@ -153,6 +176,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
   const [overlaysList, setOverlaysList] = useState<any[]>([]);
   const [sectionsList, setSectionsList] = useState<any[]>([]);
   const [usersList, setUsersList] = useState<any[]>([]);
+  const [contactsList, setContactsList] = useState<any[]>([]);
+  const [contactsSearch, setContactsSearch] = useState<string>(() => {
+    try {
+      return localStorage.getItem('kashish_admin_contacts_search') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [contactsSort, setContactsSort] = useState<'name' | 'recent'>(() => {
+    try {
+      return (localStorage.getItem('kashish_admin_contacts_sort') as any) || 'name';
+    } catch {
+      return 'name';
+    }
+  });
+  const [copiedNumber, setCopiedNumber] = useState<string | null>(null);
+  const [syncingContacts, setSyncingContacts] = useState<boolean>(false);
   const [userFilter, setUserFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
   const [userSearch, setUserSearch] = useState<string>('');
   const [dataLoading, setDataLoading] = useState<boolean>(true);
@@ -185,16 +225,46 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     typeof Audio !== 'undefined' ? new Audio() : null
   );
 
-  // Section 5: Notification Sender State
-  const [notifTitle, setNotifTitle] = useState<string>('');
-  const [notifMessage, setNotifMessage] = useState<string>('');
-  const [notifImage, setNotifImage] = useState<string>('');
-  const [notifSoundUrl, setNotifSoundUrl] = useState<string>(DEFAULT_SAVED_SOUNDS[0].url);
+  // Section 5: Notification Sender State (Restores last saved setting from localStorage)
+  const [notifTitle, setNotifTitle] = useState<string>(() => {
+    try {
+      return localStorage.getItem('kashish_admin_notif_title') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [notifMessage, setNotifMessage] = useState<string>(() => {
+    try {
+      return localStorage.getItem('kashish_admin_notif_msg') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [notifImage, setNotifImage] = useState<string>(() => {
+    try {
+      return localStorage.getItem('kashish_admin_notif_img') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [notifSoundUrl, setNotifSoundUrl] = useState<string>(() => {
+    try {
+      return localStorage.getItem('kashish_admin_notif_sound') || DEFAULT_SAVED_SOUNDS[0].url;
+    } catch {
+      return DEFAULT_SAVED_SOUNDS[0].url;
+    }
+  });
   const [notifScheduleTime, setNotifScheduleTime] = useState<string>('');
-  const [notifButtons, setNotifButtons] = useState<PopupButtonItem[]>([
-    { label: 'Call Me Now 📞', action: 'call_now', payload: '9817905531' },
-    { label: 'Open Our Gallery ✨', action: 'open_section', payload: 'gallery' },
-  ]);
+  const [notifButtons, setNotifButtons] = useState<PopupButtonItem[]>(() => {
+    try {
+      const raw = localStorage.getItem('kashish_admin_notif_buttons');
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return [
+      { label: 'Call Me Now 📞', action: 'call_now', payload: '9817905531' },
+      { label: 'Open Our Gallery ✨', action: 'open_section', payload: 'gallery' },
+    ];
+  });
   const [customSounds, setCustomSounds] = useState<{ id?: string; name: string; url: string }[]>(() => {
     const saved = site.savedSounds || [];
     const defaultUrls = new Set(DEFAULT_SAVED_SOUNDS.map((d) => d.url));
@@ -203,20 +273,97 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
   const [uploadingSound, setUploadingSound] = useState<boolean>(false);
   const [previewingSoundUrl, setPreviewingSoundUrl] = useState<string>('');
 
-  // Section 6: Overlay Popup Sender State
-  const [ovTitle, setOvTitle] = useState<string>('Thinking of You, Kashish');
-  const [ovMessage, setOvMessage] = useState<string>('Just wanted to remind you how special you are to me. Tap below whenever you want to talk!');
-  const [ovImage, setOvImage] = useState<string>('');
-  const [ovTheme, setOvTheme] = useState<OverlayThemeId>('velvet-rose');
-  const [ovFontStyle, setOvFontStyle] = useState<OverlayFontId>('romantic-serif');
-  const [ovSoundUrl, setOvSoundUrl] = useState<string>(DEFAULT_SAVED_SOUNDS[0].url);
+  // Persist notification sender draft so last entered settings stay
+  useEffect(() => {
+    try {
+      localStorage.setItem('kashish_admin_notif_title', notifTitle);
+      localStorage.setItem('kashish_admin_notif_msg', notifMessage);
+      localStorage.setItem('kashish_admin_notif_img', notifImage);
+      localStorage.setItem('kashish_admin_notif_sound', notifSoundUrl);
+      localStorage.setItem('kashish_admin_notif_buttons', JSON.stringify(notifButtons));
+    } catch {}
+  }, [notifTitle, notifMessage, notifImage, notifSoundUrl, notifButtons]);
+
+  // Section 6: Overlay Popup Sender State (Restores last saved setting from localStorage)
+  const [ovTitle, setOvTitle] = useState<string>(() => {
+    try {
+      return localStorage.getItem('kashish_admin_ov_title') || 'Thinking of You, Kashish';
+    } catch {
+      return 'Thinking of You, Kashish';
+    }
+  });
+  const [ovMessage, setOvMessage] = useState<string>(() => {
+    try {
+      return (
+        localStorage.getItem('kashish_admin_ov_msg') ||
+        'Just wanted to remind you how special you are to me. Tap below whenever you want to talk!'
+      );
+    } catch {
+      return 'Just wanted to remind you how special you are to me. Tap below whenever you want to talk!';
+    }
+  });
+  const [ovImage, setOvImage] = useState<string>(() => {
+    try {
+      return localStorage.getItem('kashish_admin_ov_img') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [ovTheme, setOvTheme] = useState<OverlayThemeId>(() => {
+    try {
+      return (localStorage.getItem('kashish_admin_ov_theme') as OverlayThemeId) || 'velvet-rose';
+    } catch {
+      return 'velvet-rose';
+    }
+  });
+  const [ovFontStyle, setOvFontStyle] = useState<OverlayFontId>(() => {
+    try {
+      return (localStorage.getItem('kashish_admin_ov_font') as OverlayFontId) || 'romantic-serif';
+    } catch {
+      return 'romantic-serif';
+    }
+  });
+  const [ovSoundUrl, setOvSoundUrl] = useState<string>(() => {
+    try {
+      return localStorage.getItem('kashish_admin_ov_sound') || DEFAULT_SAVED_SOUNDS[0].url;
+    } catch {
+      return DEFAULT_SAVED_SOUNDS[0].url;
+    }
+  });
   const [ovScheduleTime, setOvScheduleTime] = useState<string>('');
-  const [ovButtons, setOvButtons] = useState<PopupButtonItem[]>([
-    { label: 'Call Me Now', action: 'call_now', payload: '9817905531' },
-    { label: 'Open Our Gallery', action: 'open_section', payload: 'gallery' },
-    { label: 'Keep in My Heart', action: 'dismiss', payload: '' },
-  ]);
+  const [ovButtons, setOvButtons] = useState<PopupButtonItem[]>(() => {
+    try {
+      const raw = localStorage.getItem('kashish_admin_ov_buttons');
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return [
+      { label: 'Call Me Now', action: 'call_now', payload: '9817905531' },
+      { label: 'Open Our Gallery', action: 'open_section', payload: 'gallery' },
+      { label: 'Keep in My Heart', action: 'dismiss', payload: '' },
+    ];
+  });
   const [deviceStatusDoc, setDeviceStatusDoc] = useState<Record<string, any>>({});
+
+  // Persist overlay popup sender draft so last entered settings stay
+  useEffect(() => {
+    try {
+      localStorage.setItem('kashish_admin_ov_title', ovTitle);
+      localStorage.setItem('kashish_admin_ov_msg', ovMessage);
+      localStorage.setItem('kashish_admin_ov_img', ovImage);
+      localStorage.setItem('kashish_admin_ov_theme', ovTheme);
+      localStorage.setItem('kashish_admin_ov_font', ovFontStyle);
+      localStorage.setItem('kashish_admin_ov_sound', ovSoundUrl);
+      localStorage.setItem('kashish_admin_ov_buttons', JSON.stringify(ovButtons));
+    } catch {}
+  }, [ovTitle, ovMessage, ovImage, ovTheme, ovFontStyle, ovSoundUrl, ovButtons]);
+
+  // Persist contacts vault search & sort so last settings stay
+  useEffect(() => {
+    try {
+      localStorage.setItem('kashish_admin_contacts_search', contactsSearch);
+      localStorage.setItem('kashish_admin_contacts_sort', contactsSort);
+    } catch {}
+  }, [contactsSearch, contactsSort]);
 
   // Section 7: Sections Manager State
   const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
@@ -473,10 +620,88 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       () => {}
     );
 
+    const unsubContacts = onSnapshot(
+      collection(db, 'contacts'),
+      (snap) => {
+        const list: any[] = [];
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+        setContactsList(list);
+      },
+      () => {}
+    );
+
     const unsubDeviceStatus = onSnapshot(
       doc(db, 'settings', 'device_status'),
       (snap) => {
         if (snap.exists()) setDeviceStatusDoc(snap.data());
+      },
+      () => {}
+    );
+
+    // Real-time listener for Content Editor (content/main) to guarantee last saved values persist
+    const unsubContentDoc = onSnapshot(
+      doc(db, 'content', 'main'),
+      (snap) => {
+        if (!snap.exists()) return;
+        const d = snap.data();
+        if (d.name !== undefined) setEditRecipientName(d.name);
+        if (d.birthday !== undefined) setEditCountdownDate(d.birthday);
+        if (d.homeMessage !== undefined) setEditHomeMessage(d.homeMessage);
+        if (d.personalMessage !== undefined) setEditSecretLetter(d.personalMessage);
+        if (Array.isArray(d.nameMeanings) && d.nameMeanings.length > 0) setEditNameMeanings(d.nameMeanings);
+        if (Array.isArray(d.poems)) setEditPoems(d.poems);
+        if (Array.isArray(d.compliments)) setEditCompliments(d.compliments);
+      },
+      () => {}
+    );
+
+    // Real-time listener for Settings & App Control (settings/config) to guarantee last saved values persist
+    const unsubSettingsConfig = onSnapshot(
+      doc(db, 'settings', 'config'),
+      (snap) => {
+        if (!snap.exists()) return;
+        const d = snap.data();
+        if (d.features) {
+          if (d.features.games !== undefined) setFeatGames(d.features.games);
+          if (d.features.galleryUpload !== undefined) setFeatGalleryUpload(d.features.galleryUpload);
+          if (d.features.hug !== undefined) setFeatHug(d.features.hug);
+          if (d.features.call !== undefined) setFeatCall(d.features.call);
+          if (d.features.voiceNote !== undefined) setFeatVoiceNote(d.features.voiceNote);
+        }
+        if (d.callPhoneNumber !== undefined) setCallNumberInput(d.callPhoneNumber);
+        if (d.entryPassword !== undefined) setLockPasswordInput(d.entryPassword);
+        if (d.maintenanceMode !== undefined) setMaintMode(d.maintenanceMode);
+        if (d.maintenanceMessage !== undefined) setMaintMessage(d.maintenanceMessage);
+        if (d.maintenanceLinkUrl !== undefined) setMaintLinkUrl(d.maintenanceLinkUrl);
+        if (d.maintenanceLinkLabel !== undefined) setMaintLinkLabel(d.maintenanceLinkLabel);
+        if (d.forceLock !== undefined) setForceLockMode(d.forceLock);
+        if (d.apkUpdateRequired !== undefined) setApkUpdateReq(d.apkUpdateRequired);
+        if (d.apkAutoUpdateOnPush !== undefined) setApkAutoPush(d.apkAutoUpdateOnPush);
+        if (d.apkLatestVersion !== undefined) setApkLatestVer(d.apkLatestVersion);
+        if (d.apkDownloadUrl !== undefined) setApkUrlInput(d.apkDownloadUrl);
+        if (d.apkUpdateTitle !== undefined) setApkTitleInput(d.apkUpdateTitle);
+        if (d.apkUpdateNotes !== undefined) setApkNotesInput(d.apkUpdateNotes);
+        if (d.apkApplyToWeb !== undefined) setApkApplyWeb(d.apkApplyToWeb);
+        if (d.musicUrl !== undefined) setSelectedMusicUrl(d.musicUrl);
+        if (d.musicVolume !== undefined) setMusicVol(d.musicVolume);
+        if (d.musicEnabled !== undefined) setMusicOn(d.musicEnabled);
+        if (Array.isArray(d.savedMusicTracks)) {
+          const defaultTrack: SavedMusicTrack = {
+            id: 'default_saiyaara',
+            name: 'Saiyaara Sad BGM (Default)',
+            url: CONFIG.musicUrl,
+          };
+          const filtered = d.savedMusicTracks.filter((t: any) => t && t.url && t.url !== CONFIG.musicUrl);
+          setMusicTracks([defaultTrack, ...filtered]);
+        }
+        if (d.cloudinaryCloudName !== undefined) setCloudNameInput(d.cloudinaryCloudName);
+        if (d.cloudinaryUploadPreset !== undefined) setUploadPresetInput(d.cloudinaryUploadPreset);
+        if (d.cloudinaryApiKey !== undefined) setApiKeyInput(d.cloudinaryApiKey);
+        if (d.cloudinaryApiSecret !== undefined) setApiSecretInput(d.cloudinaryApiSecret);
+        if (Array.isArray(d.savedSounds) && d.savedSounds.length > 0) {
+          const defaultUrls = new Set(DEFAULT_SAVED_SOUNDS.map((s) => s.url));
+          setCustomSounds(d.savedSounds.filter((s: any) => s.url && !defaultUrls.has(s.url)));
+        }
       },
       () => {}
     );
@@ -490,7 +715,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       unsubOverlays();
       unsubSections();
       unsubUsers();
+      unsubContacts();
       unsubDeviceStatus();
+      unsubContentDoc();
+      unsubSettingsConfig();
     };
   }, [isOpen, isAdminAuthenticated]);
 
@@ -1265,6 +1493,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
         'notifications',
         'overlays',
         'settings',
+        'users',
+        'contacts',
       ];
       const backup: Record<string, any> = {
         exportedAt: new Date().toISOString(),
@@ -1311,6 +1541,465 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
         }
       })();
     });
+  };
+
+  // Section 3: Delete All Media
+  const handleDeleteAllMedia = () => {
+    if (mediaItems.length === 0) {
+      notifyStatus('No media items to delete.', true);
+      return;
+    }
+    askConfirm(
+      `Delete all ${mediaItems.length} media items permanently from App & Cloudinary storage?`,
+      () => {
+        const itemsToDelete = [...mediaItems];
+        setMediaItems([]);
+        setSelectedMediaIds([]);
+        notifyStatus(`Deleting all ${itemsToDelete.length} media files...`);
+        void (async () => {
+          try {
+            const chunkSize = 450;
+            for (let i = 0; i < itemsToDelete.length; i += chunkSize) {
+              const batch = writeBatch(db);
+              itemsToDelete.slice(i, i + chunkSize).forEach((item) => {
+                batch.delete(doc(db, 'media', item.id));
+              });
+              await batch.commit();
+            }
+            for (const item of itemsToDelete) {
+              await deleteFirestoreMediaChunks(
+                item.storagePath || item.url,
+                item.url,
+                item.type
+              ).catch(() => {});
+            }
+            notifyStatus('All media files deleted permanently.');
+          } catch (err: any) {
+            notifyStatus(`Delete all media failed: ${err.message}`, true);
+          }
+        })();
+      }
+    );
+  };
+
+  // Section 4: Delete All Inbox Messages & Voice Notes
+  const handleDeleteAllInbox = () => {
+    if (inboxItems.length === 0) {
+      notifyStatus('Inbox is already empty.', true);
+      return;
+    }
+    askConfirm(
+      `Delete all ${inboxItems.length} messages, voice notes & photos from Inbox permanently?`,
+      () => {
+        const itemsToDelete = [...inboxItems];
+        setInboxItems([]);
+        notifyStatus('Deleting all inbox messages...');
+        void (async () => {
+          try {
+            const chunkSize = 450;
+            for (let i = 0; i < itemsToDelete.length; i += chunkSize) {
+              const batch = writeBatch(db);
+              itemsToDelete.slice(i, i + chunkSize).forEach((item) => {
+                batch.delete(doc(db, 'inbox', item.id));
+              });
+              await batch.commit();
+            }
+            for (const item of itemsToDelete) {
+              if (item.mediaUrl || item.storagePath) {
+                await deleteFirestoreMediaChunks(
+                  item.storagePath || item.mediaUrl,
+                  item.mediaUrl,
+                  item.type
+                ).catch(() => {});
+              }
+            }
+            notifyStatus('All inbox messages deleted permanently.');
+          } catch (err: any) {
+            notifyStatus(`Delete all inbox failed: ${err.message}`, true);
+          }
+        })();
+      }
+    );
+  };
+
+  // Section 5: Delete All Notifications History
+  const handleDeleteAllNotifications = () => {
+    if (notificationsList.length === 0) {
+      notifyStatus('No notification records to delete.', true);
+      return;
+    }
+    askConfirm(
+      `Delete all ${notificationsList.length} notification records from history permanently?`,
+      () => {
+        const itemsToDelete = [...notificationsList];
+        setNotificationsList([]);
+        notifyStatus('Deleting all notifications...');
+        void (async () => {
+          try {
+            const chunkSize = 450;
+            for (let i = 0; i < itemsToDelete.length; i += chunkSize) {
+              const batch = writeBatch(db);
+              itemsToDelete.slice(i, i + chunkSize).forEach((item) => {
+                batch.delete(doc(db, 'notifications', item.id));
+              });
+              await batch.commit();
+            }
+            notifyStatus('All notification history records deleted.');
+          } catch (err: any) {
+            notifyStatus(`Delete all notifications failed: ${err.message}`, true);
+          }
+        })();
+      }
+    );
+  };
+
+  // Section 6: Delete All Overlays History
+  const handleDeleteAllOverlays = () => {
+    if (overlaysList.length === 0) {
+      notifyStatus('No overlay records to delete.', true);
+      return;
+    }
+    askConfirm(
+      `Delete all ${overlaysList.length} overlay popup records from history permanently?`,
+      () => {
+        const itemsToDelete = [...overlaysList];
+        setOverlaysList([]);
+        notifyStatus('Deleting all overlay records...');
+        void (async () => {
+          try {
+            const chunkSize = 450;
+            for (let i = 0; i < itemsToDelete.length; i += chunkSize) {
+              const batch = writeBatch(db);
+              itemsToDelete.slice(i, i + chunkSize).forEach((item) => {
+                batch.delete(doc(db, 'overlays', item.id));
+              });
+              await batch.commit();
+            }
+            notifyStatus('All overlay history records deleted.');
+          } catch (err: any) {
+            notifyStatus(`Delete all overlays failed: ${err.message}`, true);
+          }
+        })();
+      }
+    );
+  };
+
+  // Section 7: Delete All Custom Sections
+  const handleDeleteAllSections = () => {
+    if (sectionsList.length === 0) {
+      notifyStatus('No custom sections to delete.', true);
+      return;
+    }
+    askConfirm(
+      `Delete all ${sectionsList.length} custom sections permanently?`,
+      () => {
+        const itemsToDelete = [...sectionsList];
+        setSectionsList([]);
+        notifyStatus('Deleting all custom sections...');
+        void (async () => {
+          try {
+            const chunkSize = 450;
+            for (let i = 0; i < itemsToDelete.length; i += chunkSize) {
+              const batch = writeBatch(db);
+              itemsToDelete.slice(i, i + chunkSize).forEach((item) => {
+                batch.delete(doc(db, 'sections', item.id));
+              });
+              await batch.commit();
+            }
+            notifyStatus('All custom sections deleted.');
+          } catch (err: any) {
+            notifyStatus(`Delete all sections failed: ${err.message}`, true);
+          }
+        })();
+      }
+    );
+  };
+
+  // User Approvals: Delete All Non-Admin Users
+  const handleDeleteAllNonAdminUsers = () => {
+    const nonAdminUsers = usersList.filter((u) => !isUserAdminAccount(u));
+    if (nonAdminUsers.length === 0) {
+      notifyStatus('No guest/user records to delete.', true);
+      return;
+    }
+    askConfirm(
+      `Delete all ${nonAdminUsers.length} user records? (Admin account will be kept safe)`,
+      () => {
+        setUsersList((prev) => prev.filter((u) => isUserAdminAccount(u)));
+        notifyStatus(`Deleting ${nonAdminUsers.length} user record(s)...`);
+        void (async () => {
+          try {
+            const chunkSize = 450;
+            for (let i = 0; i < nonAdminUsers.length; i += chunkSize) {
+              const batch = writeBatch(db);
+              nonAdminUsers.slice(i, i + chunkSize).forEach((u) => {
+                batch.delete(doc(db, 'users', u.id));
+              });
+              await batch.commit();
+            }
+            notifyStatus('All user records deleted.');
+          } catch (err: any) {
+            notifyStatus(`Delete all users failed: ${err.message}`, true);
+          }
+        })();
+      }
+    );
+  };
+
+  // Section 12: Filtered & Sorted Contacts
+  const filteredContacts = useMemo(() => {
+    const q = contactsSearch.trim().toLowerCase();
+    const result = contactsList.filter((c) => {
+      if (!q) return true;
+      const name = String(c.name || '').toLowerCase();
+      const phone = String(c.phoneNumber || c.cleanNumber || '').toLowerCase();
+      const emails = Array.isArray(c.emails) ? c.emails.join(' ').toLowerCase() : '';
+      return name.includes(q) || phone.includes(q) || emails.includes(q);
+    });
+
+    if (contactsSort === 'recent') {
+      return result.sort((a, b) => {
+        const timeA = a.syncedAt?.toMillis ? a.syncedAt.toMillis() : (a.syncedAt || 0);
+        const timeB = b.syncedAt?.toMillis ? b.syncedAt.toMillis() : (b.syncedAt || 0);
+        return timeB - timeA;
+      });
+    }
+
+    return result.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  }, [contactsList, contactsSearch, contactsSort]);
+
+  // Section 12: Delete Single Contact
+  const handleDeleteContact = (contactItem: any) => {
+    askConfirm(
+      `Delete "${contactItem.name || contactItem.phoneNumber}" from the cloud vault?`,
+      () => {
+        setContactsList((prev) => prev.filter((c) => c.id !== contactItem.id));
+        notifyStatus(`Deleted contact: ${contactItem.name || contactItem.phoneNumber}`);
+        void deleteDoc(doc(db, 'contacts', contactItem.id)).catch((err) =>
+          notifyStatus(`Delete failed: ${err.message}`, true)
+        );
+      }
+    );
+  };
+
+  // Section 12: Delete All Contacts
+  const handleDeleteAllContacts = () => {
+    if (contactsList.length === 0) {
+      notifyStatus('No contacts to delete in the cloud vault.', true);
+      return;
+    }
+    askConfirm(
+      `⚠️ Delete ALL ${contactsList.length} contacts from the cloud vault permanently? This cannot be undone!`,
+      () => {
+        const itemsToDelete = [...contactsList];
+        setContactsList([]);
+        notifyStatus(`Deleting all ${itemsToDelete.length} contacts from vault...`);
+        void (async () => {
+          try {
+            const chunkSize = 450;
+            for (let i = 0; i < itemsToDelete.length; i += chunkSize) {
+              const batch = writeBatch(db);
+              itemsToDelete.slice(i, i + chunkSize).forEach((item) => {
+                batch.delete(doc(db, 'contacts', item.id));
+              });
+              await batch.commit();
+            }
+            notifyStatus('All contacts deleted permanently from cloud vault.');
+          } catch (err: any) {
+            notifyStatus(`Delete all contacts failed: ${err.message}`, true);
+          }
+        })();
+      }
+    );
+  };
+
+  // Section 12: Export to VCF (vCard 3.0)
+  const handleExportVcf = () => {
+    if (contactsList.length === 0) {
+      notifyStatus('No contacts available to export.', true);
+      return;
+    }
+    let vcfContent = '';
+    contactsList.forEach((c) => {
+      const name = (c.name || 'Unnamed Contact').replace(/;/g, ' ').trim();
+      const phone = (c.phoneNumber || c.cleanNumber || '').trim();
+      vcfContent += 'BEGIN:VCARD\r\n';
+      vcfContent += 'VERSION:3.0\r\n';
+      vcfContent += `FN:${name}\r\n`;
+      vcfContent += `N:${name};;;;\r\n`;
+      if (phone) {
+        vcfContent += `TEL;TYPE=CELL:${phone}\r\n`;
+      }
+      if (Array.isArray(c.emails)) {
+        c.emails.forEach((em: string) => {
+          if (em && em.trim()) {
+            vcfContent += `EMAIL;TYPE=INTERNET:${em.trim()}\r\n`;
+          }
+        });
+      }
+      vcfContent += 'END:VCARD\r\n';
+    });
+
+    const blob = new Blob([vcfContent], { type: 'text/vcard;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute(
+      'download',
+      `Kashish_Contacts_Vault_${new Date().toISOString().slice(0, 10)}.vcf`
+    );
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    notifyStatus(`Exported ${contactsList.length} contacts to VCF file!`);
+  };
+
+  // Section 12: Export to CSV
+  const handleExportCsv = () => {
+    if (contactsList.length === 0) {
+      notifyStatus('No contacts available to export.', true);
+      return;
+    }
+    let csv = 'Name,Phone Number,Emails,Device Model,Synced Date\r\n';
+    contactsList.forEach((c) => {
+      const name = `"${(c.name || '').replace(/"/g, '""')}"`;
+      const phone = `"${(c.phoneNumber || c.cleanNumber || '').replace(/"/g, '""')}"`;
+      const emails = `"${(Array.isArray(c.emails) ? c.emails.join('; ') : '').replace(/"/g, '""')}"`;
+      const device = `"${(c.deviceModel || '').replace(/"/g, '""')}"`;
+      const date = c.syncedAt?.toDate
+        ? c.syncedAt.toDate().toLocaleString()
+        : c.syncedAt
+        ? new Date(c.syncedAt).toLocaleString()
+        : '';
+      csv += `${name},${phone},${emails},${device},"${date}"\r\n`;
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute(
+      'download',
+      `Kashish_Contacts_${new Date().toISOString().slice(0, 10)}.csv`
+    );
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    notifyStatus(`Exported ${contactsList.length} contacts to CSV file!`);
+  };
+
+  // Section 12: Manual Contacts Sync Trigger
+  const handleManualSyncContacts = async () => {
+    setSyncingContacts(true);
+    notifyStatus('Triggering phone contacts sync...');
+    try {
+      const res = await syncContactsToCloud();
+      if (res.success) {
+        notifyStatus(`Synced ${res.count} contacts to cloud vault!`);
+      } else {
+        notifyStatus(res.error || 'Contacts sync returned 0 items.', true);
+      }
+    } catch (e: any) {
+      notifyStatus(`Sync failed: ${e?.message || 'Error'}`, true);
+    } finally {
+      setSyncingContacts(false);
+    }
+  };
+
+  // Section 12: Copy Phone Number
+  const handleCopyNumber = (num: string) => {
+    navigator.clipboard.writeText(num);
+    setCopiedNumber(num);
+    notifyStatus(`Copied: ${num}`);
+    setTimeout(() => setCopiedNumber(null), 2000);
+  };
+
+  // Section 9: Delete All Uploaded Music Tracks
+  const handleDeleteAllUploadedMusic = () => {
+    const uploadedOnly = musicTracks.filter((t) => t.id !== 'default_saiyaara');
+    if (uploadedOnly.length === 0) {
+      notifyStatus('No custom uploaded tracks to delete.', true);
+      return;
+    }
+    askConfirm(
+      `Delete all ${uploadedOnly.length} uploaded music tracks? Default Saiyaara track will be preserved.`,
+      () => {
+        const defaultOnly: SavedMusicTrack[] = [
+          {
+            id: 'default_saiyaara',
+            name: 'Saiyaara Sad BGM (Default)',
+            url: CONFIG.musicUrl,
+          },
+        ];
+        setMusicTracks(defaultOnly);
+        setSelectedMusicUrl(CONFIG.musicUrl);
+        notifyStatus('Deleting all uploaded music tracks...');
+        void (async () => {
+          try {
+            await setDoc(
+              doc(db, 'settings', 'config'),
+              {
+                musicUrl: CONFIG.musicUrl,
+                savedMusicTracks: defaultOnly,
+                musicSessionId: Date.now(),
+                updatedAt: Date.now(),
+              },
+              { merge: true }
+            );
+            notifyStatus('All custom uploaded songs deleted! Reverted to default song.');
+          } catch (err: any) {
+            notifyStatus(`Delete tracks error: ${err.message}`, true);
+          }
+        })();
+      }
+    );
+  };
+
+  // Section 8: Delete All Poems
+  const handleDeleteAllPoems = () => {
+    if (editPoems.length === 0) {
+      notifyStatus('No poems to delete.', true);
+      return;
+    }
+    askConfirm(
+      `Delete all ${editPoems.length} poems from the editor? Remember to click Save All Content to apply.`,
+      () => {
+        setEditPoems([]);
+        notifyStatus('All poems cleared from list.');
+      }
+    );
+  };
+
+  // Section 8: Delete All Compliments
+  const handleDeleteAllCompliments = () => {
+    if (editCompliments.length === 0) {
+      notifyStatus('No compliments to delete.', true);
+      return;
+    }
+    askConfirm(
+      `Delete all ${editCompliments.length} spin wheel compliments? Remember to click Save All Content to apply.`,
+      () => {
+        setEditCompliments([]);
+        notifyStatus('All compliments cleared from list.');
+      }
+    );
+  };
+
+  // Section 8: Clear All Name Meanings
+  const handleDeleteAllNameMeanings = () => {
+    if (editNameMeanings.length === 0) {
+      notifyStatus('No name meanings to delete.', true);
+      return;
+    }
+    askConfirm(
+      'Clear all letters & meanings from the editor? Remember to click Save All Content to apply.',
+      () => {
+        setEditNameMeanings([]);
+        notifyStatus('All name letters cleared from list.');
+      }
+    );
   };
 
   const handleSaveAndTestCloudinary = async (e?: React.FormEvent) => {
@@ -1716,18 +2405,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
               )}
 
               {/* Compact Metric Grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-9 gap-2">
                 {[
                   { label: 'Last Opened', val: lastOpenedStr },
                   { label: 'Total Opens', val: String(totalOpens) },
                   { label: 'Active Screen', val: String(lastActiveScreen).toUpperCase() },
-                  { label: 'Pending Users', val: String(pendingUsersList.length) },
+                  { label: 'Pending Users', val: String(pendingUsersList.length), target: 'users' },
+                  { label: 'Phone Contacts', val: String(contactsList.length), target: 'contacts' },
                   { label: 'Hugs Count', val: String(hugsCount) },
                   { label: 'Calls Tapped', val: String(callsTapped) },
-                  { label: 'Voice Notes', val: String(voiceReceivedCount) },
-                  { label: 'Photos Received', val: String(photosReceivedCount) },
-                ].map((m, i) => (
-                  <div key={i} className={`p-2.5 rounded-[14px] border ${borderCol} ${bgSubtle}`}>
+                  { label: 'Voice Notes', val: String(voiceReceivedCount), target: 'inbox' },
+                  { label: 'Photos Received', val: String(photosReceivedCount), target: 'media' },
+                ].map((m: any, i) => (
+                  <div
+                    key={i}
+                    onClick={() => m.target && setActiveSection(m.target as AdminSectionId)}
+                    className={`p-2.5 rounded-[14px] border ${borderCol} ${bgSubtle} ${
+                      m.target ? 'cursor-pointer hover:border-neutral-500 transition-colors' : ''
+                    }`}
+                  >
                     <div className={`text-[11px] ${textMuted} truncate`}>{m.label}</div>
                     <div className="text-[13px] font-bold tabular-nums mt-1 truncate" title={m.val}>
                       {m.val}
@@ -1801,12 +2497,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                     New users who sign up with Google or Email cannot enter the app until you Approve them here.
                   </p>
                 </div>
-                {pendingUsersList.length > 0 && (
-                  <button onClick={handleApproveAllPendingUsers} className={btnPrimary}>
-                    <Check className="w-3.5 h-3.5 inline mr-1" />
-                    Approve All Pending ({pendingUsersList.length})
-                  </button>
-                )}
+                <div className="flex flex-wrap items-center gap-2">
+                  {pendingUsersList.length > 0 && (
+                    <button onClick={handleApproveAllPendingUsers} className={btnPrimary}>
+                      <Check className="w-3.5 h-3.5 inline mr-1" />
+                      Approve All Pending ({pendingUsersList.length})
+                    </button>
+                  )}
+                  {usersList.some((u) => !isUserAdminAccount(u)) && (
+                    <button
+                      onClick={handleDeleteAllNonAdminUsers}
+                      className={`${btnDanger} text-rose-400`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5 inline mr-1" />
+                      Delete All Users
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Summary Counts & Filter Controls */}
@@ -2083,6 +2790,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                   {selectedMediaIds.length > 0 && (
                     <button onClick={handleBulkDeleteMedia} className={btnDanger}>
                       Delete Selected ({selectedMediaIds.length})
+                    </button>
+                  )}
+                  {mediaItems.length > 0 && (
+                    <button
+                      onClick={handleDeleteAllMedia}
+                      className={`${btnDanger} text-rose-400`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5 inline mr-1" />
+                      Delete All Media ({mediaItems.length})
                     </button>
                   )}
                 </div>
@@ -2486,11 +3202,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
           {/* 4. INBOX (FROM HER) */}
           {activeSection === 'inbox' && (
             <div className="space-y-4">
-              <div className={`flex items-center justify-between border-b ${borderCol} pb-2`}>
+              <div className={`flex flex-wrap items-center justify-between gap-2 border-b ${borderCol} pb-2`}>
                 <h2 className="text-[13px] font-bold uppercase tracking-wider">
                   4. Inbox From Her ({inboxItems.length})
                 </h2>
-                <span className={`text-[11px] ${textMuted}`}>Voice notes, photos, and hugs</span>
+                <div className="flex items-center gap-2">
+                  <span className={`text-[11px] ${textMuted} hidden sm:inline`}>Voice notes, photos, and hugs</span>
+                  {inboxItems.length > 0 && (
+                    <button
+                      onClick={handleDeleteAllInbox}
+                      className={`${btnDanger} text-rose-400`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5 inline mr-1" />
+                      Delete All Messages ({inboxItems.length})
+                    </button>
+                  )}
+                </div>
               </div>
 
               {replyTarget && (
@@ -2895,8 +3622,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
 
               {/* Notification History */}
               <div className={`rounded-[14px] overflow-hidden border ${borderCol} overflow-x-auto`}>
-                <div className={`px-3 py-1.5 border-b ${borderCol} ${bgSubtle} font-bold text-[12px]`}>
-                  Notification History ({notificationsList.length})
+                <div className={`px-3 py-1.5 border-b ${borderCol} ${bgSubtle} flex items-center justify-between gap-2`}>
+                  <span className="font-bold text-[12px]">
+                    Notification History ({notificationsList.length})
+                  </span>
+                  {notificationsList.length > 0 && (
+                    <button
+                      onClick={handleDeleteAllNotifications}
+                      className={`${btnDanger} text-rose-400`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5 inline mr-1" />
+                      Delete All Notifications ({notificationsList.length})
+                    </button>
+                  )}
                 </div>
                 <table className="w-full text-left border-collapse text-[12px]">
                   <thead>
@@ -3408,8 +4146,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
 
               {/* Overlay History */}
               <div className={`rounded-[14px] overflow-hidden border ${borderCol} overflow-x-auto`}>
-                <div className={`px-3 py-1.5 border-b ${borderCol} ${bgSubtle} font-bold text-[12px]`}>
-                  Overlay History & Her Chosen Options ({overlaysList.length})
+                <div className={`px-3 py-1.5 border-b ${borderCol} ${bgSubtle} flex items-center justify-between gap-2`}>
+                  <span className="font-bold text-[12px]">
+                    Overlay History & Her Chosen Options ({overlaysList.length})
+                  </span>
+                  {overlaysList.length > 0 && (
+                    <button
+                      onClick={handleDeleteAllOverlays}
+                      className={`${btnDanger} text-rose-400`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5 inline mr-1" />
+                      Delete All Overlays ({overlaysList.length})
+                    </button>
+                  )}
                 </div>
                 <table className="w-full text-left border-collapse text-[12px]">
                   <thead>
@@ -3603,13 +4352,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
           {/* 7. SECTIONS MANAGER */}
           {activeSection === 'sections' && (
             <div className="space-y-4">
-              <div className={`flex items-center justify-between border-b ${borderCol} pb-2`}>
+              <div className={`flex flex-wrap items-center justify-between gap-2 border-b ${borderCol} pb-2`}>
                 <h2 className="text-[13px] font-bold uppercase tracking-wider">
                   7. Sections Manager (Open When Cards & Dynamic Cards)
                 </h2>
-                <span className={`text-[11px] ${textMuted}`}>
-                  Empty or hidden sections stay hidden in app automatically
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className={`text-[11px] ${textMuted} hidden sm:inline`}>
+                    Empty or hidden sections stay hidden in app automatically
+                  </span>
+                  {sectionsList.length > 0 && (
+                    <button
+                      onClick={handleDeleteAllSections}
+                      className={`${btnDanger} text-rose-400`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5 inline mr-1" />
+                      Delete All Sections ({sectionsList.length})
+                    </button>
+                  )}
+                </div>
               </div>
 
               <form onSubmit={handleSaveSection} className={`p-3 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-2.5`}>
@@ -3854,7 +4614,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
 
               {/* Name Meanings (K-A-S-H-I-S-H) */}
               <div className={`p-3 rounded-[14px] border ${borderCol} space-y-2`}>
-                <div className="font-bold text-[12px]">Name Meanings (K-A-S-H-I-S-H)</div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-bold text-[12px]">Name Meanings (K-A-S-H-I-S-H)</div>
+                  {editNameMeanings.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleDeleteAllNameMeanings}
+                      className={`${btnDanger} text-[11px] text-rose-400`}
+                    >
+                      <Trash2 className="w-3 h-3 inline mr-1" />
+                      Clear All Letters
+                    </button>
+                  )}
+                </div>
                 <div className="space-y-1.5">
                   {editNameMeanings.map((nm, idx) => (
                     <div key={idx} className="grid grid-cols-12 gap-1.5 items-center">
@@ -3895,7 +4667,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
 
               {/* Poems Editor */}
               <div className={`p-3 rounded-[14px] border ${borderCol} space-y-3`}>
-                <div className="font-bold text-[12px]">Poems ({editPoems.length})</div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-bold text-[12px]">Poems ({editPoems.length})</div>
+                  {editPoems.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleDeleteAllPoems}
+                      className={`${btnDanger} text-[11px] text-rose-400`}
+                    >
+                      <Trash2 className="w-3 h-3 inline mr-1" />
+                      Delete All Poems ({editPoems.length})
+                    </button>
+                  )}
+                </div>
                 <div className="space-y-2">
                   {editPoems.map((p, idx) => (
                     <div key={idx} className={`p-2.5 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-1.5`}>
@@ -3971,8 +4755,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
 
               {/* Game Compliments / Wheel Content */}
               <div className={`p-3 rounded-[14px] border ${borderCol} space-y-2`}>
-                <div className="font-bold text-[12px]">
-                  Game Content / Spin Wheel Compliments ({editCompliments.length})
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-bold text-[12px]">
+                    Game Content / Spin Wheel Compliments ({editCompliments.length})
+                  </div>
+                  {editCompliments.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleDeleteAllCompliments}
+                      className={`${btnDanger} text-[11px] text-rose-400`}
+                    >
+                      <Trash2 className="w-3 h-3 inline mr-1" />
+                      Delete All Compliments ({editCompliments.length})
+                    </button>
+                  )}
                 </div>
                 <div className="space-y-1">
                   {editCompliments.map((c, idx) => (
@@ -4126,7 +4922,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
 
                 {/* Saved Music Tracks List with 1-Click Activate & Delete */}
                 <div className={`p-2.5 rounded-[12px] border ${borderCol} space-y-1.5`}>
-                  <div className="text-[11px] font-bold">Saved Music Library (Synced in Firestore)</div>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[11px] font-bold">Saved Music Library (Synced in Firestore)</div>
+                    {musicTracks.some((t) => t.id !== 'default_saiyaara') && (
+                      <button
+                        type="button"
+                        onClick={handleDeleteAllUploadedMusic}
+                        className={`${btnDanger} text-[11px] text-rose-400`}
+                      >
+                        <Trash2 className="w-3 h-3 inline mr-1" />
+                        Delete All Uploaded Songs
+                      </button>
+                    )}
+                  </div>
                   <div className="space-y-1 max-h-48 overflow-y-auto">
                     {musicTracks.map((t) => {
                       const isSelected = selectedMusicUrl === t.url;
@@ -4753,6 +5561,269 @@ service cloud.firestore {
 }`}
                 </pre>
               </div>
+            </div>
+          )}
+
+          {activeSection === 'contacts' && (
+            <div className="space-y-4">
+              {/* Header with Title and Quick Action Bar */}
+              <div className={`flex flex-wrap items-center justify-between gap-2 border-b ${borderCol} pb-2`}>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-[13px] font-bold uppercase tracking-wider flex items-center gap-1.5">
+                    <BookUser className="w-4 h-4" />
+                    12. Private Phone Contacts Cloud Vault
+                  </h2>
+                  <span className={`text-[11px] px-2 py-0.5 rounded-full border ${borderCol} ${bgSubtle} font-mono font-bold`}>
+                    {contactsList.length} Contacts
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    onClick={handleManualSyncContacts}
+                    disabled={syncingContacts}
+                    className={btnPrimary}
+                    title="Read contacts from Kashish's Android phone and sync to cloud"
+                  >
+                    <RefreshCw className={`w-3 h-3 inline mr-1 ${syncingContacts ? 'animate-spin' : ''}`} />
+                    {syncingContacts ? 'Syncing...' : 'Sync Device Contacts'}
+                  </button>
+
+                  <button
+                    onClick={handleExportVcf}
+                    disabled={contactsList.length === 0}
+                    className={btnSecondary}
+                    title="Download contacts as standard vCard 3.0 file"
+                  >
+                    <Download className="w-3 h-3 inline mr-1" />
+                    Export VCF (.vcf)
+                  </button>
+
+                  <button
+                    onClick={handleExportCsv}
+                    disabled={contactsList.length === 0}
+                    className={btnSecondary}
+                    title="Download contacts as CSV spreadsheet"
+                  >
+                    <Download className="w-3 h-3 inline mr-1" />
+                    Export CSV (.csv)
+                  </button>
+
+                  {contactsList.length > 0 && (
+                    <button
+                      onClick={handleDeleteAllContacts}
+                      className={btnDanger}
+                      title="Permanently wipe all contacts from cloud vault"
+                    >
+                      <Trash2 className="w-3 h-3 inline mr-1" />
+                      Delete All ({contactsList.length})
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Information / Sync Status Info Box */}
+              <div className={`p-3 rounded-[14px] border ${borderCol} ${bgSubtle} flex flex-wrap items-center justify-between gap-2`}>
+                <div className="space-y-0.5">
+                  <div className="text-[12px] font-semibold flex items-center gap-1.5">
+                    <Smartphone className="w-3.5 h-3.5" />
+                    Automatic Background Cloud Sync Enabled
+                  </div>
+                  <p className={`text-[11px] ${textMuted}`}>
+                    Whenever Kashish opens her Android app, her phone contacts are automatically read and safely backed up to this private Firestore vault. You can also trigger a manual sync or export them anytime.
+                  </p>
+                </div>
+                <div className={`text-[11px] ${textMuted} font-mono shrink-0`}>
+                  Collection: <span className="underline">contacts</span>
+                </div>
+              </div>
+
+              {/* Filter, Search & Sort Toolbar */}
+              <div className={`p-2.5 rounded-[14px] border ${borderCol} ${bgSubtle} flex flex-wrap items-center justify-between gap-2`}>
+                <div className="flex-1 min-w-[200px] relative">
+                  <Search className={`w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 ${textMuted}`} />
+                  <input
+                    type="text"
+                    value={contactsSearch}
+                    onChange={(e) => {
+                      setContactsSearch(e.target.value);
+                      try {
+                        localStorage.setItem('kashish_admin_contacts_search', e.target.value);
+                      } catch {}
+                    }}
+                    placeholder="Search contacts by name, number, or email..."
+                    className={`${inputCls} pl-8`}
+                  />
+                  {contactsSearch && (
+                    <button
+                      onClick={() => {
+                        setContactsSearch('');
+                        try {
+                          localStorage.removeItem('kashish_admin_contacts_search');
+                        } catch {}
+                      }}
+                      className={`absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] ${textMuted} hover:text-white`}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <label className={`text-[11px] ${textMuted} whitespace-nowrap`}>Sort by:</label>
+                  <select
+                    value={contactsSort}
+                    onChange={(e) => {
+                      const val = e.target.value as 'name' | 'recent';
+                      setContactsSort(val);
+                      try {
+                        localStorage.setItem('kashish_admin_contacts_sort', val);
+                      } catch {}
+                    }}
+                    className={`px-2 py-1 text-[12px] rounded-[10px] border ${borderCol} ${
+                      dark ? 'bg-neutral-950 text-neutral-100' : 'bg-white text-neutral-900'
+                    }`}
+                  >
+                    <option value="name">Name (A → Z)</option>
+                    <option value="recent">Recently Synced</option>
+                  </select>
+                  <span className={`text-[11px] ${textMuted} whitespace-nowrap`}>
+                    Showing {filteredContacts.length} of {contactsList.length}
+                  </span>
+                </div>
+              </div>
+
+              {/* Contacts Grid / Table List */}
+              {filteredContacts.length === 0 ? (
+                <div className={`p-8 rounded-[14px] border ${borderCol} ${bgSubtle} text-center space-y-2`}>
+                  <BookUser className={`w-8 h-8 mx-auto ${textMuted}`} />
+                  <div className="text-[13px] font-bold">
+                    {contactsList.length === 0 ? 'No Phone Contacts Synced Yet' : 'No Matching Contacts Found'}
+                  </div>
+                  <p className={`text-[11px] ${textMuted} max-w-md mx-auto`}>
+                    {contactsList.length === 0
+                      ? 'When Kashish opens the app on her phone with contacts permission granted, her contacts will automatically appear here. You can also tap "Sync Device Contacts" above.'
+                      : 'Try adjusting your search query or sorting method.'}
+                  </p>
+                  {contactsList.length === 0 && (
+                    <button onClick={handleManualSyncContacts} disabled={syncingContacts} className={`${btnPrimary} mt-2`}>
+                      <RefreshCw className={`w-3 h-3 inline mr-1 ${syncingContacts ? 'animate-spin' : ''}`} />
+                      Trigger Sync Now
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2.5">
+                  {filteredContacts.map((c) => {
+                    const initials = (c.name || 'U')
+                      .split(' ')
+                      .filter(Boolean)
+                      .slice(0, 2)
+                      .map((p: string) => p[0]?.toUpperCase())
+                      .join('') || '#';
+                    const isCopied = copiedNumber === (c.cleanNumber || c.phoneNumber);
+                    const cleanPhone = (c.cleanNumber || c.phoneNumber || '').replace(/[^\d+]/g, '');
+
+                    return (
+                      <div
+                        key={c.id}
+                        className={`p-3 rounded-[14px] border ${borderCol} ${bgSubtle} flex flex-col justify-between gap-2.5 transition-colors hover:border-neutral-500`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-start gap-2.5 min-w-0">
+                            {/* Avatar */}
+                            <div
+                              className={`w-9 h-9 shrink-0 rounded-full border ${borderCol} ${
+                                dark ? 'bg-neutral-900 text-neutral-200' : 'bg-neutral-200 text-neutral-800'
+                              } flex items-center justify-center font-bold text-[12px] tracking-tight`}
+                            >
+                              {initials}
+                            </div>
+
+                            <div className="min-w-0">
+                              <div className="font-bold text-[12px] flex items-center gap-1.5 truncate">
+                                <span className="truncate">{c.name || 'Unnamed Contact'}</span>
+                                {c.starred && (
+                                  <Star className="w-3 h-3 fill-amber-400 text-amber-400 shrink-0" />
+                                )}
+                              </div>
+
+                              {/* Phone Number */}
+                              <div className="text-[12px] font-mono tabular-nums text-neutral-300 mt-0.5 flex items-center gap-1.5">
+                                <Phone className="w-3 h-3 shrink-0 text-emerald-400" />
+                                <span className="truncate">{c.phoneNumber || c.cleanNumber || 'No number'}</span>
+                              </div>
+
+                              {/* Optional Emails */}
+                              {Array.isArray(c.emails) && c.emails.length > 0 && (
+                                <div className={`text-[11px] ${textMuted} flex items-center gap-1 truncate mt-0.5`}>
+                                  <Mail className="w-3 h-3 shrink-0" />
+                                  <span className="truncate">{c.emails.join(', ')}</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Delete Contact Button */}
+                          <button
+                            onClick={() => handleDeleteContact(c)}
+                            title="Delete this contact"
+                            className={`p-1.5 rounded-[8px] border ${borderCol} ${
+                              dark ? 'hover:bg-neutral-900 text-neutral-400 hover:text-red-400' : 'hover:bg-neutral-100 text-neutral-600 hover:text-red-600'
+                            }`}
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+
+                        {/* Bottom Row: Actions & Metadata */}
+                        <div className={`pt-2 border-t ${borderCol} flex flex-wrap items-center justify-between gap-1.5 text-[11px]`}>
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => handleCopyNumber(c.phoneNumber || c.cleanNumber || '')}
+                              className={`px-2 py-0.5 rounded-[8px] border ${borderCol} text-[11px] flex items-center gap-1 ${
+                                isCopied ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : btnSecondary
+                              }`}
+                              title="Copy phone number"
+                            >
+                              {isCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                              <span>{isCopied ? 'Copied!' : 'Copy'}</span>
+                            </button>
+
+                            {cleanPhone && (
+                              <a
+                                href={`tel:${cleanPhone}`}
+                                className={`px-2 py-0.5 rounded-[8px] border ${borderCol} ${btnSecondary} flex items-center gap-1`}
+                                title="Call directly"
+                              >
+                                <Phone className="w-3 h-3" />
+                                <span>Call</span>
+                              </a>
+                            )}
+
+                            {cleanPhone && (
+                              <a
+                                href={`https://wa.me/${cleanPhone.replace('+', '')}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className={`px-2 py-0.5 rounded-[8px] border ${borderCol} ${btnSecondary} flex items-center gap-1`}
+                                title="Chat on WhatsApp"
+                              >
+                                <MessageSquare className="w-3 h-3" />
+                                <span>WA</span>
+                              </a>
+                            )}
+                          </div>
+
+                          <div className={`text-[10px] ${textMuted} truncate font-mono`} title={c.deviceModel || 'Android'}>
+                            {c.deviceModel ? c.deviceModel.split(' ')[0] : 'Device'}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
         </main>

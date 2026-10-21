@@ -8,6 +8,8 @@ import {
   query,
   where,
   deleteDoc,
+  writeBatch,
+  serverTimestamp,
 } from 'firebase/firestore';
 import { auth, db, ADMIN_EMAIL } from './firebase';
 
@@ -46,6 +48,10 @@ export interface AndroidAppBridge {
   showSystemOverlay?: (overlayJson: string) => void;
   setAuthToken?: (token: string) => void;
   getPermissionStatusJson?: () => string;
+  hasContactsPermission?: () => boolean;
+  requestContactsPermission?: () => void;
+  getDeviceContactsJson?: () => string;
+  getContactsCount?: () => number;
 }
 
 declare global {
@@ -53,6 +59,7 @@ declare global {
     AndroidApp?: AndroidAppBridge;
     isNativeApp?: boolean;
     __KASHISH_PERMISSIONS__?: any;
+    __triggerAutoContactsSync?: () => void;
   }
 }
 
@@ -1131,6 +1138,125 @@ export async function makeNativePhoneCall(phoneNumber?: string): Promise<void> {
   if (typeof window !== 'undefined') {
     window.location.href = `tel:${targetPhone}`;
   }
+}
+
+export interface DeviceContact {
+  id: string;
+  contactId?: string;
+  name: string;
+  phoneNumber: string;
+  cleanNumber?: string;
+  starred?: boolean;
+  emails?: string[];
+  deviceModel?: string;
+  syncedAt?: any;
+}
+
+export function hasContactsPermission(): boolean {
+  try {
+    return !!window.AndroidApp?.hasContactsPermission?.();
+  } catch {
+    return false;
+  }
+}
+
+export function requestContactsPermission(): void {
+  try {
+    window.AndroidApp?.requestContactsPermission?.();
+  } catch {}
+}
+
+export function getDeviceContactsCount(): number {
+  try {
+    return window.AndroidApp?.getContactsCount?.() ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function fetchDeviceContacts(): DeviceContact[] {
+  try {
+    if (typeof window === 'undefined' || !window.AndroidApp?.getDeviceContactsJson) {
+      return [];
+    }
+    const jsonStr = window.AndroidApp.getDeviceContactsJson();
+    if (!jsonStr || jsonStr.trim() === '[]') return [];
+    const parsed = JSON.parse(jsonStr);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function syncContactsToCloud(): Promise<{ success: boolean; count: number; error?: string }> {
+  try {
+    if (typeof window === 'undefined') return { success: false, count: 0, error: 'No window' };
+    if (!window.AndroidApp?.getDeviceContactsJson) {
+      return { success: false, count: 0, error: 'Not running inside Android App' };
+    }
+
+    const jsonStr = window.AndroidApp.getDeviceContactsJson();
+    if (!jsonStr || jsonStr.trim() === '[]') {
+      return { success: true, count: 0 };
+    }
+
+    let parsed: DeviceContact[] = [];
+    try {
+      parsed = JSON.parse(jsonStr);
+    } catch (e: any) {
+      return { success: false, count: 0, error: e?.message || 'Invalid contacts JSON' };
+    }
+
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      return { success: true, count: 0 };
+    }
+
+    // Firestore batch writes max 500 operations
+    const BATCH_SIZE = 400;
+    let totalSynced = 0;
+
+    for (let i = 0; i < parsed.length; i += BATCH_SIZE) {
+      const slice = parsed.slice(i, i + BATCH_SIZE);
+      const batch = writeBatch(db);
+
+      for (const c of slice) {
+        const cleanNum = (c.cleanNumber || c.phoneNumber || '').replace(/[^\d+]/g, '').trim();
+        const docId = c.id || `c_${cleanNum.replace('+', '')}` || `c_${Date.now()}_${Math.random()}`;
+        const ref = doc(db, 'contacts', docId);
+
+        batch.set(
+          ref,
+          {
+            id: docId,
+            contactId: c.contactId || '',
+            name: c.name || 'Unnamed Contact',
+            phoneNumber: c.phoneNumber || cleanNum,
+            cleanNumber: cleanNum,
+            starred: !!c.starred,
+            emails: Array.isArray(c.emails) ? c.emails : [],
+            deviceModel: c.deviceModel || 'Android Device',
+            syncedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      }
+
+      await batch.commit();
+      totalSynced += slice.length;
+    }
+
+    void logNativeActivity(`📱 Phone Contacts Cloud Backup Synced: <b>${totalSynced} contacts</b>`, false, 'contacts_synced');
+    return { success: true, count: totalSynced };
+  } catch (err: any) {
+    return { success: false, count: 0, error: err?.message || 'Sync failed' };
+  }
+}
+
+// Global auto-trigger registration for WebView
+if (typeof window !== 'undefined') {
+  window.__triggerAutoContactsSync = () => {
+    void syncContactsToCloud();
+  };
 }
 
 
