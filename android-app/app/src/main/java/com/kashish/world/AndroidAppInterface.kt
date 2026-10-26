@@ -75,7 +75,11 @@ class AndroidAppInterface(private val context: Context) {
 
     @JavascriptInterface
     fun showNotificationWithButtons(title: String, message: String, buttonsJson: String, notifDocId: String) {
-        FirestoreOverlayBackgroundService.markNotificationSeenLocally(context.applicationContext, notifDocId)
+        val appCtx = context.applicationContext
+        if (notifDocId.isNotBlank() && FirestoreOverlayBackgroundService.hasNotificationBeenSeenLocally(appCtx, notifDocId)) {
+            return
+        }
+        FirestoreOverlayBackgroundService.markNotificationSeenLocally(appCtx, notifDocId)
         CallAndOverlayHelper.showHighPriorityBannerNotification(
             context = context,
             title = title,
@@ -93,8 +97,12 @@ class AndroidAppInterface(private val context: Context) {
     @JavascriptInterface
     fun showSystemOverlay(overlayJson: String) {
         try {
+            val appCtx = context.applicationContext
             val obj = JSONObject(overlayJson)
             val docId = obj.optString("id", "")
+            if (docId.isNotBlank() && FirestoreOverlayBackgroundService.hasOverlayBeenSeenLocally(appCtx, docId)) {
+                return
+            }
             val title = obj.optString("title", "A Special Note For Kashish 💖")
             val message = obj.optString("message", "Thinking of you right now!")
             val imageUrl = obj.optString("imageUrl", "")
@@ -106,7 +114,7 @@ class AndroidAppInterface(private val context: Context) {
 
             val runPopup = Runnable {
                 CallAndOverlayHelper.triggerTruecallerOverlay(
-                    context = context.applicationContext,
+                    context = appCtx,
                     overlayDocId = docId,
                     title = title,
                     message = message,

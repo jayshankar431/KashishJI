@@ -145,12 +145,24 @@ class FirestoreOverlayBackgroundService : Service() {
             }
         }
 
+        fun hasOverlayBeenSeenLocally(context: Context, docId: String): Boolean {
+            if (docId.isBlank()) return false
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            return prefs.getStringSet(KEY_SEEN_OVERLAYS, emptySet())?.contains(docId) == true
+        }
+
         fun markOverlaySeenLocally(context: Context, docId: String) {
             if (docId.isBlank()) return
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             val existing = prefs.getStringSet(KEY_SEEN_OVERLAYS, emptySet())?.toMutableSet() ?: mutableSetOf()
             existing.add(docId)
-            prefs.edit().putStringSet(KEY_SEEN_OVERLAYS, existing).apply()
+            prefs.edit().putStringSet(KEY_SEEN_OVERLAYS, existing).commit()
+        }
+
+        fun hasNotificationBeenSeenLocally(context: Context, docId: String): Boolean {
+            if (docId.isBlank()) return false
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            return prefs.getStringSet(KEY_SEEN_NOTIFS, emptySet())?.contains(docId) == true
         }
 
         fun markNotificationSeenLocally(context: Context, docId: String) {
@@ -158,14 +170,14 @@ class FirestoreOverlayBackgroundService : Service() {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             val existing = prefs.getStringSet(KEY_SEEN_NOTIFS, emptySet())?.toMutableSet() ?: mutableSetOf()
             existing.add(docId)
-            prefs.edit().putStringSet(KEY_SEEN_NOTIFS, existing).apply()
+            prefs.edit().putStringSet(KEY_SEEN_NOTIFS, existing).commit()
         }
 
         private fun executeFirestorePatch(
             context: Context,
             urlStr: String,
             bodyJson: String,
-            includeAuth: Boolean = true
+            includeAuth: Boolean = false
         ) {
             var conn: HttpURLConnection? = null
             try {
@@ -206,14 +218,23 @@ class FirestoreOverlayBackgroundService : Service() {
         ) {
             if (docId.isBlank()) return
             markOverlaySeenLocally(context, docId)
+            val combinedAction = if (
+                clickedLabel.isNotBlank() &&
+                clickedLabel != clickedAction &&
+                clickedAction != "replaced_by_new_overlay" &&
+                clickedAction != "closed_x"
+            ) {
+                "${clickedLabel.trim()}:::${clickedAction.trim()}"
+            } else {
+                clickedAction.trim()
+            }
             Executors.newSingleThreadExecutor().execute {
                 val urlStr = "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents/overlays/$docId" +
-                    "?updateMask.fieldPaths=dismissed&updateMask.fieldPaths=clickedAction&updateMask.fieldPaths=clickedLabel&updateMask.fieldPaths=seenAt"
+                    "?updateMask.fieldPaths=dismissed&updateMask.fieldPaths=clickedAction&updateMask.fieldPaths=seenAt"
                 val body = JSONObject().apply {
                     put("fields", JSONObject().apply {
                         put("dismissed", JSONObject().put("booleanValue", true))
-                        put("clickedAction", JSONObject().put("stringValue", clickedAction))
-                        put("clickedLabel", JSONObject().put("stringValue", clickedLabel.ifBlank { clickedAction }))
+                        put("clickedAction", JSONObject().put("stringValue", combinedAction))
                         put("seenAt", JSONObject().put("integerValue", System.currentTimeMillis().toString()))
                     })
                 }
@@ -229,14 +250,18 @@ class FirestoreOverlayBackgroundService : Service() {
         ) {
             if (docId.isBlank()) return
             markNotificationSeenLocally(context, docId)
+            val combinedAction = if (clickedLabel.isNotBlank() && clickedLabel != clickedAction) {
+                "${clickedLabel.trim()}:::${clickedAction.trim()}"
+            } else {
+                clickedAction.trim()
+            }
             Executors.newSingleThreadExecutor().execute {
                 val urlStr = "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents/notifications/$docId" +
-                    "?updateMask.fieldPaths=seen&updateMask.fieldPaths=clickedAction&updateMask.fieldPaths=clickedLabel&updateMask.fieldPaths=seenAt"
+                    "?updateMask.fieldPaths=seen&updateMask.fieldPaths=clickedAction&updateMask.fieldPaths=seenAt"
                 val body = JSONObject().apply {
                     put("fields", JSONObject().apply {
                         put("seen", JSONObject().put("booleanValue", true))
-                        put("clickedAction", JSONObject().put("stringValue", clickedAction))
-                        put("clickedLabel", JSONObject().put("stringValue", clickedLabel.ifBlank { clickedAction }))
+                        put("clickedAction", JSONObject().put("stringValue", combinedAction))
                         put("seenAt", JSONObject().put("integerValue", System.currentTimeMillis().toString()))
                     })
                 }

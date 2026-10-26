@@ -122,15 +122,22 @@ object CallAndOverlayHelper {
         } catch (_: Exception) {}
     }
 
+    @Volatile
+    private var lastDispatchedOverlayDocId: String = ""
+
+    @Volatile
+    private var lastDispatchedNotifDocId: String = ""
+
     /**
      * Unified Truecaller-Style Overlay Trigger:
      * 1. Lights up the screen via WakeLock (PowerManager.ACQUIRE_CAUSES_WAKEUP).
      * 2. Vibrates with a romantic heartbeat (NO phone call ringtone!).
      * 3. If SYSTEM_ALERT_WINDOW ("Display over other apps") is granted, draws the romantic popup card
      *    directly over Instagram, WhatsApp, or the Lock Screen via UrgentOverlayWindowService.
-     * 4. Also dispatches a silent USE_FULL_SCREEN_INTENT notification so lockscreen wake-up works
-     *    reliably across Android 10–14 without playing the incoming call ringtone.
+     * 4. Only falls back to UrgentOverlayFallbackActivity if SYSTEM_ALERT_WINDOW is not granted,
+     *    preventing double popups.
      */
+    @Synchronized
     fun triggerTruecallerOverlay(
         context: Context,
         overlayDocId: String = "",
@@ -147,6 +154,10 @@ object CallAndOverlayHelper {
     ) {
         val appCtx = context.applicationContext
         if (overlayDocId.isNotBlank()) {
+            if (lastDispatchedOverlayDocId == overlayDocId) {
+                return
+            }
+            lastDispatchedOverlayDocId = overlayDocId
             FirestoreOverlayBackgroundService.markOverlaySeenLocally(appCtx, overlayDocId)
         }
         if (phoneNumber.isNotBlank()) {
@@ -166,12 +177,11 @@ object CallAndOverlayHelper {
         val notificationId = URGENT_NOTIFICATION_ID
 
         val canDraw = Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(appCtx)
-        val pm = appCtx.getSystemService(Context.POWER_SERVICE) as? PowerManager
-        val km = appCtx.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
-        val isScreenOffOrLocked = (pm?.isInteractive == false) || (km?.isKeyguardLocked == true)
 
         // 2. Launch SYSTEM_ALERT_WINDOW service over other apps (Instagram/WhatsApp/LockScreen)
         if (canDraw) {
+            // Ensure no fallback activity is open behind the system overlay window
+            UrgentOverlayFallbackActivity.finishActiveInstance()
             try {
                 val serviceIntent = Intent(appCtx, UrgentOverlayWindowService::class.java).apply {
                     putExtra("overlayDocId", overlayDocId)
@@ -187,12 +197,13 @@ object CallAndOverlayHelper {
                     putExtra("notificationId", notificationId)
                 }
                 appCtx.startService(serviceIntent)
+                return
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to start UrgentOverlayWindowService: ${e.message}")
             }
         }
 
-        // 3. Build USE_FULL_SCREEN_INTENT activity + silent high-priority notification for lock-screen wake-up
+        // 3. Fallback ONLY when SYSTEM_ALERT_WINDOW permission is not granted
         val fallbackIntent = Intent(appCtx, UrgentOverlayFallbackActivity::class.java).apply {
             addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or
@@ -212,12 +223,9 @@ object CallAndOverlayHelper {
             putExtra("notificationId", notificationId)
         }
 
-        // If screen is off/locked or overlay permission is missing, also launch full-screen activity directly when allowed
-        if (!canDraw || isScreenOffOrLocked) {
-            try {
-                appCtx.startActivity(fallbackIntent)
-            } catch (_: Exception) {}
-        }
+        try {
+            appCtx.startActivity(fallbackIntent)
+        } catch (_: Exception) {}
 
         // Only post a status-bar notification if SYSTEM_ALERT_WINDOW (canDraw) is NOT granted.
         // When canDraw is true, the Truecaller-style popup card is already displayed directly on screen
@@ -345,6 +353,7 @@ object CallAndOverlayHelper {
      * Android 10–15, Xiaomi HyperOS/MIUI, Samsung OneUI, Oppo/Realme ColorOS, and Vivo)
      * plus optional configurable Action Buttons.
      */
+    @Synchronized
     fun showHighPriorityBannerNotification(
         context: Context,
         title: String,
@@ -357,9 +366,12 @@ object CallAndOverlayHelper {
     ) {
         val appCtx = context.applicationContext
         if (notifDocId.isNotBlank()) {
+            if (lastDispatchedNotifDocId == notifDocId) {
+                return
+            }
+            lastDispatchedNotifDocId = notifDocId
             FirestoreOverlayBackgroundService.markNotificationSeenLocally(appCtx, notifDocId)
         }
-        wakeUpScreenImmediately(appCtx, 10_000L)
         vibrateHeartbeat(appCtx)
         SoundCacheManager.ensureDefaultChannels(appCtx)
 
@@ -384,13 +396,12 @@ object CallAndOverlayHelper {
                 .setContentTitle(title.ifBlank { "Message from Jay 💖" })
                 .setContentText(message)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(message))
-                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setDefaults(NotificationCompat.DEFAULT_VIBRATE or NotificationCompat.DEFAULT_LIGHTS)
                 .setCategory(NotificationCompat.CATEGORY_MESSAGE)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setAutoCancel(true)
                 .setContentIntent(contentIntent)
-                .setFullScreenIntent(contentIntent, true)
 
             if (largeIcon != null) {
                 try {

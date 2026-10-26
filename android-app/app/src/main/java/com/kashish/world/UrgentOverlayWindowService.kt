@@ -177,6 +177,9 @@ class UrgentOverlayWindowService : Service() {
         buttons: List<OverlayButtonSpec>,
         notificationId: Int
     ) {
+        if (overlayDocId.isNotBlank() && currentOverlayDocId == overlayDocId && overlayRootView != null) {
+            return
+        }
         // If an older overlay is still pending on screen without a response, auto-dismiss it in Firestore before replacing
         if (currentOverlayDocId.isNotBlank() && currentOverlayDocId != overlayDocId) {
             FirestoreOverlayBackgroundService.markOverlayDismissedInFirestore(

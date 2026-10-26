@@ -1317,7 +1317,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       title: notifTitle.trim(),
       message: notifMessage.trim(),
       imageUrl: notifImage.trim(),
-      soundUrl: notifSoundUrl === 'silent' ? '' : notifSoundUrl,
+      soundUrl: notifSoundUrl || '',
       buttons: cleanedButtons,
       createdAt: Date.now(),
       scheduledFor: scheduledMs,
@@ -1369,7 +1369,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       imageUrl: ovImage.trim(),
       theme: ovTheme,
       fontStyle: ovFontStyle,
-      soundUrl: ovSoundUrl === 'silent' ? '' : ovSoundUrl,
+      soundUrl: ovSoundUrl || '',
       buttons: ovButtons.slice(0, 3),
       createdAt: Date.now(),
       scheduledFor: scheduledMs,
@@ -3867,7 +3867,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                           </div>
                           {(n.clickedLabel || n.clickedAction) && (
                             <div className="text-[10px] font-bold text-emerald-400">
-                              ✅ Chose: "{n.clickedLabel || n.clickedAction}"
+                              ✅ Chose: "
+                              {n.clickedLabel ||
+                                (String(n.clickedAction || '').includes(':::')
+                                  ? String(n.clickedAction).split(':::')[0]
+                                  : n.clickedAction)}
+                              "
                             </div>
                           )}
                         </td>
@@ -3941,7 +3946,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                         updateDoc(doc(db, 'overlays', oldOv.id), {
                           dismissed: true,
                           clickedAction: 'replaced_by_new_overlay',
-                          clickedLabel: 'Replaced by Newer Overlay',
                           seenAt: now,
                         }).catch(() => {})
                       )
@@ -3955,7 +3959,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                       imageUrl: ovImage.trim(),
                       theme: ovTheme,
                       fontStyle: ovFontStyle,
-                      soundUrl: ovSoundUrl === 'silent' ? '' : ovSoundUrl,
+                      soundUrl: ovSoundUrl || '',
                       buttons: ovButtons.slice(0, 3),
                       createdAt: Date.now(),
                       scheduledFor: null,
@@ -4376,24 +4380,32 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                               { label: 'Keep in My Heart 💖', action: 'dismiss' },
                             ];
 
-                      const isReplaced = o.clickedAction === 'replaced_by_new_overlay';
-                      const isClosedX = o.clickedAction === 'closed_x';
+                      const rawClicked = String(o.clickedAction || '');
+                      const hasEncoded = rawClicked.includes(':::');
+                      const resolvedLabel =
+                        o.clickedLabel || (hasEncoded ? rawClicked.split(':::')[0] : '');
+                      const resolvedAction = hasEncoded
+                        ? rawClicked.split(':::').slice(1).join(':::')
+                        : rawClicked;
+
+                      const isReplaced = resolvedAction === 'replaced_by_new_overlay';
+                      const isClosedX = resolvedAction === 'closed_x';
 
                       // Match which button she chose from the options given
                       const matchedBtn =
-                        !isReplaced && !isClosedX && (o.clickedLabel || o.clickedAction)
+                        !isReplaced && !isClosedX && (resolvedLabel || resolvedAction)
                           ? btns.find(
                               (b) =>
-                                (o.clickedLabel && b.label === o.clickedLabel) ||
-                                (!o.clickedLabel && b.action === o.clickedAction)
+                                (resolvedLabel && b.label === resolvedLabel) ||
+                                (!resolvedLabel && b.action === resolvedAction)
                             )
                           : null;
 
                       const chosenOptionText =
                         !isReplaced && !isClosedX
-                          ? o.clickedLabel && o.clickedLabel !== o.clickedAction
-                            ? o.clickedLabel
-                            : matchedBtn?.label || o.clickedAction || ''
+                          ? resolvedLabel && resolvedLabel !== resolvedAction
+                            ? resolvedLabel
+                            : matchedBtn?.label || resolvedAction || ''
                           : '';
 
                       return (
@@ -4425,10 +4437,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                                   const isThisChosen =
                                     !isReplaced &&
                                     !isClosedX &&
-                                    ((o.clickedLabel && b.label === o.clickedLabel) ||
-                                      (!o.clickedLabel &&
-                                        o.clickedAction &&
-                                        b.action === o.clickedAction &&
+                                    ((resolvedLabel && b.label === resolvedLabel) ||
+                                      (!resolvedLabel &&
+                                        resolvedAction &&
+                                        b.action === resolvedAction &&
                                         matchedBtn?.label === b.label));
                                   return (
                                     <span
@@ -4460,9 +4472,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                                 <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 font-bold">
                                   💖 Chose: "{chosenOptionText}"
                                 </span>
-                                {o.clickedAction && (
+                                {resolvedAction && (
                                   <div className={`text-[10px] ${textMuted}`}>
-                                    Action Triggered: <span className="font-semibold">{o.clickedAction}</span>
+                                    Action Triggered: <span className="font-semibold">{resolvedAction}</span>
                                   </div>
                                 )}
                               </div>

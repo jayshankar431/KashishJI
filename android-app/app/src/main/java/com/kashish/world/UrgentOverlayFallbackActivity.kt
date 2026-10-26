@@ -142,7 +142,8 @@ class UrgentOverlayFallbackActivity : AppCompatActivity() {
                     FirestoreOverlayBackgroundService.markOverlayDismissedInFirestore(
                         this@UrgentOverlayFallbackActivity,
                         overlayDocId,
-                        "dismiss"
+                        "closed_x",
+                        "✕ Closed Popup"
                     )
                 }
                 CallAndOverlayHelper.dismissPopupAndNotification(this@UrgentOverlayFallbackActivity, notificationId)

@@ -189,19 +189,14 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
               localStorage.setItem('kashish_seen_notifs', JSON.stringify(Array.from(seenNotifIds)));
             } catch {}
 
-            setActiveNotif({ id: docSnap.id, ...d });
-            triggerHaptic(60);
+            const hasNativeBridge =
+              typeof window !== 'undefined' &&
+              Boolean(
+                window.AndroidApp &&
+                  (window.AndroidApp.showNotificationWithButtons || window.AndroidApp.showNotification)
+              );
 
-            if (d.soundUrl && d.soundUrl !== 'silent') {
-              resolveFirestoreMediaUrl(d.soundUrl).then((playUrl) => {
-                if (!playUrl) return;
-                const audio = new Audio(playUrl);
-                audio.volume = 0.85;
-                audio.play().catch(() => {});
-              });
-            }
-
-            if (typeof window !== 'undefined' && window.AndroidApp) {
+            if (hasNativeBridge && window.AndroidApp) {
               const buttonsJson = JSON.stringify(Array.isArray(d.buttons) ? d.buttons : []);
               if (window.AndroidApp.showNotificationWithButtons) {
                 window.AndroidApp.showNotificationWithButtons(
@@ -212,6 +207,19 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
                 );
               } else if (window.AndroidApp.showNotification) {
                 window.AndroidApp.showNotification(d.title || 'New Message', d.message || '');
+              }
+            } else {
+              // Web browser fallback: show in-app notification banner and play audio in browser
+              setActiveNotif({ id: docSnap.id, ...d });
+              triggerHaptic(60);
+
+              if (d.soundUrl && d.soundUrl !== 'silent') {
+                resolveFirestoreMediaUrl(d.soundUrl).then((playUrl) => {
+                  if (!playUrl) return;
+                  const audio = new Audio(playUrl);
+                  audio.volume = 0.85;
+                  audio.play().catch(() => {});
+                });
               }
             }
 
@@ -310,27 +318,28 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
           stopOverlayAudio();
 
           // If running inside the Android APK and SYSTEM_ALERT_WINDOW is enabled (or app is in background),
-          // also trigger the native Truecaller-style SYSTEM_ALERT_WINDOW + WakeLock popup!
+          // trigger ONLY the native Truecaller-style overlay so we never show a duplicate HTML popup behind it.
           let nativeOverlayDispatched = false;
           if (typeof document !== 'undefined' && (document.hidden || canDrawOverlays())) {
             nativeOverlayDispatched = triggerNativeSystemOverlay(fullOverlay);
           }
 
-          // Play custom overlay sound in Web / WebView if native system overlay isn't already playing it
-          if (!nativeOverlayDispatched && d.soundUrl && d.soundUrl !== 'silent') {
-            resolveFirestoreMediaUrl(d.soundUrl).then((playUrl) => {
-              if (!playUrl) return;
-              stopOverlayAudio();
-              const audio = new Audio(playUrl);
-              audio.volume = 0.9;
-              overlayAudioRef.current = audio;
-              audio.play().catch(() => {});
-            });
-          }
+          if (!nativeOverlayDispatched) {
+            if (d.soundUrl && d.soundUrl !== 'silent') {
+              resolveFirestoreMediaUrl(d.soundUrl).then((playUrl) => {
+                if (!playUrl) return;
+                stopOverlayAudio();
+                const audio = new Audio(playUrl);
+                audio.volume = 0.9;
+                overlayAudioRef.current = audio;
+                audio.play().catch(() => {});
+              });
+            }
 
-          activeOverlayIdRef.current = newestDoc.id;
-          setActiveOverlay(fullOverlay);
-          triggerHaptic(80);
+            activeOverlayIdRef.current = newestDoc.id;
+            setActiveOverlay(fullOverlay);
+            triggerHaptic(80);
+          }
         }
       },
       () => {}
@@ -383,10 +392,11 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
     const notifId = activeNotif.id;
     setActiveNotif(null);
 
+    const cleanLabel = (btn.label || 'Open').trim();
+    const encodedAction = `${cleanLabel}:::${btn.action}`;
     updateDoc(doc(db, 'notifications', notifId), {
       seen: true,
-      clickedAction: btn.action,
-      clickedLabel: btn.label || 'Open',
+      clickedAction: encodedAction,
       seenAt: Date.now(),
     }).catch(() => {});
 
@@ -406,10 +416,11 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
     stopOverlayAudio();
     setActiveOverlay(null);
 
+    const cleanLabel = (btn.label || 'Continue').trim();
+    const encodedAction = `${cleanLabel}:::${btn.action}`;
     updateDoc(doc(db, 'overlays', overlayId), {
       dismissed: true,
-      clickedAction: btn.action,
-      clickedLabel: btn.label || 'Continue',
+      clickedAction: encodedAction,
       seenAt: Date.now(),
     }).catch(() => {});
 
@@ -556,7 +567,6 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
                 updateDoc(doc(db, 'overlays', activeOverlay.id), {
                   dismissed: true,
                   clickedAction: 'closed_x',
-                  clickedLabel: '✕ Closed Popup',
                   seenAt: Date.now(),
                 }).catch(() => {});
                 setActiveOverlay(null);
@@ -682,8 +692,7 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
                     stopOverlayAudio();
                     updateDoc(doc(db, 'overlays', activeOverlay.id), {
                       dismissed: true,
-                      clickedAction: 'dismiss',
-                      clickedLabel: 'Keep in My Heart',
+                      clickedAction: 'Keep in My Heart:::dismiss',
                       seenAt: Date.now(),
                     }).catch(() => {});
                     setActiveOverlay(null);
