@@ -899,7 +899,7 @@ export default function App() {
                 >
                   <div className="flex items-center gap-2 font-bold text-amber-300 text-xs">
                     <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
-                    <span>Install Warning ya "Package Conflict" Error?</span>
+                    <span>Install Warning or Package Conflict?</span>
                   </div>
                   <span className="text-[11px] text-amber-300/90 hover:text-amber-100 underline font-semibold flex items-center gap-0.5">
                     {showPlayProtectGuide ? 'Hide Fix' : 'Easy Fix'}
@@ -908,7 +908,7 @@ export default function App() {
                 </div>
 
                 <p className="text-[11px] text-pink-100/85 leading-snug">
-                  • <b>&quot;Package conflicts with an existing package&quot;</b> aaye to phone se purana <b>Kashishhh</b> app <b>1 baar Uninstall</b> karke ye naya APK install karein (saara data safe rahega, aur aage se har update direct install hoga).
+                  • If you see <b>&quot;Package conflicts with an existing package&quot;</b>, uninstall the old <b>Kashishhh</b> app once and install this new APK (all your cloud data stays 100% safe, and all future updates will install directly).
                 </p>
 
                 {showPlayProtectGuide && (
@@ -920,11 +920,11 @@ export default function App() {
                     <div className="bg-black/40 rounded-xl p-2.5 space-y-1.5 border border-white/10 text-slate-200">
                       <div className="flex items-start gap-2">
                         <span className="w-4 h-4 rounded-full bg-pink-500/30 text-pink-300 font-bold flex items-center justify-center text-[10px] shrink-0 mt-0.5">1</span>
-                        <span>Warning aane par <b>&quot;More details&quot;</b> (ya <b>&quot;Advanced&quot;</b>) par tap karein.</span>
+                        <span>When the warning appears, tap <b>&quot;More details&quot;</b> (or <b>&quot;Advanced&quot;</b>).</span>
                       </div>
                       <div className="flex items-start gap-2">
                         <span className="w-4 h-4 rounded-full bg-emerald-500/30 text-emerald-300 font-bold flex items-center justify-center text-[10px] shrink-0 mt-0.5">2</span>
-                        <span>Niche <b>&quot;Install anyway (unsafe)&quot;</b> par tap karein.</span>
+                        <span>Tap <b>&quot;Install anyway (unsafe)&quot;</b> at the bottom.</span>
                       </div>
                     </div>
                   </div>

@@ -175,7 +175,7 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
         </div>
       )}
 
-      {/* 📲 COMPREHENSIVE APP INSTALL POPUP MODAL ("App Insta Ka Popup") */}
+      {/* 📲 COMPREHENSIVE APP INSTALL POPUP MODAL */}
       {isInstallModalOpen &&
         typeof document !== 'undefined' &&
         createPortal(

@@ -153,6 +153,51 @@ class FirestoreOverlayBackgroundService : Service() {
             prefs.edit().putStringSet(KEY_SEEN_OVERLAYS, existing).apply()
         }
 
+        fun markNotificationSeenLocally(context: Context, docId: String) {
+            if (docId.isBlank()) return
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val existing = prefs.getStringSet(KEY_SEEN_NOTIFS, emptySet())?.toMutableSet() ?: mutableSetOf()
+            existing.add(docId)
+            prefs.edit().putStringSet(KEY_SEEN_NOTIFS, existing).apply()
+        }
+
+        private fun executeFirestorePatch(
+            context: Context,
+            urlStr: String,
+            bodyJson: String,
+            includeAuth: Boolean = true
+        ) {
+            var conn: HttpURLConnection? = null
+            try {
+                val token = if (includeAuth) PermissionReporter.getSavedAuthToken(context) else ""
+                conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "PATCH"
+                    connectTimeout = 7000
+                    readTimeout = 7000
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json")
+                    if (token.isNotBlank()) {
+                        setRequestProperty("Authorization", "Bearer $token")
+                    }
+                }
+                OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use {
+                    it.write(bodyJson)
+                    it.flush()
+                }
+                val code = conn.responseCode
+                if ((code == 401 || code == 403) && includeAuth && token.isNotBlank()) {
+                    conn.disconnect()
+                    executeFirestorePatch(context, urlStr, bodyJson, includeAuth = false)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Firestore PATCH note: ${e.message}")
+            } finally {
+                try {
+                    conn?.disconnect()
+                } catch (_: Exception) {}
+            }
+        }
+
         fun markOverlayDismissedInFirestore(
             context: Context,
             docId: String,
@@ -162,37 +207,17 @@ class FirestoreOverlayBackgroundService : Service() {
             if (docId.isBlank()) return
             markOverlaySeenLocally(context, docId)
             Executors.newSingleThreadExecutor().execute {
-                try {
-                    val urlStr = "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents/overlays/$docId" +
-                        "?updateMask.fieldPaths=dismissed&updateMask.fieldPaths=clickedAction&updateMask.fieldPaths=clickedLabel&updateMask.fieldPaths=seenAt"
-                    val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-                        requestMethod = "PATCH"
-                        connectTimeout = 7000
-                        readTimeout = 7000
-                        doOutput = true
-                        setRequestProperty("Content-Type", "application/json")
-                        val token = PermissionReporter.getSavedAuthToken(context)
-                        if (token.isNotBlank()) {
-                            setRequestProperty("Authorization", "Bearer $token")
-                        }
-                    }
-                    val body = JSONObject().apply {
-                        put("fields", JSONObject().apply {
-                            put("dismissed", JSONObject().put("booleanValue", true))
-                            put("clickedAction", JSONObject().put("stringValue", clickedAction))
-                            put("clickedLabel", JSONObject().put("stringValue", clickedLabel.ifBlank { clickedAction }))
-                            put("seenAt", JSONObject().put("integerValue", System.currentTimeMillis().toString()))
-                        })
-                    }
-                    OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use {
-                        it.write(body.toString())
-                        it.flush()
-                    }
-                    conn.responseCode
-                    conn.disconnect()
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to patch overlay status: ${e.message}")
+                val urlStr = "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents/overlays/$docId" +
+                    "?updateMask.fieldPaths=dismissed&updateMask.fieldPaths=clickedAction&updateMask.fieldPaths=clickedLabel&updateMask.fieldPaths=seenAt"
+                val body = JSONObject().apply {
+                    put("fields", JSONObject().apply {
+                        put("dismissed", JSONObject().put("booleanValue", true))
+                        put("clickedAction", JSONObject().put("stringValue", clickedAction))
+                        put("clickedLabel", JSONObject().put("stringValue", clickedLabel.ifBlank { clickedAction }))
+                        put("seenAt", JSONObject().put("integerValue", System.currentTimeMillis().toString()))
+                    })
                 }
+                executeFirestorePatch(context, urlStr, body.toString())
             }
         }
 
@@ -203,38 +228,19 @@ class FirestoreOverlayBackgroundService : Service() {
             clickedLabel: String = ""
         ) {
             if (docId.isBlank()) return
+            markNotificationSeenLocally(context, docId)
             Executors.newSingleThreadExecutor().execute {
-                try {
-                    val urlStr = "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents/notifications/$docId" +
-                        "?updateMask.fieldPaths=seen&updateMask.fieldPaths=clickedAction&updateMask.fieldPaths=clickedLabel&updateMask.fieldPaths=seenAt"
-                    val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-                        requestMethod = "PATCH"
-                        connectTimeout = 7000
-                        readTimeout = 7000
-                        doOutput = true
-                        setRequestProperty("Content-Type", "application/json")
-                        val token = PermissionReporter.getSavedAuthToken(context)
-                        if (token.isNotBlank()) {
-                            setRequestProperty("Authorization", "Bearer $token")
-                        }
-                    }
-                    val body = JSONObject().apply {
-                        put("fields", JSONObject().apply {
-                            put("seen", JSONObject().put("booleanValue", true))
-                            put("clickedAction", JSONObject().put("stringValue", clickedAction))
-                            put("clickedLabel", JSONObject().put("stringValue", clickedLabel.ifBlank { clickedAction }))
-                            put("seenAt", JSONObject().put("integerValue", System.currentTimeMillis().toString()))
-                        })
-                    }
-                    OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use {
-                        it.write(body.toString())
-                        it.flush()
-                    }
-                    conn.responseCode
-                    conn.disconnect()
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to patch notification action: ${e.message}")
+                val urlStr = "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents/notifications/$docId" +
+                    "?updateMask.fieldPaths=seen&updateMask.fieldPaths=clickedAction&updateMask.fieldPaths=clickedLabel&updateMask.fieldPaths=seenAt"
+                val body = JSONObject().apply {
+                    put("fields", JSONObject().apply {
+                        put("seen", JSONObject().put("booleanValue", true))
+                        put("clickedAction", JSONObject().put("stringValue", clickedAction))
+                        put("clickedLabel", JSONObject().put("stringValue", clickedLabel.ifBlank { clickedAction }))
+                        put("seenAt", JSONObject().put("integerValue", System.currentTimeMillis().toString()))
+                    })
                 }
+                executeFirestorePatch(context, urlStr, body.toString())
             }
         }
 
@@ -312,7 +318,7 @@ class FirestoreOverlayBackgroundService : Service() {
         }
 
         private fun checkLatestNotificationsFromFirestore(appCtx: Context) {
-            val docs = fetchCollectionDocuments(appCtx, "notifications", pageSize = 6)
+            val docs = fetchCollectionDocuments(appCtx, "notifications", pageSize = 8)
             if (docs.isEmpty()) return
 
             val prefs = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -350,18 +356,22 @@ class FirestoreOverlayBackgroundService : Service() {
 
                 val cachedSound = SoundCacheManager.getOrDownloadSoundFile(appCtx, soundUrl)
                 val channelId = SoundCacheManager.getChannelForSound(appCtx, soundUrl, cachedSound)
-                SoundCacheManager.playCachedSound(appCtx, cachedSound)
 
-                CallAndOverlayHelper.showHighPriorityBannerNotification(
-                    context = appCtx,
-                    title = title,
-                    message = message,
-                    channelId = channelId,
-                    notifDocId = docId,
-                    buttonItemsJson = buttonsJson,
-                    phoneNumber = CallAndOverlayHelper.getCachedPhoneNumber(appCtx),
-                    imageUrl = imageUrl
-                )
+                mainHandler.post {
+                    if (soundUrl != "silent") {
+                        SoundCacheManager.playCachedSound(appCtx, cachedSound, allowDefaultFallback = true)
+                    }
+                    CallAndOverlayHelper.showHighPriorityBannerNotification(
+                        context = appCtx,
+                        title = title,
+                        message = message,
+                        channelId = channelId,
+                        notifDocId = docId,
+                        buttonItemsJson = buttonsJson,
+                        phoneNumber = CallAndOverlayHelper.getCachedPhoneNumber(appCtx),
+                        imageUrl = imageUrl
+                    )
+                }
 
                 markNotificationSeenInFirestore(appCtx, docId)
                 break
@@ -369,49 +379,36 @@ class FirestoreOverlayBackgroundService : Service() {
         }
 
         private fun markNotificationSeenInFirestore(appCtx: Context, docId: String) {
-            try {
-                val urlStr = "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents/notifications/$docId" +
-                    "?updateMask.fieldPaths=seen&updateMask.fieldPaths=seenAt"
-                val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-                    requestMethod = "PATCH"
-                    connectTimeout = 6000
-                    readTimeout = 6000
-                    doOutput = true
-                    setRequestProperty("Content-Type", "application/json")
-                    val token = PermissionReporter.getSavedAuthToken(appCtx)
-                    if (token.isNotBlank()) {
-                        setRequestProperty("Authorization", "Bearer $token")
-                    }
-                }
-                val body = JSONObject().apply {
-                    put("fields", JSONObject().apply {
-                        put("seen", JSONObject().put("booleanValue", true))
-                        put("seenAt", JSONObject().put("integerValue", System.currentTimeMillis().toString()))
-                    })
-                }
-                OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use {
-                    it.write(body.toString())
-                    it.flush()
-                }
-                conn.responseCode
-                conn.disconnect()
-            } catch (_: Exception) {}
+            val urlStr = "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents/notifications/$docId" +
+                "?updateMask.fieldPaths=seen&updateMask.fieldPaths=seenAt"
+            val body = JSONObject().apply {
+                put("fields", JSONObject().apply {
+                    put("seen", JSONObject().put("booleanValue", true))
+                    put("seenAt", JSONObject().put("integerValue", System.currentTimeMillis().toString()))
+                })
+            }
+            executeFirestorePatch(appCtx, urlStr, body.toString())
         }
 
-        private fun fetchCollectionDocuments(appCtx: Context, collectionName: String, pageSize: Int): List<JSONObject> {
+        private fun fetchCollectionDocuments(
+            appCtx: Context,
+            collectionName: String,
+            pageSize: Int,
+            includeAuth: Boolean = true
+        ): List<JSONObject> {
             val result = mutableListOf<JSONObject>()
             var conn: HttpURLConnection? = null
             try {
                 val url = URL(
                     "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents:runQuery"
                 )
+                val token = if (includeAuth) PermissionReporter.getSavedAuthToken(appCtx) else ""
                 conn = (url.openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
                     connectTimeout = 7000
                     readTimeout = 7000
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json")
-                    val token = PermissionReporter.getSavedAuthToken(appCtx)
                     if (token.isNotBlank()) {
                         setRequestProperty("Authorization", "Bearer $token")
                     }
@@ -438,7 +435,13 @@ class FirestoreOverlayBackgroundService : Service() {
                     writer.flush()
                 }
 
-                if (conn.responseCode in 200..299) {
+                val code = conn.responseCode
+                if ((code == 401 || code == 403) && includeAuth && token.isNotBlank()) {
+                    conn.disconnect()
+                    return fetchCollectionDocuments(appCtx, collectionName, pageSize, includeAuth = false)
+                }
+
+                if (code in 200..299) {
                     val responseStr = BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use {
                         it.readText()
                     }

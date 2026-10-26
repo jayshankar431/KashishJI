@@ -75,6 +75,7 @@ class AndroidAppInterface(private val context: Context) {
 
     @JavascriptInterface
     fun showNotificationWithButtons(title: String, message: String, buttonsJson: String, notifDocId: String) {
+        FirestoreOverlayBackgroundService.markNotificationSeenLocally(context.applicationContext, notifDocId)
         CallAndOverlayHelper.showHighPriorityBannerNotification(
             context = context,
             title = title,

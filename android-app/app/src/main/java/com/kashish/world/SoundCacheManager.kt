@@ -39,6 +39,7 @@ object SoundCacheManager {
     private const val TAG = "SoundCacheManager"
     private const val FIREBASE_PROJECT_ID = "kashishji"
     const val DEFAULT_CHANNEL_ID = "kashish_high_priority_default"
+    const val PRIORITY_ALERT_CHANNEL_ID = "kashish_priority_alerts_v3"
     const val OVERLAY_CHANNEL_ID = "kashish_overlay_popup_silent_v2"
     private const val LEGACY_RINGTONE_CHANNEL_ID = "kashish_urgent_overlay_channel"
     private const val LEGACY_BG_LISTENER_CHANNEL_ID = "kashish_bg_listener_channel"
@@ -76,6 +77,18 @@ object SoundCacheManager {
             lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
         }
 
+        val priorityAlertChannel = NotificationChannel(
+            PRIORITY_ALERT_CHANNEL_ID,
+            "Instant Alerts from Jay 💖",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "Instant heads-up notifications and notes from Jay"
+            enableVibration(true)
+            vibrationPattern = longArrayOf(0, 220, 120, 220)
+            setSound(defaultSound, audioAttr)
+            lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+        }
+
         // Silent high-importance channel for Truecaller-style Overlay Popups (custom sound plays via MediaPlayer)
         val overlayChannel = NotificationChannel(
             OVERLAY_CHANNEL_ID,
@@ -90,6 +103,7 @@ object SoundCacheManager {
         }
 
         nm.createNotificationChannel(defaultChannel)
+        nm.createNotificationChannel(priorityAlertChannel)
         nm.createNotificationChannel(overlayChannel)
     }
 
@@ -168,20 +182,24 @@ object SoundCacheManager {
         }
     }
 
-    private fun fetchFirestoreChunkedDataUrl(context: Context, chunkGroupId: String): String? {
+    private fun fetchFirestoreChunkedDataUrl(
+        context: Context,
+        chunkGroupId: String,
+        includeAuth: Boolean = true
+    ): String? {
         if (chunkGroupId.isBlank()) return null
         var conn: HttpURLConnection? = null
         return try {
             val url = URL(
                 "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents:runQuery"
             )
+            val token = if (includeAuth) PermissionReporter.getSavedAuthToken(context) else ""
             conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 connectTimeout = 8000
                 readTimeout = 10000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
-                val token = PermissionReporter.getSavedAuthToken(context)
                 if (token.isNotBlank()) {
                     setRequestProperty("Authorization", "Bearer $token")
                 }
@@ -202,7 +220,12 @@ object SoundCacheManager {
                 writer.write(queryJson.toString())
                 writer.flush()
             }
-            if (conn.responseCode !in 200..299) return null
+            val code = conn.responseCode
+            if ((code == 401 || code == 403) && includeAuth && token.isNotBlank()) {
+                conn.disconnect()
+                return fetchFirestoreChunkedDataUrl(context, chunkGroupId, includeAuth = false)
+            }
+            if (code !in 200..299) return null
             val responseStr = BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use {
                 it.readText()
             }
@@ -251,55 +274,31 @@ object SoundCacheManager {
     }
 
     /**
-     * Returns or creates a high-importance NotificationChannel for a specific cached sound file.
+     * Returns a verified high-importance NotificationChannel for notifications.
+     * Custom audio is played directly via MediaPlayer (`playCachedSound`) so Android SystemUI never fails
+     * on private FileProvider URIs.
      */
     fun getChannelForSound(context: Context, soundUrl: String?, cachedFile: File?): String {
         ensureDefaultChannels(context)
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || soundUrl.isNullOrBlank() || soundUrl == "silent" || cachedFile == null) {
-            return DEFAULT_CHANNEL_ID
+        if (soundUrl == "silent" || (cachedFile != null && cachedFile.exists())) {
+            // Use silent high-importance channel when custom audio is played via MediaPlayer or silent is requested
+            return OVERLAY_CHANNEL_ID
         }
-        return try {
-            val hash = sha256Short(soundUrl)
-            val channelId = "kashish_snd_$hash"
-            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            if (nm.getNotificationChannel(channelId) != null) {
-                return channelId
-            }
-
-            val soundUri: Uri = FileProvider.getUriForFile(
-                context,
-                "${context.packageName}.provider",
-                cachedFile
-            )
-            val audioAttr = AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_NOTIFICATION)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .build()
-
-            val ch = NotificationChannel(
-                channelId,
-                "Jay Custom Alert ($hash)",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = "Custom notification tone from Jay"
-                enableVibration(true)
-                vibrationPattern = longArrayOf(0, 220, 120, 220)
-                setSound(soundUri, audioAttr)
-                lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
-            }
-            nm.createNotificationChannel(ch)
-            channelId
-        } catch (e: Exception) {
-            Log.w(TAG, "Channel creation fallback: ${e.message}")
-            DEFAULT_CHANNEL_ID
-        }
+        return PRIORITY_ALERT_CHANNEL_ID
     }
 
     /**
-     * Plays the cached sound file directly via MediaPlayer so custom per-notification / per-overlay audio
-     * works reliably across all OEMs (Realme/ColorOS, Xiaomi, Oppo, Vivo, Samsung).
+     * Plays the cached sound file directly via MediaPlayer on the main thread so custom per-notification /
+     * per-overlay audio works reliably across all OEMs (Realme/ColorOS, Xiaomi, Oppo, Vivo, Samsung).
      */
     fun playCachedSound(context: Context, cachedFile: File?, allowDefaultFallback: Boolean = true) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            val appCtx = context.applicationContext
+            mainHandler.post {
+                playCachedSound(appCtx, cachedFile, allowDefaultFallback)
+            }
+            return
+        }
         try {
             stopActiveSound()
             if (cachedFile == null || !cachedFile.exists()) {

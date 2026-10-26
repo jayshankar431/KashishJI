@@ -128,8 +128,7 @@ jobs:
           RELEASE_TITLE="Kashishhh APK v${VERSION_NAME} (versionCode: ${VERSION_CODE})"
           RELEASE_NOTES="Automatic Android APK build **v${VERSION_NAME}** (versionCode: ${VERSION_CODE}) from commit ${{ github.sha }}.
 
-          📱 **Direct 1-Click APK Download:** Neeche **Assets** me se **${APK_FILE}** par click karke seedha mobile me download aur install karein.
-          🔒 **Note:** Agar phone me purana APK pehle se installed hai aur 'Package conflicts with an existing package' aaye, to sirf 1 baar purana Kashishhh app Uninstall karke ye naya APK install karein. Iske baad aage ke saare updates bina uninstall kiye direct install honge!"
+          📱 **Direct 1-Click APK Download:** Tap **${APK_FILE}** under **Assets** below to download and install directly on your phone."
 
           # Delete any previous 'latest-apk' release so old APKs are completely removed
           gh release delete "$TAG_NAME" --yes --cleanup-tag >/dev/null 2>&1 || true

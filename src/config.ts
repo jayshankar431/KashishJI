@@ -72,14 +72,13 @@ export const CONFIG = {
 
   // 🛡️ Admin panel login (Firebase Authentication, Email/Password)
   // 1) Firebase Console -> Authentication -> Sign-in method -> Email/Password ON
-  // 2) Authentication -> Users -> Add user (yahi email + ek strong password)
-  // 3) Yahan apna wahi email likho aur firestore.rules me bhi SAME email likho
+  // 2) Authentication -> Users -> Add user (use this email + a strong password)
+  // 3) Set this same admin email here and in firestore.rules
   adminEmail: "jayshankar431@gmail.com",
 
   // 🤖 Telegram Bot Activity Tracking
   // Create a bot via @BotFather and get your Chat ID via @userinfobot
-  // ⚠️ Telegram band hai: bot token public repo/site me nahi rakh sakte (koi bhi chura sakta hai).
-  // Sab activity ab admin panel me dikhti hai. Purana token @BotFather -> /revoke se band karo.
+  // ⚠️ Do not store raw bot tokens in a public repo; all activity is tracked in the Admin Panel.
   telegramBot: {
     enabled: true,
     token: "USED_SERVER_SIDE",

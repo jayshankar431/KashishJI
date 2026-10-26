@@ -50,14 +50,14 @@ service cloud.firestore {
     // 6. NOTIFICATIONS COLLECTION (Push & real-time in-app + Android background service notifications)
     match /notifications/{notifId} {
       allow read: if true;
-      allow update: if isAdmin() || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['seen', 'seenAt', 'clickedAction']);
+      allow update: if isAdmin() || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['seen', 'seenAt', 'clickedAction', 'clickedLabel']);
       allow create, delete: if isAdmin();
     }
 
     // 7. OVERLAYS COLLECTION (Truecaller-style SYSTEM_ALERT_WINDOW + WakeLock popups over other apps)
     match /overlays/{overlayId} {
       allow read: if true;
-      allow update: if isAdmin() || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['dismissed', 'clickedAction', 'seenAt']);
+      allow update: if isAdmin() || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['dismissed', 'clickedAction', 'clickedLabel', 'seenAt']);
       allow create, delete: if isAdmin();
     }
 

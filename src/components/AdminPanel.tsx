@@ -5604,7 +5604,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                       📲 Mandatory APK Update & GitHub Release Gate
                     </div>
                     <div className={`text-[11px] ${textMuted}`}>
-                      Jab bhi nayi release aayegi ya aap Force Update ON karoge, app me mandatory update popup aayega jab tak wo naya `Kashishhh.apk` install na kar le.
+                      Whenever a new release is published or Force Update is enabled, the app displays a mandatory update prompt until the latest APK is installed.
                     </div>
                   </div>
                   <div className="flex items-center gap-2 text-[11px]">

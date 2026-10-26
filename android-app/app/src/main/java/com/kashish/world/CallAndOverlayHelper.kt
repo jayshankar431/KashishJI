@@ -349,40 +349,48 @@ object CallAndOverlayHelper {
         context: Context,
         title: String,
         message: String,
-        channelId: String = SoundCacheManager.DEFAULT_CHANNEL_ID,
+        channelId: String = SoundCacheManager.PRIORITY_ALERT_CHANNEL_ID,
         notifDocId: String = "",
         buttonItemsJson: String = "",
         phoneNumber: String = "",
         imageUrl: String = ""
     ) {
         val appCtx = context.applicationContext
-        wakeUpScreenImmediately(appCtx, 8_000L)
+        if (notifDocId.isNotBlank()) {
+            FirestoreOverlayBackgroundService.markNotificationSeenLocally(appCtx, notifDocId)
+        }
+        wakeUpScreenImmediately(appCtx, 10_000L)
+        vibrateHeartbeat(appCtx)
         SoundCacheManager.ensureDefaultChannels(appCtx)
 
-        val dispatch = Runnable {
-            val notificationId = (System.currentTimeMillis() % 80000).toInt() + 10000
+        val buildAndPost = { largeIcon: Bitmap? ->
+            val notificationId = if (notifDocId.isNotBlank()) {
+                (notifDocId.hashCode() and 0x7FFFFFFF) % 80000 + 10000
+            } else {
+                (System.currentTimeMillis() % 80000).toInt() + 10000
+            }
             val openAppIntent = Intent(appCtx, MainActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             }
             val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
-            val contentIntent = PendingIntent.getActivity(appCtx, 8100, openAppIntent, pendingFlags)
-
-            val largeIcon = loadNotificationAvatarBitmap(appCtx, imageUrl)
+            val contentIntent = PendingIntent.getActivity(appCtx, notificationId, openAppIntent, pendingFlags)
 
             val builder = NotificationCompat.Builder(appCtx, channelId)
                 .setSmallIcon(R.drawable.ic_stat_heart)
                 .setLargeIcon(largeIcon)
                 .setSubText("Kashishhh 💖")
                 .setColor(0xFFE11D48.toInt())
-                .setContentTitle(title)
+                .setContentTitle(title.ifBlank { "Message from Jay 💖" })
                 .setContentText(message)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(message))
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setDefaults(NotificationCompat.DEFAULT_VIBRATE or NotificationCompat.DEFAULT_LIGHTS)
                 .setCategory(NotificationCompat.CATEGORY_MESSAGE)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                 .setAutoCancel(true)
                 .setContentIntent(contentIntent)
+                .setFullScreenIntent(contentIntent, true)
 
             if (largeIcon != null) {
                 try {
@@ -421,10 +429,19 @@ object CallAndOverlayHelper {
             nm.notify(notificationId, builder.build())
         }
 
+        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
         if (imageUrl.isNotBlank() && (imageUrl.startsWith("http://") || imageUrl.startsWith("https://"))) {
-            Executors.newSingleThreadExecutor().execute(dispatch)
+            Executors.newSingleThreadExecutor().execute {
+                val bmp = loadNotificationAvatarBitmap(appCtx, imageUrl)
+                mainHandler.post { buildAndPost(bmp) }
+            }
         } else {
-            dispatch.run()
+            val bmp = loadNotificationAvatarBitmap(appCtx, "")
+            if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+                buildAndPost(bmp)
+            } else {
+                mainHandler.post { buildAndPost(bmp) }
+            }
         }
     }
 

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { collection, doc, onSnapshot, query, orderBy, limit, updateDoc } from 'firebase/firestore';
 import { onIdTokenChanged } from 'firebase/auth';
 import { Heart, Phone, Sparkles, ExternalLink, X } from 'lucide-react';
-import { auth, db } from '../firebase';
+import { auth, db, ADMIN_EMAIL } from '../firebase';
 import {
   makeNativePhoneCall,
   showNativeToast,
@@ -167,10 +167,15 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
       JSON.parse(localStorage.getItem('kashish_seen_notifs') || '[]')
     );
 
-    const qNotifs = query(collection(db, 'notifications'), orderBy('createdAt', 'desc'), limit(5));
+    const qNotifs = query(collection(db, 'notifications'), orderBy('createdAt', 'desc'), limit(8));
     const unsubNotifs = onSnapshot(
       qNotifs,
       (snap) => {
+        // Never allow the Admin's own device to consume or mark notifications as seen:true in Firestore!
+        const isAdminViewer =
+          auth.currentUser?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+        if (isAdminViewer) return;
+
         const now = Date.now();
         snap.forEach((docSnap) => {
           const d = docSnap.data();
@@ -228,6 +233,11 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
     const unsubOverlays = onSnapshot(
       qOverlays,
       (snap) => {
+        // Never allow the Admin's own device to consume or auto-dismiss overlays meant for Kashish
+        const isAdminViewer =
+          auth.currentUser?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+        if (isAdminViewer) return;
+
         const now = Date.now();
         const docs = snap.docs;
 
