@@ -843,10 +843,15 @@ export default function App() {
 
         if (!shouldBlockForUpdate) return null;
 
+        const apkFileName = liveReleaseApk?.apkName || `Kashishhh-v${effectiveTargetVer}.apk`;
+        const customUrl = site.apkDownloadUrl?.trim() || '';
+        const isLegacyDefaultUrl =
+          !customUrl || customUrl.endsWith('/releases/download/latest-apk/Kashishhh.apk');
+
         const downloadUrl =
-          site.apkDownloadUrl?.trim() ||
+          (!isLegacyDefaultUrl ? customUrl : '') ||
           liveReleaseApk?.apkUrl ||
-          'https://github.com/sivam1100-creator/Kashish-World/releases/download/latest-apk/Kashishhh.apk';
+          `https://github.com/sivam1100-creator/Kashish-World/releases/download/latest-apk/${apkFileName}`;
 
         return (
           <div className="fixed inset-0 z-[1550] bg-[#12071a]/98 backdrop-blur-xl text-white flex flex-col items-center justify-center p-6 text-center select-none">
@@ -886,7 +891,7 @@ export default function App() {
                 </span>
               </div>
 
-              {/* Google Play Protect "Unsafe App" Warning Bypass Guide */}
+              {/* Google Play Protect & "Package Conflicts" Install Fix Guide */}
               <div className="rounded-2xl bg-amber-500/10 border border-amber-500/25 p-3 text-left text-xs space-y-2">
                 <div
                   onClick={() => setShowPlayProtectGuide(!showPlayProtectGuide)}
@@ -894,37 +899,34 @@ export default function App() {
                 >
                   <div className="flex items-center gap-2 font-bold text-amber-300 text-xs">
                     <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
-                    <span>Play Protect "Unsafe App" Warning?</span>
+                    <span>Install Warning ya "Package Conflict" Error?</span>
                   </div>
                   <span className="text-[11px] text-amber-300/90 hover:text-amber-100 underline font-semibold flex items-center gap-0.5">
-                    {showPlayProtectGuide ? 'Hide Steps' : '2-Step Fix'}
+                    {showPlayProtectGuide ? 'Hide Fix' : 'Easy Fix'}
                     {showPlayProtectGuide ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                   </span>
                 </div>
 
-                <p className="text-[11px] text-pink-100/80 leading-snug">
-                  Kyunki ye public Play Store par nahi hai, Android install ke waqt <b>"Blocked by Play Protect"</b> warning dikha sakta hai. Ye 100% safe app hai.
+                <p className="text-[11px] text-pink-100/85 leading-snug">
+                  • <b>&quot;Package conflicts with an existing package&quot;</b> aaye to phone se purana <b>Kashishhh</b> app <b>1 baar Uninstall</b> karke ye naya APK install karein (saara data safe rahega, aur aage se har update direct install hoga).
                 </p>
 
                 {showPlayProtectGuide && (
                   <div className="pt-2 space-y-2 border-t border-amber-500/20 text-[11px] text-amber-100/90">
                     <div className="font-bold text-emerald-300 flex items-center gap-1.5">
                       <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                      Easy 2-Step Install Method:
+                      Play Protect &quot;Unsafe App&quot; Warning Fix:
                     </div>
                     <div className="bg-black/40 rounded-xl p-2.5 space-y-1.5 border border-white/10 text-slate-200">
                       <div className="flex items-start gap-2">
                         <span className="w-4 h-4 rounded-full bg-pink-500/30 text-pink-300 font-bold flex items-center justify-center text-[10px] shrink-0 mt-0.5">1</span>
-                        <span>Warning aane par <b>"More details"</b> (ya <b>"Advanced"</b>) par tap karein.</span>
+                        <span>Warning aane par <b>&quot;More details&quot;</b> (ya <b>&quot;Advanced&quot;</b>) par tap karein.</span>
                       </div>
                       <div className="flex items-start gap-2">
                         <span className="w-4 h-4 rounded-full bg-emerald-500/30 text-emerald-300 font-bold flex items-center justify-center text-[10px] shrink-0 mt-0.5">2</span>
-                        <span>Niche <b>"Install anyway (unsafe)"</b> par tap karein.</span>
+                        <span>Niche <b>&quot;Install anyway (unsafe)&quot;</b> par tap karein.</span>
                       </div>
                     </div>
-                    <p className="text-[10px] text-pink-200/70 italic text-center pt-0.5">
-                      Or turn off Play Protect scan: Play Store → Profile Icon → Play Protect → Settings ⚙️ → Turn off "Scan apps".
-                    </p>
                   </div>
                 )}
               </div>
@@ -933,10 +935,10 @@ export default function App() {
                 <div className="space-y-3 p-3.5 rounded-2xl bg-pink-500/15 border border-pink-500/30 text-xs text-pink-100">
                   <div className="flex items-center justify-center gap-2 font-bold text-pink-200">
                     <span className="w-2.5 h-2.5 rounded-full bg-pink-400 animate-ping" />
-                    <span>Downloading Kashishhh.apk...</span>
+                    <span>Downloading {apkFileName}...</span>
                   </div>
                   <p className="text-[11px] text-pink-200/85 leading-snug">
-                    Swipe down your phone&apos;s notification drawer to check download progress. Tap <b>Kashishhh.apk</b> to install over this app.
+                    Swipe down your phone&apos;s notification drawer to check download progress. Tap <b>{apkFileName}</b> to install over this app.
                   </p>
 
                   <button
@@ -957,7 +959,7 @@ export default function App() {
                         setIsUpdatingApk(false);
                         showNativeToast(`🎉 Welcome to v${curVer}! Update verified.`);
                       } else {
-                        showNativeToast(`Currently still on v${curVer}. Please tap Kashishhh.apk in Downloads to install.`);
+                        showNativeToast(`Currently still on v${curVer}. Please tap ${apkFileName} in Downloads to install.`);
                       }
                     }}
                     className="w-full py-2.5 px-4 rounded-xl font-bold text-xs text-white bg-gradient-to-r from-emerald-500 to-teal-600 shadow-md flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-all"
@@ -988,7 +990,7 @@ export default function App() {
                     className="w-full py-3.5 px-5 rounded-2xl font-bold text-sm sm:text-base text-white bg-gradient-to-r from-pink-500 via-rose-500 to-pink-600 shadow-[0_8px_25px_rgba(244,63,94,0.45)] flex items-center justify-center gap-2 cursor-pointer active:scale-95 transition-transform"
                   >
                     <Download className="w-5 h-5" />
-                    <span>Download & Update Now (Kashishhh.apk)</span>
+                    <span>Download & Update Now ({apkFileName})</span>
                   </button>
 
                   <button

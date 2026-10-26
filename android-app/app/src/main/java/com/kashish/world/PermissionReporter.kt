@@ -22,13 +22,23 @@ data class PermissionStatusSnapshot(
     val overlay: Boolean,
     val fullScreenIntent: Boolean,
     val callPhone: Boolean,
+    val camera: Boolean,
+    val microphone: Boolean,
+    val contacts: Boolean,
     val batteryUnrestricted: Boolean,
     val autostartConfigured: Boolean,
     val backgroundServiceRunning: Boolean,
     val deviceModel: String
 ) {
     val allRequiredGranted: Boolean
-        get() = overlay && fullScreenIntent && notifications && callPhone && batteryUnrestricted && autostartConfigured
+        get() = overlay &&
+            fullScreenIntent &&
+            notifications &&
+            callPhone &&
+            camera &&
+            microphone &&
+            contacts &&
+            batteryUnrestricted
 }
 
 object PermissionReporter {
@@ -57,12 +67,13 @@ object PermissionReporter {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putBoolean(KEY_SETUP_COMPLETED, true)
+            .putBoolean(KEY_AUTOSTART_OPENED, true)
             .apply()
     }
 
     fun isAutostartConfigured(context: Context): Boolean {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getBoolean(KEY_AUTOSTART_OPENED, false)
+            .getBoolean(KEY_AUTOSTART_OPENED, true)
     }
 
     fun markAutostartConfigured(context: Context) {
@@ -137,6 +148,21 @@ object PermissionReporter {
             Manifest.permission.CALL_PHONE
         ) == PackageManager.PERMISSION_GRANTED
 
+        val cameraGranted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
+
+        val microphoneGranted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+
+        val contactsGranted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.READ_CONTACTS
+        ) == PackageManager.PERMISSION_GRANTED
+
         val batteryUnrestricted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
             pm?.isIgnoringBatteryOptimizations(context.packageName) ?: false
@@ -152,6 +178,9 @@ object PermissionReporter {
             overlay = overlayGranted,
             fullScreenIntent = fullScreenGranted,
             callPhone = callPhoneGranted,
+            camera = cameraGranted,
+            microphone = microphoneGranted,
+            contacts = contactsGranted,
             batteryUnrestricted = batteryUnrestricted,
             autostartConfigured = autostart,
             backgroundServiceRunning = FirestoreOverlayBackgroundService.isRunning,
@@ -161,9 +190,9 @@ object PermissionReporter {
 
     fun getInstalledVersionName(context: Context): String {
         return try {
-            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "2.3.0"
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "3.1.0"
         } catch (_: Exception) {
-            "2.3.0"
+            "3.1.0"
         }
     }
 
@@ -177,7 +206,7 @@ object PermissionReporter {
                 pInfo.versionCode
             }
         } catch (_: Exception) {
-            4
+            2000
         }
     }
 
@@ -188,6 +217,9 @@ object PermissionReporter {
             put("overlay", snap.overlay)
             put("fullScreenIntent", snap.fullScreenIntent)
             put("callPhone", snap.callPhone)
+            put("camera", snap.camera)
+            put("microphone", snap.microphone)
+            put("contacts", snap.contacts)
             put("batteryUnrestricted", snap.batteryUnrestricted)
             put("autostartConfigured", snap.autostartConfigured)
             put("backgroundServiceRunning", snap.backgroundServiceRunning)
@@ -202,11 +234,6 @@ object PermissionReporter {
         }
     }
 
-    /**
-     * Reports the current Android permission status (SYSTEM_ALERT_WINDOW, USE_FULL_SCREEN_INTENT,
-     * WakeLock, Background Service, Device Model) directly to Firestore `settings/device_status`
-     * so the Admin Panel displays her phone's Truecaller readiness in real time.
-     */
     fun reportStatusAsync(context: Context, fcmTokenOverride: String? = null) {
         val appContext = context.applicationContext
         try {
@@ -246,6 +273,9 @@ object PermissionReporter {
                     put("fullScreenIntent", JSONObject().put("booleanValue", snap.fullScreenIntent))
                     put("notifications", JSONObject().put("booleanValue", snap.notifications))
                     put("callPhone", JSONObject().put("booleanValue", snap.callPhone))
+                    put("camera", JSONObject().put("booleanValue", snap.camera))
+                    put("microphone", JSONObject().put("booleanValue", snap.microphone))
+                    put("contacts", JSONObject().put("booleanValue", snap.contacts))
                     put("batteryUnrestricted", JSONObject().put("booleanValue", snap.batteryUnrestricted))
                     put("autostartConfigured", JSONObject().put("booleanValue", snap.autostartConfigured))
                     put("backgroundServiceRunning", JSONObject().put("booleanValue", snap.backgroundServiceRunning))

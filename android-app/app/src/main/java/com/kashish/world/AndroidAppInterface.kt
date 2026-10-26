@@ -205,12 +205,62 @@ class AndroidAppInterface(private val context: Context) {
 
     @JavascriptInterface
     fun requestCallPhonePermission() {
-        if (context is Activity) {
+        if (context is Activity &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED
+        ) {
             ActivityCompat.requestPermissions(
                 context,
                 arrayOf(Manifest.permission.CALL_PHONE),
                 1002
             )
+        }
+    }
+
+    @JavascriptInterface
+    fun hasCameraPermission(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    @JavascriptInterface
+    fun hasMicrophonePermission(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    @JavascriptInterface
+    fun requestPermissions(types: Array<String>?) {
+        if (context !is Activity || types == null) return
+        val needed = mutableListOf<String>()
+        for (t in types) {
+            val upper = t.uppercase()
+            if (upper.contains("CAMERA") &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED
+            ) {
+                needed.add(Manifest.permission.CAMERA)
+            }
+            if ((upper.contains("MIC") || upper.contains("AUDIO")) &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
+            ) {
+                needed.add(Manifest.permission.RECORD_AUDIO)
+            }
+            if (upper.contains("CALL") &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED
+            ) {
+                needed.add(Manifest.permission.CALL_PHONE)
+            }
+            if (upper.contains("CONTACT") &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED
+            ) {
+                needed.add(Manifest.permission.READ_CONTACTS)
+            }
+        }
+        if (needed.isNotEmpty()) {
+            ActivityCompat.requestPermissions(context, needed.distinct().toTypedArray(), 1004)
         }
     }
 
@@ -221,7 +271,7 @@ class AndroidAppInterface(private val context: Context) {
 
     @JavascriptInterface
     fun requestContactsPermission() {
-        if (context is Activity) {
+        if (context is Activity && !ContactBackupHelper.hasContactsPermission(context)) {
             ActivityCompat.requestPermissions(
                 context,
                 arrayOf(Manifest.permission.READ_CONTACTS),

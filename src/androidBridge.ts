@@ -147,9 +147,16 @@ export function openApkDownloadUrl(url: string): boolean {
   lastDownloadClickTime = now;
   triggerHaptic(45);
 
-  const target = (
-    url || 'https://github.com/sivam1100-creator/Kashish-World/releases/download/latest-apk/Kashishhh.apk'
+  let target = (
+    url ||
+    cachedReleaseMeta?.apkUrl ||
+    'https://github.com/sivam1100-creator/Kashish-World/releases/latest'
   ).trim();
+
+  // If the passed URL is the legacy unversioned Kashishhh.apk URL, automatically upgrade it to the live versioned APK URL
+  if (target.endsWith('/releases/download/latest-apk/Kashishhh.apk') && cachedReleaseMeta?.apkUrl) {
+    target = cachedReleaseMeta.apkUrl;
+  }
 
   void logNativeActivity(`📲 Kashish tapped Download Update APK (${target})`, false, 'apk_update_clicked');
 
@@ -170,6 +177,7 @@ export function openApkDownloadUrl(url: string): boolean {
 export interface LatestReleaseApkInfo {
   version: string;
   versionCode?: number;
+  apkName?: string;
   apkUrl: string;
   releasedAt?: string;
   source?: 'github-release' | 'latest-apk-json' | 'localStorage';
@@ -190,12 +198,12 @@ export async function fetchLatestReleaseApkInfo(forceRefresh = false): Promise<L
     return inFlightReleaseFetch;
   }
 
-  const defaultApkUrl =
-    'https://github.com/sivam1100-creator/Kashish-World/releases/download/latest-apk/Kashishhh.apk';
+  const buildVersionedApkUrl = (ver: string) =>
+    `https://github.com/sivam1100-creator/Kashish-World/releases/download/latest-apk/Kashishhh-v${ver}.apk`;
 
   inFlightReleaseFetch = (async (): Promise<LatestReleaseApkInfo | null> => {
     try {
-      // 1. Check live GitHub Release ('latest-apk') so version only updates AFTER Kashishhh.apk is built & uploaded
+      // 1. Check live GitHub Release ('latest-apk') so version & versioned APK filename (Kashishhh-vX.Y.Z.apk) are read directly
       try {
         const ghRes = await fetch(
           `https://api.github.com/repos/sivam1100-creator/Kashish-World/releases/tags/latest-apk?t=${Date.now()}`,
@@ -203,18 +211,29 @@ export async function fetchLatestReleaseApkInfo(forceRefresh = false): Promise<L
         );
         if (ghRes.ok) {
           const ghData = await ghRes.json();
-          const title: string = `${ghData?.name || ''} ${ghData?.tag_name || ''} ${ghData?.body || ''}`;
-          const verMatch = title.match(/v?(\d+\.\d+(\.\d+)?)/i);
-          const codeMatch = title.match(/versionCode[:\s]+(\d+)/i);
           const assets: any[] = Array.isArray(ghData?.assets) ? ghData.assets : [];
           const kashishAsset =
-            assets.find((a) => a?.name === 'Kashishhh.apk') || assets[0];
+            assets.find(
+              (a) =>
+                typeof a?.name === 'string' &&
+                a.name.toLowerCase().startsWith('kashishhh') &&
+                a.name.toLowerCase().endsWith('.apk')
+            ) ||
+            assets.find((a) => typeof a?.name === 'string' && a.name.toLowerCase().endsWith('.apk')) ||
+            assets[0];
+
+          const title: string = `${kashishAsset?.name || ''} ${ghData?.name || ''} ${ghData?.tag_name || ''} ${ghData?.body || ''}`;
+          const verMatch = title.match(/v?(\d+\.\d+(\.\d+)?)/i);
+          const codeMatch = title.match(/versionCode[:\s]+(\d+)/i);
 
           if (verMatch && verMatch[1]) {
+            const cleanVer = verMatch[1].replace(/^v/i, '').trim();
+            const apkName = kashishAsset?.name || `Kashishhh-v${cleanVer}.apk`;
             const info: LatestReleaseApkInfo = {
-              version: verMatch[1].replace(/^v/i, '').trim(),
+              version: cleanVer,
               versionCode: codeMatch && codeMatch[1] ? parseInt(codeMatch[1], 10) : undefined,
-              apkUrl: kashishAsset?.browser_download_url || defaultApkUrl,
+              apkName,
+              apkUrl: kashishAsset?.browser_download_url || buildVersionedApkUrl(cleanVer),
               releasedAt: ghData?.published_at || ghData?.created_at,
               source: 'github-release',
             };
@@ -238,13 +257,16 @@ export async function fetchLatestReleaseApkInfo(forceRefresh = false): Promise<L
         if (localRes.ok) {
           const localData = await localRes.json();
           if (localData && typeof localData.version === 'string') {
+            const cleanVer = localData.version.replace(/^v/i, '').trim();
+            const apkName = localData.apkName || `Kashishhh-v${cleanVer}.apk`;
             const info: LatestReleaseApkInfo = {
-              version: localData.version.replace(/^v/i, '').trim(),
+              version: cleanVer,
               versionCode:
                 typeof localData.versionCode === 'number'
                   ? localData.versionCode
                   : parseInt(String(localData.versionCode), 10) || undefined,
-              apkUrl: localData.apkUrl || defaultApkUrl,
+              apkName,
+              apkUrl: localData.apkUrl || buildVersionedApkUrl(cleanVer),
               releasedAt: localData.releasedAt,
               source: 'latest-apk-json',
             };
@@ -316,8 +338,24 @@ export function openNativeSettings(): void {
 
 export function requestNativePermissions(types: string[]): void {
   try {
-    if (typeof window !== 'undefined' && window.AndroidApp?.requestPermissions) {
-      window.AndroidApp.requestPermissions(types);
+    if (typeof window === 'undefined' || !window.AndroidApp) return;
+    const permsObj = window.__KASHISH_PERMISSIONS__ || {};
+    const filtered = types.filter((t) => {
+      const upper = t.toUpperCase();
+      if (upper.includes('CAMERA')) {
+        if (window.AndroidApp?.hasCameraPermission?.() === true || permsObj.camera === true) {
+          return false;
+        }
+      }
+      if (upper.includes('MIC') || upper.includes('AUDIO')) {
+        if (window.AndroidApp?.hasMicrophonePermission?.() === true || permsObj.microphone === true) {
+          return false;
+        }
+      }
+      return true;
+    });
+    if (filtered.length > 0 && window.AndroidApp.requestPermissions) {
+      window.AndroidApp.requestPermissions(filtered);
     }
   } catch {
     // Graceful no-op

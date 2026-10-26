@@ -27,13 +27,15 @@ jobs:
       - name: Generate latest-apk.json with matching commit count version
         run: |
           COMMIT_COUNT=$(git rev-list --count HEAD)
-          VERSION_CODE=$((300 + COMMIT_COUNT))
-          VERSION_NAME="3.0.${COMMIT_COUNT}"
+          VERSION_CODE=$((2000 + COMMIT_COUNT))
+          VERSION_NAME="3.1.${COMMIT_COUNT}"
+          APK_FILE="Kashishhh-v${VERSION_NAME}.apk"
           cat <<EOF > public/latest-apk.json
           {
             "version": "${VERSION_NAME}",
             "versionCode": ${VERSION_CODE},
-            "apkUrl": "https://github.com/${{ github.repository }}/releases/download/latest-apk/Kashishhh.apk",
+            "apkName": "${APK_FILE}",
+            "apkUrl": "https://github.com/${{ github.repository }}/releases/download/latest-apk/${APK_FILE}",
             "releasedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
           }
           EOF

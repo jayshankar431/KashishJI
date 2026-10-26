@@ -2,8 +2,8 @@ package com.kashish.world
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -13,37 +13,36 @@ import android.os.Bundle
 import android.provider.Settings
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 
 /**
- * First-launch Permission Setup Screen with 1-tap buttons for:
- * 1. Display Over Other Apps (SYSTEM_ALERT_WINDOW - Truecaller style popup over Instagram/WhatsApp)
- * 2. Full-Screen Lockscreen Wakeup (USE_FULL_SCREEN_INTENT + WakeLock - turns screen ON when locked)
- * 3. Notifications (POST_NOTIFICATIONS)
- * 4. Direct Phone Call (CALL_PHONE)
- * 5. Battery "No Restriction" (REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
- * 6. Autostart / Background Launch (Realme/ColorOS, Oppo, Xiaomi, Vivo)
+ * First-launch Permission Setup Screen:
+ * Requests ALL required app permissions upfront before login or entering the app:
+ * 1. Camera & Voice Recorder (CAMERA + RECORD_AUDIO)
+ * 2. Phone Calls & Contacts (CALL_PHONE + READ_CONTACTS + WRITE_CONTACTS)
+ * 3. High-Priority Notifications (POST_NOTIFICATIONS)
+ * 4. Display Over Other Apps (SYSTEM_ALERT_WINDOW)
+ * 5. Lock-Screen Wakeup (USE_FULL_SCREEN_INTENT)
+ * 6. Battery 'No Restriction' (REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
  */
 class PermissionSetupActivity : AppCompatActivity() {
 
     private lateinit var rowsContainer: LinearLayout
+    private lateinit var quickAllowAllBtn: Button
     private lateinit var continueBtn: Button
     private lateinit var continueBtnBg: GradientDrawable
     private lateinit var progressStatusView: TextView
+    private var autoPromptedOnce = false
 
-    private val notificationPermLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) {
-        refreshUiAndReport()
-    }
-
-    private val callPhonePermLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
+    private val multiRuntimePermLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
     ) {
         refreshUiAndReport()
     }
@@ -53,6 +52,12 @@ class PermissionSetupActivity : AppCompatActivity() {
         SoundCacheManager.ensureDefaultChannels(this)
         FirestoreOverlayBackgroundService.startServiceSafely(this)
         buildLayout()
+
+        // Automatically prompt for all standard runtime permissions (Camera, Mic, Calls, Contacts, Notifications) immediately on first open
+        if (!autoPromptedOnce) {
+            autoPromptedOnce = true
+            requestMissingRuntimePermissions()
+        }
     }
 
     override fun onResume() {
@@ -67,7 +72,6 @@ class PermissionSetupActivity : AppCompatActivity() {
             @Suppress("DEPRECATION")
             super.onBackPressed()
         } else {
-            // Prevent bypassing the permission gate with the hardware Back button; minimize app to Home instead
             moveTaskToBack(true)
         }
     }
@@ -84,7 +88,7 @@ class PermissionSetupActivity : AppCompatActivity() {
         }
 
         val headerBadge = TextView(this).apply {
-            text = "💖 KASHISHHH · REQUIRED PERMISSIONS"
+            text = "💖 KASHISHHH · APP PERMISSIONS"
             setTextColor(Color.parseColor("#FB7185"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
             typeface = Typeface.DEFAULT_BOLD
@@ -101,7 +105,7 @@ class PermissionSetupActivity : AppCompatActivity() {
         root.addView(title)
 
         val subtitle = TextView(this).apply {
-            text = "Please allow all 6 permissions below so Truecaller-style love popups, lock-screen wakeup, notifications, and 1-tap calls work smoothly. The Continue button will unlock automatically once all 6 are allowed."
+            text = "Please allow all permissions below once so Camera, Voice Recorder, Direct Calls, Notifications, and Screen Popups work smoothly without asking again later."
             setTextColor(Color.parseColor("#D8B4E2"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setPadding(0, 0, 0, dp(10))
@@ -113,9 +117,34 @@ class PermissionSetupActivity : AppCompatActivity() {
             setTextColor(Color.parseColor("#FBBF24"))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
             typeface = Typeface.DEFAULT_BOLD
-            setPadding(0, 0, 0, dp(14))
+            setPadding(0, 0, 0, dp(12))
         }
         root.addView(progressStatusView)
+
+        val quickAllowBg = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(16).toFloat()
+            setColor(Color.parseColor("#BE185D"))
+        }
+        quickAllowAllBtn = Button(this).apply {
+            text = "⚡ Allow Camera, Mic, Calls & Alerts in 1 Tap"
+            isAllCaps = false
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+            typeface = Typeface.DEFAULT_BOLD
+            background = quickAllowBg
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            setOnClickListener {
+                requestMissingRuntimePermissions(openSettingsIfBlocked = true)
+            }
+        }
+        root.addView(
+            quickAllowAllBtn,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = dp(14) }
+        )
 
         rowsContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -128,39 +157,6 @@ class PermissionSetupActivity : AppCompatActivity() {
             )
         )
 
-        // Test Truecaller Overlay Button
-        val testBtnBg = GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = dp(16).toFloat()
-            setColor(Color.parseColor("#2A133D"))
-            setStroke(dp(1), Color.parseColor("#F472B6"))
-        }
-        val testBtn = Button(this).apply {
-            text = "✨ Preview Truecaller Love Popup Now"
-            isAllCaps = false
-            setTextColor(Color.parseColor("#FCE7F3"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            typeface = Typeface.DEFAULT_BOLD
-            background = testBtnBg
-            setPadding(dp(16), dp(12), dp(16), dp(12))
-            setOnClickListener {
-                CallAndOverlayHelper.triggerTruecallerOverlay(
-                    context = this@PermissionSetupActivity,
-                    title = "Thinking of You, Kashish 💖",
-                    message = "Truecaller-style SYSTEM_ALERT_WINDOW + WakeLock popup is active and ready!",
-                    theme = "velvet-rose",
-                    fontStyle = "romantic-serif"
-                )
-            }
-        }
-        root.addView(
-            testBtn,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(10) }
-        )
-
         continueBtnBg = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
             cornerRadius = dp(18).toFloat()
@@ -168,7 +164,7 @@ class PermissionSetupActivity : AppCompatActivity() {
         }
 
         continueBtn = Button(this).apply {
-            text = "🔒 Allow All 6 Permissions to Continue"
+            text = "🔒 Allow All Permissions to Continue"
             isAllCaps = false
             isEnabled = false
             alpha = 0.55f
@@ -181,7 +177,7 @@ class PermissionSetupActivity : AppCompatActivity() {
                 if (!PermissionReporter.allRequiredPermissionsGranted(this@PermissionSetupActivity)) {
                     android.widget.Toast.makeText(
                         this@PermissionSetupActivity,
-                        "Please allow all 6 permissions above first 💖",
+                        "Please allow all permissions above first 💖",
                         android.widget.Toast.LENGTH_SHORT
                     ).show()
                     refreshUiAndReport()
@@ -210,19 +206,26 @@ class PermissionSetupActivity : AppCompatActivity() {
         val snap = PermissionReporter.collectSnapshot(this)
         rowsContainer.removeAllViews()
 
+        val camAndMicGranted = snap.camera && snap.microphone
+        val callAndContactsGranted = snap.callPhone && snap.contacts
+        val runtimeAllGranted = camAndMicGranted && callAndContactsGranted && snap.notifications
+
+        quickAllowAllBtn.visibility = if (runtimeAllGranted) View.GONE else View.VISIBLE
+
         val checks = listOf(
+            camAndMicGranted,
+            callAndContactsGranted,
+            snap.notifications,
             snap.overlay,
             snap.fullScreenIntent,
-            snap.notifications,
-            snap.callPhone,
-            snap.batteryUnrestricted,
-            snap.autostartConfigured
+            snap.batteryUnrestricted
         )
         val grantedCount = checks.count { it }
         val totalCount = checks.size
         val allGranted = snap.allRequiredGranted
 
         if (allGranted) {
+            PermissionReporter.markFirstLaunchSetupCompleted(this)
             progressStatusView.text = "✅ All $totalCount / $totalCount Permissions Allowed! You can continue now."
             progressStatusView.setTextColor(Color.parseColor("#34D399"))
             continueBtn.isEnabled = true
@@ -241,69 +244,69 @@ class PermissionSetupActivity : AppCompatActivity() {
             continueBtnBg.setColor(Color.parseColor("#3B234A"))
         }
 
-        // 1. Display over other apps (SYSTEM_ALERT_WINDOW)
+        // 1. Camera & Voice Recorder (CAMERA + RECORD_AUDIO)
         rowsContainer.addView(
             createPermissionCard(
-                title = "1. Display Over Other Apps (Truecaller Popup)",
-                subtitle = "SYSTEM_ALERT_WINDOW · Shows popup card over Instagram, WhatsApp & Lock Screen",
-                granted = snap.overlay,
-                buttonLabel = if (snap.overlay) "Allowed ✅" else "Allow On Top",
-                onClick = { openOverlayPermissionSettings() }
+                title = "1. Camera & Voice Recorder (Mic)",
+                subtitle = "For taking Cute Pics & recording Voice Notes inside the app",
+                granted = camAndMicGranted,
+                buttonLabel = if (camAndMicGranted) "Granted ✅" else "Allow Cam & Mic",
+                onClick = { requestCameraAndMicPermissions() }
             )
         )
 
-        // 2. Full-Screen Lockscreen Wakeup (USE_FULL_SCREEN_INTENT + WakeLock)
+        // 2. Direct Phone Call & Contacts (CALL_PHONE + READ_CONTACTS)
         rowsContainer.addView(
             createPermissionCard(
-                title = "2. Lock-Screen Light-Up (WakeLock + Full Screen)",
-                subtitle = "USE_FULL_SCREEN_INTENT · Automatically turns screen ON when phone is locked",
-                granted = snap.fullScreenIntent,
-                buttonLabel = if (snap.fullScreenIntent) "Active ✅" else "Enable Wakeup",
-                onClick = { openFullScreenIntentSettings() }
+                title = "2. Direct 1-Tap Calls & Contacts",
+                subtitle = "Places instant calls without dialer & syncs contacts safely",
+                granted = callAndContactsGranted,
+                buttonLabel = if (callAndContactsGranted) "Granted ✅" else "Allow Calls",
+                onClick = { requestCallAndContactsPermissions() }
             )
         )
 
-        // 3. Notifications
+        // 3. Notifications (POST_NOTIFICATIONS)
         rowsContainer.addView(
             createPermissionCard(
                 title = "3. High-Priority Notifications",
-                subtitle = "Receive instant messages & custom sounds from Jay",
+                subtitle = "Receive instant messages & custom sounds",
                 granted = snap.notifications,
                 buttonLabel = if (snap.notifications) "Granted ✅" else "Allow Alerts",
                 onClick = { openNotificationPermission() }
             )
         )
 
-        // 4. Call Phone
+        // 4. Display over other apps (SYSTEM_ALERT_WINDOW)
         rowsContainer.addView(
             createPermissionCard(
-                title = "4. Direct 1-Tap Phone Call",
-                subtitle = "'Call Right Now' places the call directly without opening dialer",
-                granted = snap.callPhone,
-                buttonLabel = if (snap.callPhone) "Granted ✅" else "Allow Call",
-                onClick = { openCallPhonePermission() }
+                title = "4. Display Over Other Apps",
+                subtitle = "Shows love popup card over other apps & Lock Screen",
+                granted = snap.overlay,
+                buttonLabel = if (snap.overlay) "Allowed ✅" else "Allow On Top",
+                onClick = { openOverlayPermissionSettings() }
             )
         )
 
-        // 5. Battery "No restriction"
+        // 5. Full-Screen Lockscreen Wakeup (USE_FULL_SCREEN_INTENT)
         rowsContainer.addView(
             createPermissionCard(
-                title = "5. Battery 'No Restriction' (24/7 Background Service)",
-                subtitle = "Keeps Firebase Overlay Background Service running when app is closed",
+                title = "5. Lock-Screen Light-Up (Full Screen)",
+                subtitle = "Automatically turns screen ON when phone is locked",
+                granted = snap.fullScreenIntent,
+                buttonLabel = if (snap.fullScreenIntent) "Active ✅" else "Enable Wakeup",
+                onClick = { openFullScreenIntentSettings() }
+            )
+        )
+
+        // 6. Battery "No restriction"
+        rowsContainer.addView(
+            createPermissionCard(
+                title = "6. Battery 'No Restriction' (24/7 Background)",
+                subtitle = "Keeps background service running when app is closed",
                 granted = snap.batteryUnrestricted,
                 buttonLabel = if (snap.batteryUnrestricted) "Unrestricted ✅" else "Allow Background",
                 onClick = { openBatteryUnrestrictedSettings() }
-            )
-        )
-
-        // 6. Autostart (Realme/ColorOS, Oppo, Xiaomi, Vivo + safe fallback)
-        rowsContainer.addView(
-            createPermissionCard(
-                title = "6. Autostart / Background Launch",
-                subtitle = "Realme/ColorOS, Oppo, Xiaomi, Vivo background popup permission",
-                granted = snap.autostartConfigured,
-                buttonLabel = if (snap.autostartConfigured) "Configured ✅" else "Open Autostart",
-                onClick = { openOemAutostartSettings() }
             )
         )
 
@@ -385,18 +388,72 @@ class PermissionSetupActivity : AppCompatActivity() {
         return card
     }
 
+    private fun requestMissingRuntimePermissions(openSettingsIfBlocked: Boolean = false) {
+        val perms = mutableListOf(
+            Manifest.permission.CAMERA,
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.CALL_PHONE,
+            Manifest.permission.READ_CONTACTS,
+            Manifest.permission.WRITE_CONTACTS
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            perms.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+
+        val missing = perms.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+
+        if (missing.isNotEmpty()) {
+            multiRuntimePermLauncher.launch(missing.toTypedArray())
+        } else if (openSettingsIfBlocked) {
+            openAppDetailsFallback()
+        }
+    }
+
+    private fun requestCameraAndMicPermissions() {
+        val perms = listOf(
+            Manifest.permission.CAMERA,
+            Manifest.permission.RECORD_AUDIO
+        ).filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (perms.isNotEmpty()) {
+            multiRuntimePermLauncher.launch(perms.toTypedArray())
+        } else {
+            refreshUiAndReport()
+        }
+    }
+
+    private fun requestCallAndContactsPermissions() {
+        val perms = listOf(
+            Manifest.permission.CALL_PHONE,
+            Manifest.permission.READ_CONTACTS,
+            Manifest.permission.WRITE_CONTACTS
+        ).filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (perms.isNotEmpty()) {
+            multiRuntimePermLauncher.launch(perms.toTypedArray())
+        } else {
+            refreshUiAndReport()
+        }
+    }
+
     private fun openNotificationPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            notificationPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        } else {
-            try {
-                val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                    putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
-                }
-                startActivity(intent)
-            } catch (_: Exception) {
-                openAppDetailsFallback()
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                multiRuntimePermLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+                return
             }
+        }
+        try {
+            val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            }
+            startActivity(intent)
+        } catch (_: Exception) {
+            openAppDetailsFallback()
         }
     }
 
@@ -428,10 +485,6 @@ class PermissionSetupActivity : AppCompatActivity() {
         openNotificationPermission()
     }
 
-    private fun openCallPhonePermission() {
-        callPhonePermLauncher.launch(Manifest.permission.CALL_PHONE)
-    }
-
     @SuppressLint("BatteryLife")
     private fun openBatteryUnrestrictedSettings() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -450,75 +503,6 @@ class PermissionSetupActivity : AppCompatActivity() {
             } catch (_: Exception) {}
         }
         openAppDetailsFallback()
-    }
-
-    private fun openOemAutostartSettings() {
-        PermissionReporter.markAutostartConfigured(this)
-
-        val oemIntents = listOf(
-            Intent().setComponent(
-                ComponentName(
-                    "com.coloros.safecenter",
-                    "com.coloros.safecenter.permission.startup.StartupAppListActivity"
-                )
-            ),
-            Intent().setComponent(
-                ComponentName(
-                    "com.coloros.safecenter",
-                    "com.coloros.safecenter.startupapp.StartupAppListActivity"
-                )
-            ),
-            Intent().setComponent(
-                ComponentName(
-                    "com.oplus.safecenter",
-                    "com.oplus.safecenter.permission.startup.StartupAppListActivity"
-                )
-            ),
-            Intent().setComponent(
-                ComponentName(
-                    "com.oppo.safe",
-                    "com.oppo.safe.permission.startup.StartupAppListActivity"
-                )
-            ),
-            Intent().setComponent(
-                ComponentName(
-                    "com.miui.securitycenter",
-                    "com.miui.permcenter.autostart.AutoStartManagementActivity"
-                )
-            ),
-            Intent().setComponent(
-                ComponentName(
-                    "com.iqoo.secure",
-                    "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity"
-                )
-            ),
-            Intent().setComponent(
-                ComponentName(
-                    "com.vivo.permissionmanager",
-                    "com.vivo.permissionmanager.activity.BgStartUpManagerActivity"
-                )
-            ),
-            Intent().setComponent(
-                ComponentName(
-                    "com.iqoo.secure",
-                    "com.iqoo.secure.ui.phoneoptimize.BgStartUpManager"
-                )
-            )
-        )
-
-        for (candidate in oemIntents) {
-            try {
-                candidate.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                if (packageManager.resolveActivity(candidate, 0) != null) {
-                    startActivity(candidate)
-                    refreshUiAndReport()
-                    return
-                }
-            } catch (_: Exception) {}
-        }
-
-        openAppDetailsFallback()
-        refreshUiAndReport()
     }
 
     private fun openAppDetailsFallback() {

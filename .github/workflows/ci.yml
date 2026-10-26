@@ -93,36 +93,44 @@ jobs:
             }
           '
 
-      - name: Build Debug APK
+      - name: Build Signed Release APK (Consistent Certificate)
         run: |
           COMMIT_COUNT=$(git rev-list --count HEAD)
-          VERSION_CODE=$((300 + COMMIT_COUNT))
-          VERSION_NAME="3.0.${COMMIT_COUNT}"
-          gradle :app:assembleDebug -PversionCodeProp="$VERSION_CODE" -PversionNameProp="$VERSION_NAME" --no-daemon --stacktrace
-          cp android-app/app/build/outputs/apk/debug/app-debug.apk Kashishhh.apk
+          VERSION_CODE=$((2000 + COMMIT_COUNT))
+          VERSION_NAME="3.1.${COMMIT_COUNT}"
+          APK_FILE="Kashishhh-v${VERSION_NAME}.apk"
+          gradle :app:assembleRelease -PversionCodeProp="$VERSION_CODE" -PversionNameProp="$VERSION_NAME" --no-daemon --stacktrace
+          if [ -f "android-app/app/build/outputs/apk/release/app-release.apk" ]; then
+            cp "android-app/app/build/outputs/apk/release/app-release.apk" "$APK_FILE"
+          else
+            gradle :app:assembleDebug -PversionCodeProp="$VERSION_CODE" -PversionNameProp="$VERSION_NAME" --no-daemon --stacktrace
+            cp "android-app/app/build/outputs/apk/debug/app-debug.apk" "$APK_FILE"
+          fi
+          echo "APK_FILE=$APK_FILE" >> $GITHUB_ENV
+          echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_ENV
+          echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_ENV
 
-      - name: Upload Kashishhh.apk Artifact (.zip)
+      - name: Upload Versioned APK Artifact (.zip)
         uses: actions/upload-artifact@v4
         with:
-          name: Kashishhh-apk
-          path: Kashishhh.apk
+          name: Kashishhh-v${{ env.VERSION_NAME }}-apk
+          path: ${{ env.APK_FILE }}
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish Only Kashishhh.apk to GitHub Releases
+      - name: Publish Versioned APK to GitHub Releases
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          COMMIT_COUNT=$(git rev-list --count HEAD)
-          VERSION_NAME="3.0.${COMMIT_COUNT}"
           TAG_NAME="latest-apk"
-          RELEASE_TITLE="Kashishhh APK v${VERSION_NAME}"
-          RELEASE_NOTES="Automatic Android APK build **v${VERSION_NAME}** from commit ${{ github.sha }}.
+          RELEASE_TITLE="Kashishhh APK v${VERSION_NAME} (versionCode: ${VERSION_CODE})"
+          RELEASE_NOTES="Automatic Android APK build **v${VERSION_NAME}** (versionCode: ${VERSION_CODE}) from commit ${{ github.sha }}.
 
-          📱 **Direct 1-Click APK Download:** Neeche **Assets** me se **Kashishhh.apk** par click karke seedha mobile me download aur install karein."
+          📱 **Direct 1-Click APK Download:** Neeche **Assets** me se **${APK_FILE}** par click karke seedha mobile me download aur install karein.
+          🔒 **Note:** Agar phone me purana APK pehle se installed hai aur 'Package conflicts with an existing package' aaye, to sirf 1 baar purana Kashishhh app Uninstall karke ye naya APK install karein. Iske baad aage ke saare updates bina uninstall kiye direct install honge!"
 
-          # Delete any previous 'latest-apk' release so old KashishWorld.apk or duplicate APKs are completely removed
+          # Delete any previous 'latest-apk' release so old APKs are completely removed
           gh release delete "$TAG_NAME" --yes --cleanup-tag >/dev/null 2>&1 || true
 
           git config user.name "github-actions[bot]"
@@ -130,11 +138,11 @@ jobs:
           git tag -f "$TAG_NAME" "${{ github.sha }}"
           git push origin "$TAG_NAME" --force
 
-          gh release create "$TAG_NAME" Kashishhh.apk --title "$RELEASE_TITLE" --notes "$RELEASE_NOTES" --latest
+          gh release create "$TAG_NAME" "$APK_FILE" --title "$RELEASE_TITLE" --notes "$RELEASE_NOTES" --latest
 
-          echo "### 📱 Direct Android APK Download — v${VERSION_NAME}" >> $GITHUB_STEP_SUMMARY
+          echo "### 📱 Direct Android APK Download — v${VERSION_NAME} (versionCode: ${VERSION_CODE})" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "👉 **[Click Here to Download Kashishhh.apk Directly](https://github.com/${{ github.repository }}/releases/download/latest-apk/Kashishhh.apk)**" >> $GITHUB_STEP_SUMMARY
+          echo "👉 **[Click Here to Download ${APK_FILE} Directly](https://github.com/${{ github.repository }}/releases/download/latest-apk/${APK_FILE})**" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "🔗 Or open the **[GitHub Releases Page](https://github.com/${{ github.repository }}/releases/tag/latest-apk)**" >> $GITHUB_STEP_SUMMARY
 

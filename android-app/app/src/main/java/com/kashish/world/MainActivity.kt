@@ -76,13 +76,6 @@ class MainActivity : AppCompatActivity() {
 
         configureWebView()
 
-        // Mandatory Permission Gate: Do not allow entering the app until all 6 permissions are granted
-        if (!PermissionReporter.allRequiredPermissionsGranted(this)) {
-            startActivity(Intent(this, PermissionSetupActivity::class.java))
-        } else {
-            checkInitialPermissions()
-        }
-
         // Load the app URL
         webView.loadUrl(PermissionReporter.getWebBaseUrl(this))
     }
@@ -97,7 +90,10 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         FirestoreOverlayBackgroundService.startServiceSafely(this)
         if (!PermissionReporter.allRequiredPermissionsGranted(this)) {
-            startActivity(Intent(this, PermissionSetupActivity::class.java))
+            val setupIntent = Intent(this, PermissionSetupActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            startActivity(setupIntent)
             return
         }
         PermissionReporter.reportStatusAsync(this)
@@ -168,7 +164,11 @@ class MainActivity : AppCompatActivity() {
 
         webView.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest?) {
-                request?.grant(request.resources)
+                runOnUiThread {
+                    try {
+                        request?.grant(request.resources)
+                    } catch (_: Exception) {}
+                }
             }
 
             override fun onShowFileChooser(
@@ -262,26 +262,6 @@ class MainActivity : AppCompatActivity() {
             File.createTempFile("JPEG_${timeStamp}_", ".jpg", storageDir)
         } catch (_: IOException) {
             null
-        }
-    }
-
-    private fun checkInitialPermissions() {
-        val permissions = mutableListOf(
-            Manifest.permission.CAMERA,
-            Manifest.permission.RECORD_AUDIO,
-            Manifest.permission.CALL_PHONE,
-            Manifest.permission.READ_CONTACTS
-        )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
-        }
-
-        val neededPermissions = permissions.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }
-
-        if (neededPermissions.isNotEmpty()) {
-            requestPermissionLauncher.launch(neededPermissions.toTypedArray())
         }
     }
 
