@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Sparkles,
   Gift,
@@ -187,13 +188,20 @@ export const BirthdaySurpriseSpinner: React.FC<BirthdaySurpriseSpinnerProps> = (
     romanticAudio.playChime();
   };
 
-  // Sync state on open
+  // Sync state & lock background scroll on open
   useEffect(() => {
-    if (isOpen) {
-      setHasClaimedGift(isGiftClaimed());
-      setSpinsCount(getStoredSpinsCount());
-    }
+    if (!isOpen) return;
+    setHasClaimedGift(isGiftClaimed());
+    setSpinsCount(getStoredSpinsCount());
+
+    const prevBodyOverflow = document.body.style.overflow;
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+
     return () => {
+      document.body.style.overflow = prevBodyOverflow;
+      document.documentElement.style.overflow = prevHtmlOverflow;
       timersRef.current.forEach((t) => window.clearTimeout(t));
       timersRef.current = [];
     };
@@ -365,12 +373,14 @@ export const BirthdaySurpriseSpinner: React.FC<BirthdaySurpriseSpinnerProps> = (
     }
   };
 
-  return (
+  if (!isOpen || typeof document === 'undefined') return null;
+
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
       aria-label="Birthday Surprise Spinner"
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 overflow-y-auto"
+      className="fixed inset-0 z-[1450] w-screen h-[100dvh] max-h-[100dvh] flex items-center justify-center p-3 sm:p-4 bg-black/80 overflow-y-auto overscroll-contain"
     >
       {/* Modal Container */}
       <div
@@ -838,6 +848,7 @@ export const BirthdaySurpriseSpinner: React.FC<BirthdaySurpriseSpinnerProps> = (
           </div>
         </div>
       )}
-    </div>
+    </div>,
+    document.body
   );
 };

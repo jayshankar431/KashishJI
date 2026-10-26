@@ -78,7 +78,7 @@ export function getInstalledAppVersion(): string {
       return String(window.__KASHISH_PERMISSIONS__.appVersion).trim().replace(/^v/i, '');
     }
   } catch {}
-  return '2.3.0';
+  return '2.4.0';
 }
 
 export function getInstalledAppVersionCode(): number {
@@ -94,7 +94,7 @@ export function getInstalledAppVersionCode(): number {
       if (!isNaN(c) && c > 0) return c;
     }
   } catch {}
-  return 4;
+  return 5;
 }
 
 export function isVersionOlder(
@@ -203,7 +203,7 @@ export async function fetchLatestReleaseApkInfo(forceRefresh = false): Promise<L
         );
         if (ghRes.ok) {
           const ghData = await ghRes.json();
-          const title: string = (ghData?.name || '') + ' ' + (ghData?.body || '');
+          const title: string = `${ghData?.name || ''} ${ghData?.tag_name || ''} ${ghData?.body || ''}`;
           const verMatch = title.match(/v?(\d+\.\d+(\.\d+)?)/i);
           const codeMatch = title.match(/versionCode[:\s]+(\d+)/i);
           const assets: any[] = Array.isArray(ghData?.assets) ? ghData.assets : [];

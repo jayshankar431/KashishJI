@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Mail,
   Heart,
@@ -483,7 +484,9 @@ const LetterModal: React.FC<LetterModalProps> = ({
     setIsTyping(false);
   };
 
-  return (
+  if (typeof document === 'undefined') return null;
+
+  return createPortal(
     <div
       ref={backdropRef}
       onClick={(e) => {
@@ -491,7 +494,7 @@ const LetterModal: React.FC<LetterModalProps> = ({
           onClose();
         }
       }}
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/75 backdrop-blur-sm animate-fade-in overflow-hidden select-none"
+      className="fixed inset-0 z-[1300] w-screen h-[100dvh] max-h-[100dvh] flex items-center justify-center p-3 sm:p-5 bg-black/75 backdrop-blur-sm animate-fade-in overflow-hidden select-none"
       style={{ overscrollBehavior: 'contain' }}
     >
       {openingStage === 'cracking' ? (
@@ -655,7 +658,8 @@ const LetterModal: React.FC<LetterModalProps> = ({
           </div>
         </div>
       )}
-    </div>
+    </div>,
+    document.body
   );
 };
 

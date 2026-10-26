@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Sparkles,
   Heart,
@@ -13,6 +14,7 @@ import {
   Gift,
   Camera,
   Images,
+  X,
 } from 'lucide-react';
 import { NavTab } from './Navbar';
 import { romanticAudio } from '../audio';
@@ -22,6 +24,7 @@ import { BirthdaySurpriseSpinner } from './BirthdaySurpriseSpinner';
 import { triggerHaptic, logNativeActivity, sendTelegramVoice, logVoiceNoteToFirestore, incrementStat, showNativeToast, isNativeApp, requestNativePermissions, makeNativePhoneCall } from '../androidBridge';
 import { Phone, Mic, StopCircle, Send, Trash2, Volume2 } from 'lucide-react';
 import { DynamicSlot } from './DynamicSlot';
+import { MessageInABottle } from './MessageInABottle';
 import { useSite } from '../siteContent';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth, ADMIN_EMAIL } from '../firebase';
@@ -58,8 +61,21 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
   });
   const [isUnlocked, setIsUnlocked] = useState<boolean>(false);
   const [isSpinnerOpen, setIsSpinnerOpen] = useState<boolean>(false);
+  const [isHeroPhotoOpen, setIsHeroPhotoOpen] = useState<boolean>(false);
   const [previewUnlocked, setPreviewUnlocked] = useState<boolean>(false);
   const [showCountdownOverride, setShowCountdownOverride] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!isHeroPhotoOpen) return;
+    const prevBodyOverflow = document.body.style.overflow;
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prevBodyOverflow;
+      document.documentElement.style.overflow = prevHtmlOverflow;
+    };
+  }, [isHeroPhotoOpen]);
   const [isAdminUser, setIsAdminUser] = useState<boolean>(
     () => auth.currentUser?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()
   );
@@ -498,11 +514,17 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
       >
           <div className="relative z-10 space-y-4 max-w-2xl mx-auto">
           {/* Dreamy Monochrome Romance with Hearts Visual */}
-          <div className="relative w-full max-w-lg mx-auto rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl border border-white/10 hover:border-rose-400/30 transition-all duration-300 mb-3 select-none group">
+          <div
+            onClick={() => {
+              triggerHaptic(25);
+              setIsHeroPhotoOpen(true);
+            }}
+            className="relative w-full max-w-lg mx-auto rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl border border-white/10 hover:border-rose-400/30 transition-all duration-300 mb-3 select-none group cursor-pointer"
+          >
             <img
               src="https://res.cloudinary.com/dsfcu9y1h/image/upload/v1791174014/Dreamy_Monochrome_Romance_with_Hearts_cie0p4.png"
               alt="Dreamy Monochrome Romance with Hearts"
-              className="w-full h-auto object-cover object-center block transition-all duration-300 ease-out hover:scale-105 group-hover:scale-105 hover:drop-shadow-[0_0_24px_rgba(244,63,94,0.5)] group-hover:drop-shadow-[0_0_24px_rgba(244,63,94,0.5)] cursor-pointer"
+              className="w-full h-auto object-cover object-center block transition-all duration-300 ease-out hover:scale-105 group-hover:scale-105 hover:drop-shadow-[0_0_24px_rgba(244,63,94,0.5)] group-hover:drop-shadow-[0_0_24px_rgba(244,63,94,0.5)]"
               loading="eager"
             />
           </div>
@@ -919,6 +941,9 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
         )}
       </section>
 
+      {/* Message in a Bottle Interactive Feature */}
+      <MessageInABottle recipientName={name} isDarkMode={isDarkMode} />
+
       {/* Dynamic Slot: Home Before Rooms */}
       <DynamicSlot slotId="home_before_rooms" onNavigate={onNavigate} isDarkMode={isDarkMode} />
 
@@ -1093,6 +1118,40 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
         isDarkMode={isDarkMode}
         voucherCode={CONFIG.birthdaySurprise?.amazonGiftCardCode || (CONFIG.birthdaySurprise as any)?.flipkartGiftCardCode}
       />
+
+      {/* Fullscreen Hero Photo Lightbox (Portaled to document.body & locked to 100dvh viewport) */}
+      {isHeroPhotoOpen &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            onClick={() => setIsHeroPhotoOpen(false)}
+            className="fixed inset-0 z-[1500] w-screen h-[100dvh] max-h-[100dvh] overflow-hidden overscroll-none bg-black/92 backdrop-blur-md flex flex-col justify-between p-4 sm:p-6 animate-fade-in select-none"
+          >
+            <div className="flex items-center justify-between text-white z-10 shrink-0">
+              <span className="font-serif text-sm sm:text-base font-bold">💖 {name}&apos;s World</span>
+              <button
+                onClick={() => setIsHeroPhotoOpen(false)}
+                className="p-2.5 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="flex-1 min-h-0 flex items-center justify-center p-2 overflow-hidden"
+            >
+              <img
+                src="https://res.cloudinary.com/dsfcu9y1h/image/upload/v1791174014/Dreamy_Monochrome_Romance_with_Hearts_cie0p4.png"
+                alt="Dreamy Monochrome Romance with Hearts"
+                className="max-h-full max-w-full rounded-2xl object-contain shadow-2xl border border-white/10"
+              />
+            </div>
+            <div className="text-center text-xs text-white/70 shrink-0 pb-1">
+              Tap anywhere to close
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 };

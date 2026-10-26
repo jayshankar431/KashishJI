@@ -166,6 +166,51 @@ export interface SavedMusicTrack {
   storagePath?: string;
 }
 
+export interface BottleMessage {
+  id: string;
+  title: string;
+  message: string;
+  signature?: string;
+}
+
+export const DEFAULT_BOTTLE_MESSAGES: BottleMessage[] = [
+  {
+    id: 'bottle_1',
+    title: 'Drifted Across Every Starlit Wave',
+    message:
+      'If I could bottle up the exact feeling of hearing your laugh for the first time, I would keep it beside my heart forever. Whenever the world feels loud, remember there is a quiet shore here where you are endlessly cherished, {name}.',
+    signature: 'Forever Yours, Jay',
+  },
+  {
+    id: 'bottle_2',
+    title: 'A Secret Kept by the Tide',
+    message:
+      'Out of all the millions of moments that pass through a day, the ones where you cross my mind are the only ones that truly glow. You are my favorite thought in every silence, {name}.',
+    signature: 'With Every Heartbeat',
+  },
+  {
+    id: 'bottle_3',
+    title: 'Written Under the Midnight Sky',
+    message:
+      'No matter where the current takes us or how busy the days become, my favorite destination will always be a conversation with you. Keep smiling that effortless smile of yours.',
+    signature: 'Always in Your Corner',
+  },
+  {
+    id: 'bottle_4',
+    title: 'Sealed in Glass & Starlight',
+    message:
+      'Some souls bring peace just by existing. Thank you for being the softest, brightest part of my world, {name}. Every little memory with you is a treasure I never want to lose.',
+    signature: 'Yours Always',
+  },
+  {
+    id: 'bottle_5',
+    title: 'For the Moment You Found This',
+    message:
+      'This bottle floated across the screen just to remind you that you are deeply admired, endlessly special, and never alone. Whatever today brings, may it treat you as gently as you treat everyone around you.',
+    signature: 'Sent with Love',
+  },
+];
+
 export interface SiteContent {
   name: string;
   birthday: string;
@@ -191,6 +236,7 @@ export interface SiteContent {
   secretLetterMusicUrl: string;
   openWhen: OpenWhenEnvelope[];
   poems: Poem[];
+  bottleMessages: BottleMessage[];
   hideDefaultGallery: boolean;
   dynamicSlots: DynamicSlotsMap;
   customTabs: CustomTabDefinition[];
@@ -249,6 +295,7 @@ export const SITE_DEFAULTS: SiteContent = {
   secretLetterMusicUrl: '',
   openWhen: [],
   poems: DEFAULT_POEMS,
+  bottleMessages: DEFAULT_BOTTLE_MESSAGES,
   hideDefaultGallery: false,
   dynamicSlots: {},
   customTabs: [],
@@ -273,7 +320,7 @@ export const SITE_DEFAULTS: SiteContent = {
   forceLock: false,
   apkUpdateRequired: false,
   apkAutoUpdateOnPush: true,
-  apkLatestVersion: '3.0.0',
+  apkLatestVersion: '2.4.0',
   apkDownloadUrl: 'https://github.com/sivam1100-creator/Kashish-World/releases/download/latest-apk/Kashishhh.apk',
   apkUpdateTitle: 'New Update Available for Kashishhh 💖',
   apkUpdateNotes: 'A new version of your special app is ready! Please download & install the update below to continue.',

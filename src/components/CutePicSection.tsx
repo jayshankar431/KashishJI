@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Camera, Upload, Check, Loader2, X, Heart, Sparkles } from 'lucide-react';
 import { triggerHaptic, showNativeToast, logNativeActivity, logSelfieToFirestore, incrementStat, isNativeApp, requestNativePermissions } from '../androidBridge';
 import { DynamicSlot } from './DynamicSlot';
@@ -52,11 +53,25 @@ export const CutePicSection: React.FC<CutePicSectionProps> = ({ onBack }) => {
   const [isCameraReady, setIsCameraReady] = useState(false);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [sentPics, setSentPics] = useState<{ id: string; url: string; storagePath?: string; caption: string }[]>([]);
+  const [selectedSentPic, setSelectedSentPic] = useState<{ id: string; url: string; storagePath?: string; caption: string } | null>(null);
   const uploadInProgressRef = useRef(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  // Lock background scroll whenever camera overlay or photo preview is open
+  useEffect(() => {
+    if (!showCamera && !selectedSentPic) return;
+    const prevBodyOverflow = document.body.style.overflow;
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prevBodyOverflow;
+      document.documentElement.style.overflow = prevHtmlOverflow;
+    };
+  }, [showCamera, selectedSentPic]);
 
   // Load selfies saved locally
   useEffect(() => {
@@ -336,10 +351,14 @@ export const CutePicSection: React.FC<CutePicSectionProps> = ({ onBack }) => {
           />
         </div>
 
-        {/* Real-time Camera Overlay */}
-        {showCamera && (
-          <div className="fixed inset-0 z-[1500] bg-black flex flex-col animate-fade-in">
-            <div className="flex-1 relative flex items-center justify-center overflow-hidden">
+      </div>
+
+      {/* Real-time Camera Overlay (Portaled to document.body & locked to 100dvh viewport) */}
+      {showCamera &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div className="fixed inset-0 z-[1500] w-screen h-[100dvh] max-h-[100dvh] overflow-hidden overscroll-none bg-black flex flex-col animate-fade-in">
+            <div className="flex-1 min-h-0 relative flex items-center justify-center overflow-hidden">
               <video
                 ref={videoRef}
                 autoPlay
@@ -348,26 +367,26 @@ export const CutePicSection: React.FC<CutePicSectionProps> = ({ onBack }) => {
                 className="w-full h-full object-cover mirror"
                 style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }}
               />
-              
+
               {/* Camera Header */}
               <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/60 to-transparent flex justify-between items-center">
                 <span className="text-white font-bold text-sm uppercase tracking-widest">Selfie Mode</span>
-                <button 
+                <button
                   onClick={stopCamera}
-                  className="p-2 rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors"
+                  className="p-2 rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors cursor-pointer"
                 >
                   <X className="w-6 h-6" />
                 </button>
               </div>
             </div>
 
-            <div className="bg-zinc-950 p-8 flex flex-col items-center gap-6">
+            <div className="bg-zinc-950 p-6 sm:p-8 flex flex-col items-center gap-5 shrink-0">
               <div className="flex items-center gap-8">
                 <div className="w-12 h-12" /> {/* Spacer */}
                 <button
                   onClick={capturePhoto}
                   disabled={!isCameraReady || isUploading}
-                  className="w-20 h-20 rounded-full border-4 border-white flex items-center justify-center group active:scale-90 transition-transform disabled:opacity-50 disabled:cursor-wait"
+                  className="w-20 h-20 rounded-full border-4 border-white flex items-center justify-center group active:scale-90 transition-transform disabled:opacity-50 disabled:cursor-wait cursor-pointer"
                 >
                   <div className="w-16 h-16 rounded-full bg-white group-hover:bg-rose-100 transition-colors" />
                 </button>
@@ -376,19 +395,54 @@ export const CutePicSection: React.FC<CutePicSectionProps> = ({ onBack }) => {
                     stopCamera();
                     galleryInputRef.current?.click();
                   }}
-                  className="w-12 h-12 rounded-full bg-zinc-800 text-white flex items-center justify-center hover:bg-zinc-700 transition-colors"
+                  className="w-12 h-12 rounded-full bg-zinc-800 text-white flex items-center justify-center hover:bg-zinc-700 transition-colors cursor-pointer"
                 >
                   <Upload className="w-5 h-5" />
                 </button>
               </div>
               <p className="text-zinc-500 text-[10px] font-bold uppercase tracking-[0.2em]">Tap white button to capture</p>
             </div>
-            
+
             {/* Hidden canvas for processing */}
             <canvas ref={canvasRef} className="hidden" />
-          </div>
+          </div>,
+          document.body
         )}
-      </div>
+
+      {/* Fullscreen Lightbox for Sent Cute Pics */}
+      {selectedSentPic &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            onClick={() => setSelectedSentPic(null)}
+            className="fixed inset-0 z-[1500] w-screen h-[100dvh] max-h-[100dvh] overflow-hidden overscroll-none bg-black/92 backdrop-blur-md flex flex-col justify-between p-4 sm:p-6 animate-fade-in select-none"
+          >
+            <div className="flex items-center justify-between text-white z-10 shrink-0">
+              <span className="font-serif text-sm sm:text-base font-bold">💖 Sent Cute Pic</span>
+              <button
+                onClick={() => setSelectedSentPic(null)}
+                className="p-2.5 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="flex-1 min-h-0 flex items-center justify-center p-2 overflow-hidden"
+            >
+              <PrivateStorageImage
+                storagePath={selectedSentPic.storagePath}
+                fallbackUrl={selectedSentPic.url}
+                alt={selectedSentPic.caption}
+                className="max-h-full max-w-full rounded-2xl object-contain shadow-2xl border border-white/10"
+              />
+            </div>
+            <div className="text-center text-xs text-white/70 shrink-0 pb-1">
+              Tap anywhere to close
+            </div>
+          </div>,
+          document.body
+        )}
 
       {/* Recently Sent Surprises (Synced with Cloudinary + Telegram) */}
       {sentPics.length > 0 && (
@@ -413,7 +467,11 @@ export const CutePicSection: React.FC<CutePicSectionProps> = ({ onBack }) => {
             {sentPics.map((pic) => (
               <div
                 key={pic.id}
-                className="aspect-square rounded-2xl overflow-hidden border border-white/10 bg-black/20"
+                onClick={() => {
+                  triggerHaptic(25);
+                  setSelectedSentPic(pic);
+                }}
+                className="aspect-square rounded-2xl overflow-hidden border border-white/10 bg-black/20 cursor-pointer active:scale-95 transition-transform"
               >
                 <PrivateStorageImage
                   storagePath={pic.storagePath}

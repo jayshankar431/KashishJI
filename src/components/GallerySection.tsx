@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { 
   Images, 
   Upload, 
@@ -175,6 +176,33 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ name, isDarkMode
       localStorage.setItem('kashish_liked_photos', JSON.stringify(userLikedPhotos));
     } catch {}
   }, [userLikedPhotos]);
+
+  // Lock background page scroll whenever a photo lightbox or upload modal is open
+  useEffect(() => {
+    if (!selectedPhoto && !isUploadModalOpen) return;
+
+    const prevBodyOverflow = document.body.style.overflow;
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (selectedPhoto) setSelectedPhoto(null);
+        else if (isUploadModalOpen && !isUploading) {
+          setIsUploadModalOpen(false);
+          setPreviewImage(null);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = prevBodyOverflow;
+      document.documentElement.style.overflow = prevHtmlOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectedPhoto, isUploadModalOpen, isUploading]);
 
   // Handle Photo / Video Selection and resize optimization
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -585,230 +613,238 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ name, isDarkMode
       {/* Dynamic Slot: Gallery Bottom */}
       <DynamicSlot slotId="gallery_bottom" isDarkMode={isDarkMode} />
 
-      {/* Upload Preview & Caption Modal */}
-      <AnimatePresence>
-        {isUploadModalOpen && previewImage && (
-          <div className="fixed inset-0 z-[1200] flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              style={{
-                backgroundColor: 'var(--card)',
-                borderColor: 'var(--card-border)',
-                color: 'var(--text)',
-              }}
-              className="relative w-full max-w-md rounded-3xl border shadow-2xl overflow-hidden p-5 space-y-4"
-            >
-              {/* Close Button */}
-              <button
-                onClick={() => {
-                  if (!isUploading) {
-                    setIsUploadModalOpen(false);
-                    setPreviewImage(null);
-                  }
-                }}
-                disabled={isUploading}
-                className="absolute top-4 right-4 p-2 rounded-full bg-black/10 dark:bg-white/10 hover:bg-black/20 text-[var(--text)] transition-colors cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-
-              <div className="text-center space-y-1 pt-1">
-                <h3 className="font-serif text-lg font-bold flex items-center justify-center gap-2">
-                  <Sparkles className="w-5 h-5 text-[var(--accent)]" />
-                  <span>Add New Surprise Photo</span>
-                </h3>
-                <p className="text-[11px] text-[var(--text-soft)]">
-                  This photo will be visible in the room and will trigger a notification to the APK!
-                </p>
-              </div>
-
-              {/* Photo / Video Preview */}
-              <div className="aspect-[4/3] rounded-2xl overflow-hidden bg-black/20 border border-white/10 relative">
-                {previewIsVideo ? (
-                  <video
-                    src={previewImage}
-                    controls
-                    playsInline
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <img
-                    src={previewImage}
-                    alt="Upload Preview"
-                    className="w-full h-full object-cover"
-                  />
-                )}
-              </div>
-
-              {/* Upload Progress Bar */}
-              {isUploading && (
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-[11px] font-bold text-[var(--accent)]">
-                    <span>Uploading to Cloudinary...</span>
-                    <span>{uploadProgress}%</span>
-                  </div>
-                  <div className="w-full h-2 rounded-full bg-black/10 dark:bg-white/10 overflow-hidden">
-                    <div
-                      className="h-full bg-gradient-to-r from-pink-500 to-rose-600 transition-all duration-200"
-                      style={{ width: `${uploadProgress}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Upload Error Banner */}
-              {uploadError && (
-                <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-500 text-xs font-semibold leading-relaxed">
-                  {uploadError}
-                </div>
-              )}
-
-              {/* Caption Input */}
-              <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-[var(--text-soft)] uppercase tracking-wider block">
-                  Add a Sweet Note / Caption:
-                </label>
-                <input
-                  type="text"
-                  value={captionInput}
-                  onChange={(e) => setCaptionInput(e.target.value)}
-                  placeholder="e.g. A cute surprise smile for you 💕"
-                  maxLength={100}
-                  disabled={isUploading}
-                  className="w-full px-4 py-2.5 rounded-xl border text-sm outline-none transition-colors"
+      {/* Upload Preview & Caption Modal (Portaled to document.body to stay strictly viewport-bound) */}
+      {typeof document !== 'undefined' &&
+        createPortal(
+          <AnimatePresence>
+            {isUploadModalOpen && previewImage && (
+              <div className="fixed inset-0 z-[1200] w-screen h-[100dvh] max-h-[100dvh] overflow-y-auto overscroll-contain flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
+                <motion.div
+                  initial={{ scale: 0.9, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.9, opacity: 0 }}
                   style={{
-                    backgroundColor: 'var(--card-subtle)',
+                    backgroundColor: 'var(--card)',
                     borderColor: 'var(--card-border)',
                     color: 'var(--text)',
                   }}
-                />
-              </div>
+                  className="relative w-full max-w-md rounded-3xl border shadow-2xl overflow-hidden p-5 space-y-4 my-auto"
+                >
+                  {/* Close Button */}
+                  <button
+                    onClick={() => {
+                      if (!isUploading) {
+                        setIsUploadModalOpen(false);
+                        setPreviewImage(null);
+                      }
+                    }}
+                    disabled={isUploading}
+                    className="absolute top-4 right-4 p-2 rounded-full bg-black/10 dark:bg-white/10 hover:bg-black/20 text-[var(--text)] transition-colors cursor-pointer"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
 
-              {/* Submit Button */}
-              <div className="pt-2 flex gap-2">
-                <button
-                  onClick={() => {
-                    setIsUploadModalOpen(false);
-                    setPreviewImage(null);
-                    setSelectedRawFile(null);
-                    setPreviewIsVideo(false);
-                    setUploadError(null);
-                    setUploadProgress(0);
-                  }}
-                  disabled={isUploading}
-                  className="flex-1 py-3 rounded-xl border text-xs font-bold text-[var(--text-soft)] hover:text-[var(--text)] transition-colors cursor-pointer"
-                  style={{ borderColor: 'var(--card-border)' }}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleUploadSubmit}
-                  disabled={isUploading}
-                  style={{
-                    background: 'linear-gradient(135deg, #ec4899 0%, #e11d48 100%)',
-                  }}
-                  className="flex-[2] py-3 rounded-xl text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg active:scale-95 transition-all cursor-pointer disabled:opacity-50"
-                >
-                  {isUploading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Uploading ({uploadProgress}%)...</span>
-                    </>
-                  ) : isSuccess ? (
-                    <>
-                      <Check className="w-4 h-4" />
-                      <span>Surprise Added! 💖</span>
-                    </>
-                  ) : (
-                    <>
-                      <Upload className="w-4 h-4" />
-                      <span>Publish & Notify APK 💌</span>
-                    </>
+                  <div className="text-center space-y-1 pt-1">
+                    <h3 className="font-serif text-lg font-bold flex items-center justify-center gap-2">
+                      <Sparkles className="w-5 h-5 text-[var(--accent)]" />
+                      <span>Add New Surprise Photo</span>
+                    </h3>
+                    <p className="text-[11px] text-[var(--text-soft)]">
+                      This photo will be visible in the room and will trigger a notification to the APK!
+                    </p>
+                  </div>
+
+                  {/* Photo / Video Preview */}
+                  <div className="aspect-[4/3] rounded-2xl overflow-hidden bg-black/20 border border-white/10 relative">
+                    {previewIsVideo ? (
+                      <video
+                        src={previewImage}
+                        controls
+                        playsInline
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <img
+                        src={previewImage}
+                        alt="Upload Preview"
+                        className="w-full h-full object-cover"
+                      />
+                    )}
+                  </div>
+
+                  {/* Upload Progress Bar */}
+                  {isUploading && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px] font-bold text-[var(--accent)]">
+                        <span>Uploading to Cloudinary...</span>
+                        <span>{uploadProgress}%</span>
+                      </div>
+                      <div className="w-full h-2 rounded-full bg-black/10 dark:bg-white/10 overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-pink-500 to-rose-600 transition-all duration-200"
+                          style={{ width: `${uploadProgress}%` }}
+                        />
+                      </div>
+                    </div>
                   )}
-                </button>
+
+                  {/* Upload Error Banner */}
+                  {uploadError && (
+                    <div className="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-500 text-xs font-semibold leading-relaxed">
+                      {uploadError}
+                    </div>
+                  )}
+
+                  {/* Caption Input */}
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-bold text-[var(--text-soft)] uppercase tracking-wider block">
+                      Add a Sweet Note / Caption:
+                    </label>
+                    <input
+                      type="text"
+                      value={captionInput}
+                      onChange={(e) => setCaptionInput(e.target.value)}
+                      placeholder="e.g. A cute surprise smile for you 💕"
+                      maxLength={100}
+                      disabled={isUploading}
+                      className="w-full px-4 py-2.5 rounded-xl border text-sm outline-none transition-colors"
+                      style={{
+                        backgroundColor: 'var(--card-subtle)',
+                        borderColor: 'var(--card-border)',
+                        color: 'var(--text)',
+                      }}
+                    />
+                  </div>
+
+                  {/* Submit Button */}
+                  <div className="pt-2 flex gap-2">
+                    <button
+                      onClick={() => {
+                        setIsUploadModalOpen(false);
+                        setPreviewImage(null);
+                        setSelectedRawFile(null);
+                        setPreviewIsVideo(false);
+                        setUploadError(null);
+                        setUploadProgress(0);
+                      }}
+                      disabled={isUploading}
+                      className="flex-1 py-3 rounded-xl border text-xs font-bold text-[var(--text-soft)] hover:text-[var(--text)] transition-colors cursor-pointer"
+                      style={{ borderColor: 'var(--card-border)' }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleUploadSubmit}
+                      disabled={isUploading}
+                      style={{
+                        background: 'linear-gradient(135deg, #ec4899 0%, #e11d48 100%)',
+                      }}
+                      className="flex-[2] py-3 rounded-xl text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      {isUploading ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>Uploading ({uploadProgress}%)...</span>
+                        </>
+                      ) : isSuccess ? (
+                        <>
+                          <Check className="w-4 h-4" />
+                          <span>Surprise Added! 💖</span>
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="w-4 h-4" />
+                          <span>Publish & Notify APK 💌</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </motion.div>
               </div>
-            </motion.div>
-          </div>
+            )}
+          </AnimatePresence>,
+          document.body
         )}
-      </AnimatePresence>
 
-      {/* Fullscreen Lightbox Modal */}
-      <AnimatePresence>
-        {selectedPhoto && (
-          <div
-            onClick={() => setSelectedPhoto(null)}
-            className="fixed inset-0 z-[1400] bg-black/90 backdrop-blur-md flex flex-col justify-between p-4 sm:p-6 animate-fade-in"
-          >
-            {/* Top Toolbar */}
-            <div className="flex items-center justify-between text-white z-10">
-              <div className="flex items-center gap-2">
-                <span className="font-serif text-sm sm:text-base font-bold">
-                  {selectedPhoto.type === 'surprise' ? '✨ Sweet Surprise' : '💌 Cherished Memory'}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={(e) => handleLike(selectedPhoto, e)}
-                  className={`p-2.5 rounded-full backdrop-blur-md transition-transform active:scale-90 ${
-                    userLikedPhotos[selectedPhoto.id] ? 'bg-rose-500 text-white' : 'bg-white/20 text-white'
-                  }`}
+      {/* Fullscreen Lightbox Modal (Portaled to document.body & locked to 100dvh viewport) */}
+      {typeof document !== 'undefined' &&
+        createPortal(
+          <AnimatePresence>
+            {selectedPhoto && (
+              <div
+                onClick={() => setSelectedPhoto(null)}
+                className="fixed inset-0 z-[1400] w-screen h-[100dvh] max-h-[100dvh] overflow-hidden overscroll-none bg-black/92 backdrop-blur-md flex flex-col justify-between p-4 sm:p-6 animate-fade-in select-none"
+              >
+                {/* Top Toolbar */}
+                <div className="flex items-center justify-between text-white z-10 shrink-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-serif text-sm sm:text-base font-bold">
+                      {selectedPhoto.type === 'surprise' ? '✨ Sweet Surprise' : '💌 Cherished Memory'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={(e) => handleLike(selectedPhoto, e)}
+                      className={`p-2.5 rounded-full backdrop-blur-md transition-transform active:scale-90 ${
+                        userLikedPhotos[selectedPhoto.id] ? 'bg-rose-500 text-white' : 'bg-white/20 text-white'
+                      }`}
+                    >
+                      <Heart className={`w-5 h-5 ${userLikedPhotos[selectedPhoto.id] ? 'fill-white stroke-white' : 'stroke-white'}`} />
+                    </button>
+                    <button
+                      onClick={() => setSelectedPhoto(null)}
+                      className="p-2.5 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors cursor-pointer"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Central High-Res Photo / Video Container */}
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  className="flex-1 min-h-0 flex items-center justify-center p-2 overflow-hidden"
                 >
-                  <Heart className={`w-5 h-5 ${userLikedPhotos[selectedPhoto.id] ? 'fill-white stroke-white' : 'stroke-white'}`} />
-                </button>
-                <button
-                  onClick={() => setSelectedPhoto(null)}
-                  className="p-2.5 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors cursor-pointer"
+                  {isVideoMedia(selectedPhoto) ? (
+                    <video
+                      src={selectedPhoto.url || selectedPhoto.storagePath}
+                      controls
+                      autoPlay
+                      playsInline
+                      className="max-h-full max-w-full rounded-2xl object-contain shadow-2xl border border-white/10"
+                    />
+                  ) : (
+                    <PrivateStorageImage
+                      storagePath={selectedPhoto.storagePath}
+                      fallbackUrl={selectedPhoto.url}
+                      alt={selectedPhoto.caption}
+                      className="max-h-full max-w-full rounded-2xl object-contain shadow-2xl border border-white/10"
+                    />
+                  )}
+                </div>
+
+                {/* Bottom Caption & Stats */}
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  className="bg-zinc-950/80 backdrop-blur-md border border-white/10 p-4 rounded-2xl max-w-xl mx-auto w-full text-center space-y-1.5 shrink-0"
                 >
-                  <X className="w-5 h-5" />
-                </button>
+                  <p className="text-white text-sm sm:text-base font-bold">
+                    {selectedPhoto.caption}
+                  </p>
+                  <div className="flex items-center justify-center gap-4 text-xs text-white/60 font-medium">
+                    <span className="flex items-center gap-1">
+                      <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500" />
+                      <span>{selectedPhoto.likes} loves</span>
+                    </span>
+                    <span>•</span>
+                    <span>Tap outside to close</span>
+                  </div>
+                </div>
               </div>
-            </div>
-
-            {/* Central High-Res Photo / Video Container */}
-            <div 
-              onClick={(e) => e.stopPropagation()}
-              className="flex-1 flex items-center justify-center p-2 max-h-[75vh]"
-            >
-              {isVideoMedia(selectedPhoto) ? (
-                <video
-                  src={selectedPhoto.url || selectedPhoto.storagePath}
-                  controls
-                  autoPlay
-                  playsInline
-                  className="max-h-full max-w-full rounded-2xl object-contain shadow-2xl border border-white/10"
-                />
-              ) : (
-                <PrivateStorageImage
-                  storagePath={selectedPhoto.storagePath}
-                  fallbackUrl={selectedPhoto.url}
-                  alt={selectedPhoto.caption}
-                  className="max-h-full max-w-full rounded-2xl object-contain shadow-2xl border border-white/10"
-                />
-              )}
-            </div>
-
-            {/* Bottom Caption & Stats */}
-            <div 
-              onClick={(e) => e.stopPropagation()}
-              className="bg-zinc-950/80 backdrop-blur-md border border-white/10 p-4 rounded-2xl max-w-xl mx-auto w-full text-center space-y-1.5"
-            >
-              <p className="text-white text-sm sm:text-base font-bold">
-                {selectedPhoto.caption}
-              </p>
-              <div className="flex items-center justify-center gap-4 text-xs text-white/60 font-medium">
-                <span className="flex items-center gap-1">
-                  <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500" />
-                  <span>{selectedPhoto.likes} loves</span>
-                </span>
-                <span>•</span>
-                <span>Tap outside to close</span>
-              </div>
-            </div>
-          </div>
+            )}
+          </AnimatePresence>,
+          document.body
         )}
-      </AnimatePresence>
     </div>
   );
 };

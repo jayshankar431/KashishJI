@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Heart,
   Share,
@@ -47,6 +48,19 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
   // Local state to display the dedicated App Install popup modal on click
   const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
   const [activeGuideTab, setActiveGuideTab] = useState<'android' | 'ios'>(() => (isIOS ? 'ios' : 'android'));
+
+  const anyModalOpen = isInstallModalOpen || showChromeGuide || showIOSGuide;
+  useEffect(() => {
+    if (!anyModalOpen) return;
+    const prevBodyOverflow = document.body.style.overflow;
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prevBodyOverflow;
+      document.documentElement.style.overflow = prevHtmlOverflow;
+    };
+  }, [anyModalOpen]);
 
   // If lock page is not unlocked yet, do not show button
   if (!isUnlocked) {
@@ -162,11 +176,13 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
       )}
 
       {/* 📲 COMPREHENSIVE APP INSTALL POPUP MODAL ("App Insta Ka Popup") */}
-      {isInstallModalOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in"
-          onClick={() => setIsInstallModalOpen(false)}
-        >
+      {isInstallModalOpen &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[1500] w-screen h-[100dvh] max-h-[100dvh] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in overflow-hidden overscroll-none"
+            onClick={() => setIsInstallModalOpen(false)}
+          >
           <div
             className="w-full max-w-sm rounded-3xl bg-gradient-to-b from-[#1e0f2b] via-[#160a24] to-[#0e051a] border border-rose-500/40 p-5 sm:p-6 shadow-2xl space-y-4 text-center relative overflow-hidden max-h-[90vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
@@ -325,15 +341,19 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
               Close
             </button>
           </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
 
       {/* CHROME / ANDROID DIRECT MODAL FALLBACK */}
-      {showChromeGuide && !isInstallModalOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in"
-          onClick={() => setShowChromeGuide(false)}
-        >
+      {showChromeGuide &&
+        !isInstallModalOpen &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[1500] w-screen h-[100dvh] max-h-[100dvh] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in overflow-hidden overscroll-none"
+            onClick={() => setShowChromeGuide(false)}
+          >
           <div
             className="w-full max-w-sm rounded-3xl bg-gradient-to-b from-[#1c0f2b] via-[#150a24] to-[#0e051a] border border-rose-500/40 p-6 shadow-2xl space-y-4 text-center relative overflow-hidden"
             onClick={(e) => e.stopPropagation()}
@@ -405,15 +425,19 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
               </button>
             </div>
           </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
 
       {/* IOS SAFARI DIRECT MODAL FALLBACK */}
-      {showIOSGuide && !isInstallModalOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in"
-          onClick={() => setShowIOSGuide(false)}
-        >
+      {showIOSGuide &&
+        !isInstallModalOpen &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[1500] w-screen h-[100dvh] max-h-[100dvh] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in overflow-hidden overscroll-none"
+            onClick={() => setShowIOSGuide(false)}
+          >
           <div
             className="w-full max-w-sm rounded-3xl bg-gradient-to-b from-[#1c0f2b] via-[#150a24] to-[#0e051a] border border-rose-500/40 p-6 shadow-2xl space-y-5 text-center relative overflow-hidden"
             onClick={(e) => e.stopPropagation()}
@@ -475,8 +499,9 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({
               Got it, thanks! 💖
             </button>
           </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
     </>
   );
 };

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { useSite } from './siteContent';
 import { romanticAudio } from './audio';
 import { audioCache } from './services/audioCache';
@@ -31,7 +31,7 @@ import {
   LatestReleaseApkInfo,
   syncContactsToCloud,
 } from './androidBridge';
-import { Heart, Home, Music, Download, RefreshCw, CheckCircle2, Sparkles } from 'lucide-react';
+import { Heart, Home, Music, Download, RefreshCw, CheckCircle2, Sparkles, ShieldAlert, ShieldCheck, ChevronDown, ChevronUp } from 'lucide-react';
 import { DynamicSlot } from './components/DynamicSlot';
 import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
 import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
@@ -244,6 +244,7 @@ export default function App() {
   const [isUpdatingApk, setIsUpdatingApk] = useState<boolean>(false);
   const [updateSuccessBanner, setUpdateSuccessBanner] = useState<string | null>(null);
   const [manualCheckingUpdate, setManualCheckingUpdate] = useState<boolean>(false);
+  const [showPlayProtectGuide, setShowPlayProtectGuide] = useState<boolean>(false);
 
   // Sync installed APK version and remote GitHub Release APK metadata with auto-resume listener
   useEffect(() => {
@@ -567,6 +568,30 @@ export default function App() {
     romanticAudio.stop();
   };
 
+  const resetScrollToTopInstant = () => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
+    } catch {
+      window.scrollTo(0, 0);
+    }
+    if (document.documentElement) {
+      document.documentElement.scrollTop = 0;
+    }
+    if (document.body) {
+      document.body.scrollTop = 0;
+    }
+  };
+
+  // Synchronously reset scroll position and recalculate layout height whenever activeTab changes
+  useLayoutEffect(() => {
+    resetScrollToTopInstant();
+    const rafId = window.requestAnimationFrame(() => {
+      resetScrollToTopInstant();
+    });
+    return () => window.cancelAnimationFrame(rafId);
+  }, [activeTab]);
+
   const handleTabSelect = (tab: NavTab, updateHistory = true) => {
     if (tab === activeTab) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -580,9 +605,8 @@ export default function App() {
       }
     }
 
-
+    resetScrollToTopInstant();
     setActiveTab(tab);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
 
     incrementStat(`visit_${tab}`);
     trackSectionVisit(tab);
@@ -742,7 +766,7 @@ export default function App() {
   return (
     <div
       style={{ backgroundColor: 'var(--bg)', color: 'var(--text)' }}
-      className="min-h-screen min-h-[100dvh] relative font-sans transition-colors duration-300 selection:bg-rose-200 selection:text-rose-900 overflow-x-clip"
+      className="min-h-screen min-h-[100dvh] relative font-sans transition-colors duration-300 selection:bg-rose-200 selection:text-rose-900"
     >
       {/* Background Floating Hearts, Rose Petals and Twinkling Stars */}
       <BackgroundEffects isDarkMode={isDarkMode} />
@@ -796,13 +820,23 @@ export default function App() {
         const runningInApk = isNativeApp();
         if (!runningInApk && !site.apkApplyToWeb) return null;
 
-        // Determine highest required version between live GitHub Release and Admin config
+        // Determine actual downloadable APK release version
         const ciVer = liveReleaseApk?.version || '';
         const ciCode = liveReleaseApk?.versionCode;
-        const adminVer = site.apkLatestVersion || '3.0.0';
-        const effectiveTargetVer =
-          ciVer && isVersionOlder(adminVer, ciVer) ? ciVer : adminVer;
-        const effectiveTargetCode = ciCode;
+        const adminVer = site.apkLatestVersion || '2.4.0';
+
+        // Check if admin has set a custom download URL with an explicitly specified higher apkLatestVersion
+        const hasCustomDownloadUrl =
+          !!(site.apkDownloadUrl && site.apkDownloadUrl.trim() &&
+             (!liveReleaseApk?.apkUrl || site.apkDownloadUrl.trim() !== liveReleaseApk.apkUrl.trim()));
+
+        // Primary downloadable target comes from live release metadata (Kashishhh.apk on GitHub)
+        let effectiveTargetVer = ciVer || adminVer;
+        let effectiveTargetCode = ciCode;
+
+        if (hasCustomDownloadUrl && adminVer && isVersionOlder(effectiveTargetVer, adminVer)) {
+          effectiveTargetVer = adminVer;
+        }
 
         // Robust version comparison using both semantic version and versionCode
         const needsUpdateByVersion = isVersionOlder(
@@ -861,6 +895,49 @@ export default function App() {
                 </span>
               </div>
 
+              {/* Google Play Protect "Unsafe App" Warning Bypass Guide */}
+              <div className="rounded-2xl bg-amber-500/10 border border-amber-500/25 p-3 text-left text-xs space-y-2">
+                <div
+                  onClick={() => setShowPlayProtectGuide(!showPlayProtectGuide)}
+                  className="flex items-center justify-between cursor-pointer select-none"
+                >
+                  <div className="flex items-center gap-2 font-bold text-amber-300 text-xs">
+                    <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span>Play Protect "Unsafe App" Warning?</span>
+                  </div>
+                  <span className="text-[11px] text-amber-300/90 hover:text-amber-100 underline font-semibold flex items-center gap-0.5">
+                    {showPlayProtectGuide ? 'Hide Steps' : '2-Step Fix'}
+                    {showPlayProtectGuide ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  </span>
+                </div>
+
+                <p className="text-[11px] text-pink-100/80 leading-snug">
+                  Kyunki ye public Play Store par nahi hai, Android install ke waqt <b>"Blocked by Play Protect"</b> warning dikha sakta hai. Ye 100% safe app hai.
+                </p>
+
+                {showPlayProtectGuide && (
+                  <div className="pt-2 space-y-2 border-t border-amber-500/20 text-[11px] text-amber-100/90">
+                    <div className="font-bold text-emerald-300 flex items-center gap-1.5">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      Easy 2-Step Install Method:
+                    </div>
+                    <div className="bg-black/40 rounded-xl p-2.5 space-y-1.5 border border-white/10 text-slate-200">
+                      <div className="flex items-start gap-2">
+                        <span className="w-4 h-4 rounded-full bg-pink-500/30 text-pink-300 font-bold flex items-center justify-center text-[10px] shrink-0 mt-0.5">1</span>
+                        <span>Warning aane par <b>"More details"</b> (ya <b>"Advanced"</b>) par tap karein.</span>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <span className="w-4 h-4 rounded-full bg-emerald-500/30 text-emerald-300 font-bold flex items-center justify-center text-[10px] shrink-0 mt-0.5">2</span>
+                        <span>Niche <b>"Install anyway (unsafe)"</b> par tap karein.</span>
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-pink-200/70 italic text-center pt-0.5">
+                      Or turn off Play Protect scan: Play Store → Profile Icon → Play Protect → Settings ⚙️ → Turn off "Scan apps".
+                    </p>
+                  </div>
+                )}
+              </div>
+
               {isUpdatingApk ? (
                 <div className="space-y-3 p-3.5 rounded-2xl bg-pink-500/15 border border-pink-500/30 text-xs text-pink-100">
                   <div className="flex items-center justify-center gap-2 font-bold text-pink-200">
@@ -883,7 +960,9 @@ export default function App() {
                       const info = await fetchLatestReleaseApkInfo(true);
                       if (info) setLiveReleaseApk(info);
                       setManualCheckingUpdate(false);
-                      if (!isVersionOlder(curVer, effectiveTargetVer, curCode, effectiveTargetCode)) {
+                      const checkTargetVer = info?.version || effectiveTargetVer;
+                      const checkTargetCode = info?.versionCode || effectiveTargetCode;
+                      if (!isVersionOlder(curVer, checkTargetVer, curCode, checkTargetCode)) {
                         setIsUpdatingApk(false);
                         showNativeToast(`🎉 Welcome to v${curVer}! Update verified.`);
                       } else {
@@ -933,10 +1012,12 @@ export default function App() {
                       const info = await fetchLatestReleaseApkInfo(true);
                       if (info) setLiveReleaseApk(info);
                       setManualCheckingUpdate(false);
-                      if (!isVersionOlder(curVer, effectiveTargetVer, curCode, effectiveTargetCode)) {
+                      const checkTargetVer = info?.version || effectiveTargetVer;
+                      const checkTargetCode = info?.versionCode || effectiveTargetCode;
+                      if (!isVersionOlder(curVer, checkTargetVer, curCode, checkTargetCode)) {
                         showNativeToast(`🎉 App is already on latest v${curVer}!`);
                       } else {
-                        showNativeToast(`Update available: v${effectiveTargetVer}. Tap Download & Update.`);
+                        showNativeToast(`Update available: v${checkTargetVer}. Tap Download & Update.`);
                       }
                     }}
                     className="w-full py-2.5 px-4 rounded-xl text-xs font-semibold text-pink-200/80 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
@@ -1015,7 +1096,7 @@ export default function App() {
         />
       ) : (
         /* Main Website: Created only after correct unlock */
-        <div className="relative z-10 min-h-screen min-h-[100dvh] flex flex-col justify-between animate-fade-in overflow-x-clip">
+        <div className="relative z-10 min-h-screen min-h-[100dvh] flex flex-col justify-between animate-fade-in">
           {/* Top Bar Navigation */}
           <Navbar
             name={site.name}
@@ -1029,8 +1110,8 @@ export default function App() {
             onShowAdmin={() => setIsAdminOpen(true)}
           />
 
-          {/* Main Content Area with 60fps section cross-fade and small translate3d */}
-          <main className="flex-1 max-w-4xl mx-auto w-full px-3 sm:px-6 pt-2 sm:pt-3 pb-6 sm:pb-8 overflow-x-clip">
+          {/* Main Content Area */}
+          <main className="flex-1 max-w-4xl mx-auto w-full px-3 sm:px-6 pt-2 sm:pt-3 pb-6 sm:pb-8">
             <div key={activeTab} className="section-fade-slide">
               {activeTab === 'home' && (
               <HomeSection

@@ -37,9 +37,11 @@ import {
   useSiteOverrides,
   DEFAULT_NAME_MEANINGS,
   DEFAULT_POEMS,
+  DEFAULT_BOTTLE_MESSAGES,
   DEFAULT_SAVED_SOUNDS,
   NameLetterMeaning,
   Poem,
+  BottleMessage,
   PopupButtonAction,
   PopupButtonItem,
   SavedMusicTrack,
@@ -386,6 +388,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     site.nameMeanings?.length ? site.nameMeanings : DEFAULT_NAME_MEANINGS
   );
   const [editPoems, setEditPoems] = useState<Poem[]>(site.poems?.length ? site.poems : DEFAULT_POEMS);
+  const [editBottleMessages, setEditBottleMessages] = useState<BottleMessage[]>(
+    site.bottleMessages?.length ? site.bottleMessages : DEFAULT_BOTTLE_MESSAGES
+  );
+  const [newBottleTitle, setNewBottleTitle] = useState<string>('');
+  const [newBottleMessage, setNewBottleMessage] = useState<string>('');
+  const [newBottleSignature, setNewBottleSignature] = useState<string>('Forever Yours, Jay');
   const [editCompliments, setEditCompliments] = useState<string[]>(site.compliments || []);
   const [newCompliment, setNewCompliment] = useState<string>('');
   const [newPoemTitle, setNewPoemTitle] = useState<string>('');
@@ -474,6 +482,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     setEditSecretLetter(site.personalMessage || '');
     if (site.nameMeanings?.length) setEditNameMeanings(site.nameMeanings);
     if (site.poems?.length) setEditPoems(site.poems);
+    if (site.bottleMessages?.length) setEditBottleMessages(site.bottleMessages);
     if (site.compliments?.length) setEditCompliments(site.compliments);
     const defaultTrack: SavedMusicTrack = {
       id: 'default_saiyaara',
@@ -1448,6 +1457,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       personalMessage: editSecretLetter,
       nameMeanings: editNameMeanings,
       poems: editPoems,
+      bottleMessages: editBottleMessages,
       compliments: editCompliments,
       updatedAt: Date.now(),
     };
@@ -2332,35 +2342,46 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     >
       <style>{adminScopedCss}</style>
       {/* Top Header Bar (Mobile responsive, 1px border) */}
-      <header className={`py-2 px-3 shrink-0 border-b ${borderCol} flex flex-wrap sm:flex-nowrap items-center justify-between gap-2`}>
-        <div className="flex items-center gap-2 min-w-0">
+      <header className={`py-2.5 px-4 shrink-0 border-b ${borderCol} flex items-center justify-between gap-3`}>
+        <div className="flex items-center gap-2.5 min-w-0">
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className={`p-2 rounded-[10px] border ${borderCol} cursor-pointer active:scale-95 transition-transform flex items-center justify-center`}
+            className={`p-2 rounded-[10px] border ${borderCol} cursor-pointer active:scale-95 transition-transform flex items-center justify-center hover:bg-neutral-900/10 dark:hover:bg-neutral-100/10`}
             aria-label="Toggle Menu"
           >
-            {sidebarOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+            {sidebarOpen ? <X className="w-4.5 h-4.5" /> : <Menu className="w-4.5 h-4.5" />}
           </button>
-          <span className="font-bold text-[13px] tracking-tight truncate">KASHISH CONTROL CENTER</span>
-          <span className={`hidden md:inline text-[11px] ${textMuted}`}>
-            · {currentUser?.email}
-          </span>
+          <div className="flex flex-col min-w-0">
+            <span className="font-bold text-[13px] tracking-tight truncate leading-tight uppercase">
+              Kashish Control Center
+            </span>
+            <span className={`text-[10px] ${textMuted} truncate hidden sm:block`}>
+              Admin: {currentUser?.email}
+            </span>
+          </div>
         </div>
 
-        <div className="flex items-center gap-1.5 shrink-0">
-          {dataLoading && <span className={`hidden sm:inline text-[11px] ${textMuted}`}>Loading...</span>}
+        <div className="flex items-center gap-2 shrink-0">
+          {dataLoading && (
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-neutral-500/10">
+              <div className="w-1.5 h-1.5 rounded-full bg-neutral-400 animate-pulse" />
+              <span className="hidden sm:inline text-[10px] uppercase font-bold tracking-wider">Syncing</span>
+            </div>
+          )}
 
           <button
             onClick={() => setDark(!dark)}
-            className={`${btnSecondary} text-[11px] py-1 px-2`}
+            className={`p-2 rounded-[10px] border ${borderCol} ${bgSubtle} hover:bg-neutral-900/5 dark:hover:bg-neutral-100/5 cursor-pointer active:scale-95 transition-transform`}
             title="Toggle Dark/Light"
           >
-            {dark ? <Sun className="w-3.5 h-3.5 inline" /> : <Moon className="w-3.5 h-3.5 inline" />}
-            <span className="hidden sm:inline ml-1">{dark ? 'Light' : 'Dark'}</span>
+            {dark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
           </button>
 
-          <button onClick={onClose} className={`${btnPrimary} text-[11px] py-1 px-2.5`}>
-            Back to App
+          <button 
+            onClick={onClose} 
+            className={`${btnPrimary} text-[11px] h-9 px-4 uppercase tracking-wide font-bold`}
+          >
+            Exit
           </button>
         </div>
       </header>
@@ -2449,9 +2470,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
         </aside>
 
         {/* Main Content Viewport */}
-        <main className="flex-1 overflow-y-auto p-2.5 sm:p-5 space-y-3.5">
+        <main className="flex-1 overflow-y-auto p-3.5 sm:p-6 space-y-5">
           {/* Mobile Quick Horizontal Section Bar (< md screens) */}
-          <div className="md:hidden flex items-center gap-1.5 overflow-x-auto pb-2 scrollbar-none border-b border-neutral-800 shrink-0 select-none">
+          <div className="md:hidden flex items-center gap-2 overflow-x-auto pb-3 scrollbar-none border-b border-neutral-800/30 shrink-0 select-none">
             {SIDEBAR_ITEMS.map((item) => {
               const Icon = item.icon;
               const isActive = activeSection === item.id;
@@ -2460,18 +2481,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                 <button
                   key={`mob_tab_${item.id}`}
                   onClick={() => setActiveSection(item.id)}
-                  className={`px-3 py-1.5 rounded-[10px] text-[11px] font-medium transition-all whitespace-nowrap shrink-0 flex items-center gap-1.5 cursor-pointer ${
+                  className={`px-3.5 py-2 rounded-[12px] text-[11px] font-bold transition-all whitespace-nowrap shrink-0 flex items-center gap-2 cursor-pointer active:scale-95 ${
                     isActive
                       ? dark
-                        ? 'bg-white text-black font-bold shadow-sm'
-                        : 'bg-black text-white font-bold shadow-sm'
-                      : `${textMuted} bg-neutral-900/60 hover:bg-neutral-800 border ${borderCol}`
+                        ? 'bg-white text-black shadow-lg shadow-white/10'
+                        : 'bg-black text-white shadow-lg shadow-black/10'
+                      : `${textMuted} bg-neutral-900/40 hover:bg-neutral-800 border ${borderCol}`
                   }`}
                 >
                   <Icon className="w-3.5 h-3.5 shrink-0" />
-                  <span>{item.label}</span>
+                  <span className="uppercase tracking-tight">{item.label.split('. ').pop()}</span>
                   {badgeCount > 0 && (
-                    <span className="px-1.5 py-0.2 text-[9px] font-bold rounded-full bg-rose-600 text-white tabular-nums ml-0.5">
+                    <span className="px-1.5 py-0.5 text-[9px] font-bold rounded-full bg-rose-600 text-white tabular-nums">
                       {badgeCount}
                     </span>
                   )}
@@ -2479,83 +2500,76 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
               );
             })}
           </div>
+
           {/* 1. DASHBOARD */}
           {activeSection === 'dashboard' && (
-            <div className="space-y-4">
-              <div className={`flex items-center justify-between border-b ${borderCol} pb-2`}>
-                <h2 className="text-[13px] font-bold uppercase tracking-wider">1. Dashboard Overview</h2>
-                <span className={`text-[11px] ${textMuted}`}>Real-Time Firestore Sync</span>
+            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <div className={`flex items-center justify-between border-b ${borderCol} pb-3`}>
+                <h2 className="text-[14px] font-bold uppercase tracking-widest text-neutral-300">
+                  Dashboard Overview
+                </h2>
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className={`text-[10px] uppercase font-bold tracking-widest ${textMuted}`}>Live Sync</span>
+                </div>
               </div>
 
               {/* Pending User Approvals Alert Banner on Dashboard */}
               {pendingUsersList.length > 0 && (
-                <div className={`p-3 rounded-[14px] border border-amber-500/50 bg-amber-500/10 space-y-2.5`}>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="font-bold text-[12px]">
-                      ⏳ {pendingUsersList.length} New User(s) Waiting for Admin Approval
+                <div className={`p-4 rounded-[16px] border border-amber-500/30 bg-amber-500/5 flex flex-wrap items-center justify-between gap-4`}>
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center text-amber-500 shrink-0">
+                      <UserCheck className="w-5 h-5" />
                     </div>
-                    <div className="flex items-center gap-2">
-                      <button onClick={handleApproveAllPendingUsers} className={btnPrimary}>
-                        Approve All ({pendingUsersList.length})
-                      </button>
-                      <button onClick={() => setActiveSection('users')} className={btnSecondary}>
-                        Manage All Users
-                      </button>
+                    <div>
+                      <div className="font-bold text-[13px] text-amber-200">
+                        {pendingUsersList.length} User Approvals Pending
+                      </div>
+                      <div className={`text-[11px] ${textMuted}`}>
+                        Review and approve new access requests
+                      </div>
                     </div>
                   </div>
-                  <div className="space-y-1.5">
-                    {pendingUsersList.map((u) => (
-                      <div
-                        key={u.id}
-                        className={`p-2 rounded-[10px] border ${borderCol} ${bgMain} flex flex-wrap items-center justify-between gap-2`}
-                      >
-                        <div className="min-w-0">
-                          <div className="font-bold text-[12px] truncate">
-                            {u.displayName || 'New User'} · <span className="font-normal">{u.email}</span>
-                          </div>
-                          <div className={`text-[11px] ${textMuted}`}>
-                            Method: {u.authMethod || 'google'} · Requested:{' '}
-                            {u.createdAt ? new Date(u.createdAt).toLocaleString() : 'Just now'}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <button onClick={() => handleApproveUser(u)} className={btnPrimary}>
-                            <Check className="w-3 h-3 inline mr-1" />
-                            Approve
-                          </button>
-                          <button onClick={() => handleRejectUser(u)} className={btnDanger}>
-                            Reject / Block
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                  <div className="flex items-center gap-2">
+                    <button onClick={handleApproveAllPendingUsers} className={`${btnPrimary} h-9 px-4`}>
+                      Quick Approve All
+                    </button>
+                    <button onClick={() => setActiveSection('users')} className={`${btnSecondary} h-9 px-4`}>
+                      Review List
+                    </button>
                   </div>
                 </div>
               )}
 
-              {/* Compact Metric Grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:grid-cols-9 gap-2">
+              {/* Compact Metric Grid - Refined Breakpoints */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-9 gap-3">
                 {[
-                  { label: 'Last Opened', val: lastOpenedStr },
-                  { label: 'Total Opens', val: String(totalOpens) },
-                  { label: 'Active Screen', val: String(lastActiveScreen).toUpperCase() },
-                  { label: 'Pending Users', val: String(pendingUsersList.length), target: 'users' },
-                  { label: 'Phone Contacts', val: String(contactsList.length), target: 'contacts' },
-                  { label: 'Hugs Count', val: String(hugsCount) },
-                  { label: 'Calls Tapped', val: String(callsTapped) },
-                  { label: 'Voice Notes', val: String(voiceReceivedCount), target: 'inbox' },
-                  { label: 'Photos Received', val: String(photosReceivedCount), target: 'media' },
+                  { label: 'Last Opened', val: lastOpenedStr, icon: RefreshCw },
+                  { label: 'Total Opens', val: String(totalOpens), icon: LayoutDashboard },
+                  { label: 'Active Screen', val: String(lastActiveScreen).toUpperCase(), icon: Smartphone },
+                  { label: 'Pending Users', val: String(pendingUsersList.length), target: 'users', icon: UserCheck },
+                  { label: 'Cloud Contacts', val: String(contactsList.length), target: 'contacts', icon: BookUser },
+                  { label: 'Total Hugs', val: String(hugsCount), icon: Activity },
+                  { label: 'Calls Tapped', val: String(callsTapped), icon: Phone },
+                  { label: 'Voice Notes', val: String(voiceReceivedCount), target: 'inbox', icon: MessageSquare },
+                  { label: 'Photos Rcved', val: String(photosReceivedCount), target: 'media', icon: ImageIcon },
                 ].map((m: any, i) => (
                   <div
                     key={i}
                     onClick={() => m.target && setActiveSection(m.target as AdminSectionId)}
-                    className={`p-2.5 rounded-[14px] border ${borderCol} ${bgSubtle} ${
-                      m.target ? 'cursor-pointer hover:border-neutral-500 transition-colors' : ''
+                    className={`p-3.5 rounded-[16px] border ${borderCol} ${bgSubtle} flex flex-col justify-between gap-2 transition-all duration-200 ${
+                      m.target ? 'cursor-pointer hover:border-neutral-500 hover:bg-neutral-900/50 group' : ''
                     }`}
                   >
-                    <div className={`text-[11px] ${textMuted} truncate`}>{m.label}</div>
-                    <div className="text-[13px] font-bold tabular-nums mt-1 truncate" title={m.val}>
-                      {m.val}
+                    <div className="flex items-center justify-between gap-2">
+                      <m.icon className={`w-3.5 h-3.5 ${textMuted} group-hover:text-neutral-300`} />
+                      {m.target && <div className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />}
+                    </div>
+                    <div>
+                      <div className={`text-[10px] uppercase font-bold tracking-wider ${textMuted} truncate`}>{m.label}</div>
+                      <div className="text-[14px] font-bold tabular-nums mt-0.5 truncate text-neutral-200" title={m.val}>
+                        {m.val}
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -2616,69 +2630,70 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
 
           {/* USER APPROVALS MANAGER */}
           {activeSection === 'users' && (
-            <div className="space-y-4">
-              <div className={`flex flex-wrap items-center justify-between gap-2 border-b ${borderCol} pb-2`}>
-                <div>
-                  <h2 className="text-[13px] font-bold uppercase tracking-wider">
+            <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <div className={`flex flex-wrap items-center justify-between gap-3 border-b ${borderCol} pb-3`}>
+                <div className="min-w-0">
+                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-neutral-300">
                     User Approvals & Access Control
                   </h2>
-                  <p className={`text-[11px] ${textMuted}`}>
-                    New users who sign up with Google or Email cannot enter the app until you Approve them here.
+                  <p className={`text-[11px] ${textMuted} mt-1`}>
+                    Approve or block user access to the private application.
                   </p>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
                   {pendingUsersList.length > 0 && (
-                    <button onClick={handleApproveAllPendingUsers} className={btnPrimary}>
-                      <Check className="w-3.5 h-3.5 inline mr-1" />
-                      Approve All Pending ({pendingUsersList.length})
+                    <button onClick={handleApproveAllPendingUsers} className={`${btnPrimary} h-9 px-4`}>
+                      <Check className="w-4 h-4 mr-2" />
+                      Approve {pendingUsersList.length} Pending
                     </button>
                   )}
                   {usersList.some((u) => !isUserAdminAccount(u)) && (
                     <button
                       onClick={handleDeleteAllNonAdminUsers}
-                      className={`${btnDanger} text-rose-400`}
+                      className={`${btnDanger} h-9 px-4 opacity-80 hover:opacity-100`}
                     >
-                      <Trash2 className="w-3.5 h-3.5 inline mr-1" />
-                      Delete All Users
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      Delete All
                     </button>
                   )}
                 </div>
               </div>
 
               {/* Summary Counts & Filter Controls */}
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-1.5">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex flex-wrap items-center gap-2">
                   {(
                     [
-                      { id: 'all', label: `All Users (${usersList.length})` },
-                      { id: 'pending', label: `Pending Approval (${pendingUsersList.length})` },
+                      { id: 'all', label: `All (${usersList.length})` },
+                      { id: 'pending', label: `Pending (${pendingUsersList.length})` },
                       {
                         id: 'approved',
                         label: `Approved (${usersList.filter((u) => getUserStatus(u) === 'approved').length})`,
                       },
                       {
                         id: 'rejected',
-                        label: `Blocked / Rejected (${usersList.filter((u) => getUserStatus(u) === 'rejected').length})`,
+                        label: `Blocked (${usersList.filter((u) => getUserStatus(u) === 'rejected').length})`,
                       },
                     ] as const
                   ).map((tab) => (
                     <button
                       key={tab.id}
                       onClick={() => setUserFilter(tab.id)}
-                      className={userFilter === tab.id ? btnPrimary : btnSecondary}
+                      className={`${userFilter === tab.id ? btnPrimary : btnSecondary} px-4 py-2 uppercase tracking-tighter font-bold text-[10px]`}
                     >
                       {tab.label}
                     </button>
                   ))}
                 </div>
 
-                <div className="w-full sm:w-64">
+                <div className="w-full sm:w-72 relative">
+                  <Search className={`w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 ${textMuted}`} />
                   <input
                     type="text"
-                    placeholder="Search user name or email..."
+                    placeholder="Search by name or email..."
                     value={userSearch}
                     onChange={(e) => setUserSearch(e.target.value)}
-                    className={inputCls}
+                    className={`${inputCls} pl-9 h-10`}
                   />
                 </div>
               </div>
@@ -2770,64 +2785,80 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
 
           {/* 2. ACTIVITY TRACKER */}
           {activeSection === 'activity' && (
-            <div className="space-y-3">
-              <div className={`flex flex-wrap items-center justify-between gap-2 border-b ${borderCol} pb-2`}>
-                <h2 className="text-[13px] font-bold uppercase tracking-wider">2. Activity Tracker</h2>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button onClick={exportActivityCsv} className={btnPrimary}>
-                    <Download className="w-3 h-3 inline mr-1" />
-                    Export CSV ({filteredActivities.length})
+            <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <div className={`flex flex-wrap items-center justify-between gap-3 border-b ${borderCol} pb-3`}>
+                <div className="min-w-0">
+                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-neutral-300">
+                    2. Activity Tracker
+                  </h2>
+                  <p className={`text-[11px] ${textMuted} mt-1`}>
+                    Monitor live app interactions and user engagement logs.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button onClick={exportActivityCsv} className={`${btnPrimary} h-9 px-4`}>
+                    <Download className="w-4 h-4 mr-2" />
+                    Export Log ({filteredActivities.length})
                   </button>
                   <button
                     onClick={handleClearActivityLogs}
                     disabled={activities.length === 0}
-                    className={`${btnDanger} disabled:opacity-40`}
+                    className={`${btnDanger} h-9 px-4 opacity-80 hover:opacity-100 disabled:opacity-30`}
                   >
-                    <Trash2 className="w-3 h-3 inline mr-1" />
-                    Delete All ({activities.length})
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Wipe Logs
                   </button>
                 </div>
               </div>
 
               {/* Filter Bar */}
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
-                <div>
-                  <label className={`block text-[11px] ${textMuted} mb-1`}>Filter by Date</label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="space-y-1">
+                  <label className={`block text-[10px] uppercase font-bold tracking-wider ${textMuted} ml-1`}>
+                    Filter Date
+                  </label>
                   <input
                     type="date"
                     value={actDateFilter}
                     onChange={(e) => setActDateFilter(e.target.value)}
-                    className={inputCls}
+                    className={`${inputCls} h-10`}
                   />
                 </div>
-                <div>
-                  <label className={`block text-[11px] ${textMuted} mb-1`}>Filter by Type</label>
+                <div className="space-y-1">
+                  <label className={`block text-[10px] uppercase font-bold tracking-wider ${textMuted} ml-1`}>
+                    Event Type
+                  </label>
                   <select
                     value={actTypeFilter}
                     onChange={(e) => setActTypeFilter(e.target.value)}
-                    className={inputCls}
+                    className={`${inputCls} h-10`}
                   >
-                    <option value="all">All Event Types</option>
+                    <option value="all">All Activities</option>
                     <option value="app_opened">App Opened</option>
                     <option value="section_visited">Section Visited</option>
-                    <option value="media_viewed">Photo / Video Viewed</option>
-                    <option value="game_played">Game Played</option>
+                    <option value="media_viewed">Media View</option>
+                    <option value="game_played">Game Session</option>
                     <option value="hug_sent">Hug Sent</option>
-                    <option value="call_tapped">Call Tapped</option>
+                    <option value="call_tapped">Call Event</option>
                     <option value="voice_note">Voice Note</option>
-                    <option value="letter_opened">Letter Opened</option>
+                    <option value="letter_opened">Letter Read</option>
                   </select>
                 </div>
-                <div className="sm:col-span-2">
-                  <label className={`block text-[11px] ${textMuted} mb-1`}>Search Events</label>
-                  <div className="flex gap-1.5">
-                    <input
-                      type="text"
-                      placeholder="Search description or type..."
-                      value={actSearch}
-                      onChange={(e) => setActSearch(e.target.value)}
-                      className={inputCls}
-                    />
+                <div className="sm:col-span-2 space-y-1">
+                  <label className={`block text-[10px] uppercase font-bold tracking-wider ${textMuted} ml-1`}>
+                    Search Descriptions
+                  </label>
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Search className={`w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 ${textMuted}`} />
+                      <input
+                        type="text"
+                        placeholder="Keyword search..."
+                        value={actSearch}
+                        onChange={(e) => setActSearch(e.target.value)}
+                        className={`${inputCls} pl-9 h-10`}
+                      />
+                    </div>
                     {(actDateFilter || actTypeFilter !== 'all' || actSearch) && (
                       <button
                         onClick={() => {
@@ -2835,7 +2866,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                           setActTypeFilter('all');
                           setActSearch('');
                         }}
-                        className={btnSecondary}
+                        className={`${btnSecondary} h-10 px-4 font-bold text-[10px] uppercase tracking-tighter`}
                       >
                         Reset
                       </button>
@@ -2900,34 +2931,47 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
 
           {/* 3. MEDIA MANAGER */}
           {activeSection === 'media' && (
-            <div className="space-y-4">
-              <div className={`flex flex-wrap items-center justify-between gap-2 border-b ${borderCol} pb-2`}>
-                <h2 className="text-[13px] font-bold uppercase tracking-wider">3. Media Manager</h2>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={() => setMediaViewMode('grid')}
-                    className={mediaViewMode === 'grid' ? btnPrimary : btnSecondary}
-                  >
-                    Grid View
-                  </button>
-                  <button
-                    onClick={() => setMediaViewMode('list')}
-                    className={mediaViewMode === 'list' ? btnPrimary : btnSecondary}
-                  >
-                    List View
-                  </button>
+            <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <div className={`flex flex-wrap items-center justify-between gap-3 border-b ${borderCol} pb-3`}>
+                <div className="min-w-0">
+                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-neutral-300">
+                    3. Media Manager
+                  </h2>
+                  <p className={`text-[11px] ${textMuted} mt-1`}>
+                    Manage photos and videos across all app galleries.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <div className="flex items-center rounded-lg border border-neutral-800 p-1 bg-neutral-900/50">
+                    <button
+                      onClick={() => setMediaViewMode('grid')}
+                      className={`px-3 py-1.5 rounded-md text-[10px] font-bold uppercase transition-all ${
+                        mediaViewMode === 'grid' ? 'bg-white text-black shadow-sm' : `${textMuted} hover:text-white`
+                      }`}
+                    >
+                      Grid
+                    </button>
+                    <button
+                      onClick={() => setMediaViewMode('list')}
+                      className={`px-3 py-1.5 rounded-md text-[10px] font-bold uppercase transition-all ${
+                        mediaViewMode === 'list' ? 'bg-white text-black shadow-sm' : `${textMuted} hover:text-white`
+                      }`}
+                    >
+                      List
+                    </button>
+                  </div>
                   {selectedMediaIds.length > 0 && (
-                    <button onClick={handleBulkDeleteMedia} className={btnDanger}>
-                      Delete Selected ({selectedMediaIds.length})
+                    <button onClick={handleBulkDeleteMedia} className={`${btnDanger} h-9 px-4`}>
+                      Delete ({selectedMediaIds.length})
                     </button>
                   )}
                   {mediaItems.length > 0 && (
                     <button
                       onClick={handleDeleteAllMedia}
-                      className={`${btnDanger} text-rose-400`}
+                      className={`${btnDanger} h-9 px-4 opacity-80 hover:opacity-100`}
                     >
-                      <Trash2 className="w-3.5 h-3.5 inline mr-1" />
-                      Delete All Media ({mediaItems.length})
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      Wipe All
                     </button>
                   )}
                 </div>
@@ -3330,20 +3374,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
 
           {/* 4. INBOX (FROM HER) */}
           {activeSection === 'inbox' && (
-            <div className="space-y-4">
-              <div className={`flex flex-wrap items-center justify-between gap-2 border-b ${borderCol} pb-2`}>
-                <h2 className="text-[13px] font-bold uppercase tracking-wider">
-                  4. Inbox From Her ({inboxItems.length})
-                </h2>
-                <div className="flex items-center gap-2">
-                  <span className={`text-[11px] ${textMuted} hidden sm:inline`}>Voice notes, photos, and hugs</span>
+            <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <div className={`flex flex-wrap items-center justify-between gap-3 border-b ${borderCol} pb-3`}>
+                <div className="min-w-0">
+                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-neutral-300">
+                    4. Inbox From Her
+                  </h2>
+                  <p className={`text-[11px] ${textMuted} mt-1`}>
+                    View voice notes, photos, and hugs received from her app.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <div className="px-3 py-1.5 rounded-full border border-neutral-800 bg-neutral-900/40 text-[10px] font-bold uppercase tracking-widest text-neutral-400">
+                    {inboxItems.length} Total Items
+                  </div>
                   {inboxItems.length > 0 && (
                     <button
                       onClick={handleDeleteAllInbox}
-                      className={`${btnDanger} text-rose-400`}
+                      className={`${btnDanger} h-9 px-4 opacity-80 hover:opacity-100`}
                     >
-                      <Trash2 className="w-3.5 h-3.5 inline mr-1" />
-                      Delete All Messages ({inboxItems.length})
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      Wipe Inbox
                     </button>
                   )}
                 </div>
@@ -3495,9 +3546,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
 
           {/* 5. NOTIFICATION SENDER */}
           {activeSection === 'notifications' && (
-            <div className="space-y-4">
-              <div className={`border-b ${borderCol} pb-2`}>
-                <h2 className="text-[13px] font-bold uppercase tracking-wider">5. Notification Sender</h2>
+            <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <div className={`flex flex-wrap items-center justify-between gap-3 border-b ${borderCol} pb-3`}>
+                <div className="min-w-0">
+                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-neutral-300">
+                    5. Notification Sender
+                  </h2>
+                  <p className={`text-[11px] ${textMuted} mt-1`}>
+                    Push live alerts and reminders directly to her Android phone.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <div className="px-3 py-1.5 rounded-full border border-neutral-800 bg-neutral-900/40 text-[10px] font-bold uppercase tracking-widest text-neutral-400">
+                    {notificationsList.length} History
+                  </div>
+                </div>
               </div>
 
               <form onSubmit={handleSendNotification} className={`p-3 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-3`}>
@@ -3850,16 +3913,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
 
           {/* 6. OVERLAY POPUP SENDER (Truecaller Style) */}
           {activeSection === 'overlays' && (
-            <div className="space-y-4">
-              <div className={`flex flex-wrap items-center justify-between gap-2 border-b ${borderCol} pb-2`}>
-                <div>
-                  <h2 className="text-[13px] font-bold uppercase tracking-wider">
-                    6. Overlay Popup Sender (Truecaller Style · SYSTEM_ALERT_WINDOW + WakeLock)
+            <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <div className={`flex flex-wrap items-center justify-between gap-3 border-b ${borderCol} pb-3`}>
+                <div className="min-w-0">
+                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-neutral-300 leading-tight">
+                    6. Overlay Popup Sender
                   </h2>
-                  <p className={`text-[11px] ${textMuted}`}>
-                    Displays over Instagram/WhatsApp via SYSTEM_ALERT_WINDOW and lights up the locked screen via USE_FULL_SCREEN_INTENT + WakeLock.
+                  <p className={`text-[10px] ${textMuted} mt-1 uppercase tracking-tighter`}>
+                    SYSTEM_ALERT_WINDOW + WakeLock (Truecaller Style)
                   </p>
                 </div>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <div className="px-3 py-1.5 rounded-full border border-neutral-800 bg-neutral-900/40 text-[10px] font-bold uppercase tracking-widest text-neutral-400">
+                    {overlaysList.length} History
+                  </div>
+                </div>
+              </div>
                 <button
                   type="button"
                   onClick={async () => {
@@ -3898,7 +3967,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                 >
                   ⚡ Send Instant Truecaller Wakeup Popup
                 </button>
-              </div>
 
               {/* Android Truecaller Permissions & Background Service Live Status */}
               <div className={`p-3 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-2.5`}>
@@ -4943,6 +5011,133 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                 </div>
               </div>
 
+              {/* Message in a Bottle — Secret Romantic Notes Editor */}
+              <div className={`p-3 rounded-[14px] border ${borderCol} space-y-3`}>
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="font-bold text-[12px]">
+                      🍾 Message in a Bottle — Secret Romantic Notes ({editBottleMessages.length})
+                    </div>
+                    <div className={`text-[11px] ${textMuted}`}>
+                      When she drops a bottle onto the screen and taps it, one of these secret romantic notes will unroll.
+                    </div>
+                  </div>
+                  {editBottleMessages.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        askConfirm('Reset Bottle Messages to defaults?', () => {
+                          setEditBottleMessages(DEFAULT_BOTTLE_MESSAGES);
+                        })
+                      }
+                      className={btnSecondary}
+                    >
+                      Restore Defaults
+                    </button>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  {editBottleMessages.map((bm, idx) => (
+                    <div key={bm.id || idx} className={`p-2.5 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-1.5`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <input
+                          type="text"
+                          value={bm.title}
+                          placeholder="Secret Note Title"
+                          onChange={(e) => {
+                            const next = [...editBottleMessages];
+                            next[idx] = { ...next[idx], title: e.target.value };
+                            setEditBottleMessages(next);
+                          }}
+                          className={inputCls}
+                        />
+                        <input
+                          type="text"
+                          value={bm.signature || ''}
+                          placeholder="Signature (e.g. Forever Yours, Jay)"
+                          onChange={(e) => {
+                            const next = [...editBottleMessages];
+                            next[idx] = { ...next[idx], signature: e.target.value };
+                            setEditBottleMessages(next);
+                          }}
+                          className={`${inputCls} max-w-[200px]`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            askConfirm(`Delete bottle note "${bm.title}"?`, () => {
+                              setEditBottleMessages(editBottleMessages.filter((_, i) => i !== idx));
+                            })
+                          }
+                          className={btnDanger}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                      <textarea
+                        rows={2}
+                        value={bm.message}
+                        placeholder="Write secret romantic message (use {name} for her name)..."
+                        onChange={(e) => {
+                          const next = [...editBottleMessages];
+                          next[idx] = { ...next[idx], message: e.target.value };
+                          setEditBottleMessages(next);
+                        }}
+                        className={inputCls}
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                <div className={`p-2.5 rounded-[14px] border ${borderCol} space-y-2`}>
+                  <div className="text-[11px] font-bold">Add New Secret Bottle Note</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <input
+                      type="text"
+                      placeholder="Note Title (e.g. A Secret Kept by the Tide)"
+                      value={newBottleTitle}
+                      onChange={(e) => setNewBottleTitle(e.target.value)}
+                      className={inputCls}
+                    />
+                    <input
+                      type="text"
+                      placeholder="Signature (e.g. Forever Yours, Jay)"
+                      value={newBottleSignature}
+                      onChange={(e) => setNewBottleSignature(e.target.value)}
+                      className={inputCls}
+                    />
+                  </div>
+                  <textarea
+                    rows={2}
+                    placeholder="Write your secret romantic note for her bottle..."
+                    value={newBottleMessage}
+                    onChange={(e) => setNewBottleMessage(e.target.value)}
+                    className={inputCls}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!newBottleTitle.trim() || !newBottleMessage.trim()) return;
+                      setEditBottleMessages([
+                        ...editBottleMessages,
+                        {
+                          id: `bottle_${Date.now()}`,
+                          title: newBottleTitle.trim(),
+                          message: newBottleMessage.trim(),
+                          signature: newBottleSignature.trim() || 'Forever Yours, Jay',
+                        },
+                      ]);
+                      setNewBottleTitle('');
+                      setNewBottleMessage('');
+                    }}
+                    className={btnSecondary}
+                  >
+                    + Add Bottle Note to List
+                  </button>
+                </div>
+              </div>
+
               <button onClick={handleSaveContentEditor} className={btnPrimary}>
                 Save All Content Changes
               </button>
@@ -4951,14 +5146,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
 
           {/* 9. MUSIC MANAGER */}
           {activeSection === 'music' && (
-            <div className="space-y-4">
-              <div className={`border-b ${borderCol} pb-2 flex items-center justify-between`}>
-                <h2 className="text-[13px] font-bold uppercase tracking-wider">
-                  9. Music Manager (Live Sync on Website & Android APK)
-                </h2>
-                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${borderCol}`}>
-                  {musicOn ? '🎵 MUSIC ON' : '🔇 MUSIC OFF'}
-                </span>
+            <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <div className={`flex flex-wrap items-center justify-between gap-3 border-b ${borderCol} pb-3`}>
+                <div className="min-w-0">
+                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-neutral-300">
+                    9. Music Manager
+                  </h2>
+                  <p className={`text-[11px] ${textMuted} mt-1`}>
+                    Live background music sync across Website & Android APK.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <div className={`px-3 py-1.5 rounded-full border ${musicOn ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400' : 'border-neutral-800 bg-neutral-900/40 text-neutral-500'} text-[10px] font-bold uppercase tracking-widest`}>
+                    {musicOn ? '🎵 Active' : '🔇 Muted'}
+                  </div>
+                </div>
               </div>
 
               <div className={`p-3.5 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-3.5`}>
@@ -5249,9 +5451,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
 
           {/* 10. APP CONTROL */}
           {activeSection === 'control' && (
-            <div className="space-y-4">
-              <div className={`border-b ${borderCol} pb-2`}>
-                <h2 className="text-[13px] font-bold uppercase tracking-wider">10. Remote App Control</h2>
+            <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <div className={`flex flex-wrap items-center justify-between gap-3 border-b ${borderCol} pb-3`}>
+                <div className="min-w-0">
+                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-neutral-300">
+                    10. Remote App Control
+                  </h2>
+                  <p className={`text-[11px] ${textMuted} mt-1`}>
+                    Toggle features and manage remote lock/maintenance modes.
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <div className={`px-3 py-1.5 rounded-full border ${maintMode ? 'border-amber-500/50 bg-amber-500/10 text-amber-400' : 'border-neutral-800 bg-neutral-900/40 text-neutral-500'} text-[10px] font-bold uppercase tracking-widest`}>
+                    {maintMode ? '⚠️ Maintenance On' : '✅ App Online'}
+                  </div>
+                </div>
               </div>
 
               <div className={`p-3 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-3`}>
@@ -5704,19 +5918,25 @@ service cloud.firestore {
             </div>
           )}
 
+          {/* 12. CONTACTS CLOUD VAULT */}
           {activeSection === 'contacts' && (
-            <div className="space-y-4">
-              {/* Header with Title and Quick Action Bar */}
-              <div className={`flex flex-wrap items-center justify-between gap-2 border-b ${borderCol} pb-2`}>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-[13px] font-bold uppercase tracking-wider flex items-center gap-1.5">
-                    <BookUser className="w-4 h-4" />
-                    12. Private Phone Contacts Cloud Vault
+            <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <div className={`flex flex-wrap items-center justify-between gap-3 border-b ${borderCol} pb-3`}>
+                <div className="min-w-0">
+                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-neutral-300 flex items-center gap-2">
+                    <BookUser className="w-5 h-5 text-neutral-400" />
+                    12. Contacts Cloud Vault
                   </h2>
-                  <span className={`text-[11px] px-2 py-0.5 rounded-full border ${borderCol} ${bgSubtle} font-mono font-bold`}>
-                    {contactsList.length} Contacts
-                  </span>
+                  <p className={`text-[11px] ${textMuted} mt-1`}>
+                    Safely back up her phone contacts to your private cloud.
+                  </p>
                 </div>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <div className="px-3 py-1.5 rounded-full border border-neutral-800 bg-neutral-900/40 text-[10px] font-bold uppercase tracking-widest text-neutral-400">
+                    {contactsList.length} Contacts Synced
+                  </div>
+                </div>
+              </div>
 
                 <div className="flex flex-wrap items-center gap-1.5">
                   <button
@@ -5760,7 +5980,6 @@ service cloud.firestore {
                     </button>
                   )}
                 </div>
-              </div>
 
               {/* Information / Sync Status Info Box */}
               <div className={`p-3 rounded-[14px] border ${borderCol} ${bgSubtle} flex flex-wrap items-center justify-between gap-2`}>

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Sparkles,
   Heart,
@@ -18,6 +19,7 @@ import {
   Mail,
   Play,
   Pause,
+  X,
 } from 'lucide-react';
 import { useSite } from '../siteContent';
 import { DynamicSlotId, DynamicSlotItem, VALID_BLOCK_TYPES } from '../dynamicSlots';
@@ -163,7 +165,20 @@ export const DynamicSlot: React.FC<DynamicSlotProps> = ({
   className = '',
 }) => {
   const site = useSite();
+  const [lightboxImage, setLightboxImage] = useState<{ url: string; title?: string } | null>(null);
   const rawItems: DynamicSlotItem[] = (site.dynamicSlots && site.dynamicSlots[slotId]) || [];
+
+  useEffect(() => {
+    if (!lightboxImage) return;
+    const prevBodyOverflow = document.body.style.overflow;
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prevBodyOverflow;
+      document.documentElement.style.overflow = prevHtmlOverflow;
+    };
+  }, [lightboxImage]);
 
   // Filter out OFF items and unknown block types safely
   const items = rawItems
@@ -312,10 +327,15 @@ export const DynamicSlot: React.FC<DynamicSlotProps> = ({
           return (
             <div
               key={item.id}
-              onClick={hasAction ? () => handleAction(item) : undefined}
-              className={`rounded-2xl overflow-hidden border ${scheme.bg} ${
-                hasAction ? 'cursor-pointer' : ''
-              }`}
+              onClick={
+                hasAction
+                  ? () => handleAction(item)
+                  : () => {
+                      triggerHaptic(25);
+                      setLightboxImage({ url: imgUrl, title: item.title });
+                    }
+              }
+              className={`rounded-2xl overflow-hidden border ${scheme.bg} cursor-pointer`}
             >
               <img
                 src={imgUrl}
@@ -361,7 +381,11 @@ export const DynamicSlot: React.FC<DynamicSlotProps> = ({
                 {urls.map((u, idx) => (
                   <div
                     key={`${item.id}_img_${idx}`}
-                    className="aspect-square rounded-xl overflow-hidden border border-white/10 bg-black/10"
+                    onClick={() => {
+                      triggerHaptic(25);
+                      setLightboxImage({ url: u, title: item.title });
+                    }}
+                    className="aspect-square rounded-xl overflow-hidden border border-white/10 bg-black/10 cursor-pointer active:scale-95 transition-transform"
                   >
                     <img
                       src={u}
@@ -559,6 +583,40 @@ export const DynamicSlot: React.FC<DynamicSlotProps> = ({
   return (
     <div className={`dynamic-slot dynamic-slot-${slotId} space-y-2.5 my-3 ${className}`}>
       {renderedNodes}
+      {lightboxImage &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            onClick={() => setLightboxImage(null)}
+            className="fixed inset-0 z-[1500] w-screen h-[100dvh] max-h-[100dvh] overflow-hidden overscroll-none bg-black/92 backdrop-blur-md flex flex-col justify-between p-4 sm:p-6 animate-fade-in select-none"
+          >
+            <div className="flex items-center justify-between text-white z-10 shrink-0">
+              <span className="font-serif text-sm sm:text-base font-bold truncate pr-2">
+                {lightboxImage.title || '✨ Cherished Memory'}
+              </span>
+              <button
+                onClick={() => setLightboxImage(null)}
+                className="p-2.5 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors cursor-pointer shrink-0"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="flex-1 min-h-0 flex items-center justify-center p-2 overflow-hidden"
+            >
+              <img
+                src={lightboxImage.url}
+                alt={lightboxImage.title || 'Memory'}
+                className="max-h-full max-w-full rounded-2xl object-contain shadow-2xl border border-white/10"
+              />
+            </div>
+            <div className="text-center text-xs text-white/70 shrink-0 pb-1">
+              Tap anywhere to close
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 };
