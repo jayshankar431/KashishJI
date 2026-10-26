@@ -53,7 +53,7 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.kashish.world"
+        applicationId = "com.kashishhh.app"
         minSdk = 24
         targetSdk = 34
         versionCode = (project.findProperty("versionCodeProp")?.toString()?.toIntOrNull()) ?: 2000

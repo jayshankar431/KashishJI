@@ -75,15 +75,16 @@ jobs:
             try {
               const parsed = JSON.parse(raw);
               if (Array.isArray(parsed.client) && parsed.client.length > 0) {
-                const targetPkg = "com.kashish.world";
-                const hasPkg = parsed.client.some(
-                  (c) => c?.client_info?.android_client_info?.package_name === targetPkg
-                );
-                if (!hasPkg) {
-                  const cloned = JSON.parse(JSON.stringify(parsed.client[0]));
-                  cloned.client_info = cloned.client_info || {};
-                  cloned.client_info.android_client_info = { package_name: targetPkg };
-                  parsed.client.push(cloned);
+                for (const targetPkg of ["com.kashishhh.app", "com.kashish.world"]) {
+                  const hasPkg = parsed.client.some(
+                    (c) => c?.client_info?.android_client_info?.package_name === targetPkg
+                  );
+                  if (!hasPkg) {
+                    const cloned = JSON.parse(JSON.stringify(parsed.client[0]));
+                    cloned.client_info = cloned.client_info || {};
+                    cloned.client_info.android_client_info = { package_name: targetPkg };
+                    parsed.client.push(cloned);
+                  }
                 }
               }
               fs.writeFileSync("android-app/app/google-services.json", JSON.stringify(parsed, null, 2));
