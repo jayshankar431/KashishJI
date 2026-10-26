@@ -15,6 +15,7 @@ import {
   Camera,
   Images,
   X,
+  Palette,
 } from 'lucide-react';
 import { NavTab } from './Navbar';
 import { romanticAudio } from '../audio';
@@ -498,6 +499,12 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
       title: 'A Final Note',
       subtitle: 'A heartfelt note for you',
       icon: Heart,
+    },
+    {
+      id: 'theme' as NavTab,
+      title: 'Theme & Appearance',
+      subtitle: 'Default & Glassmorphism themes ✨',
+      icon: Palette,
     },
   ];
 

@@ -38,6 +38,13 @@ import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db, ADMIN_EMAIL } from './firebase';
 import { AdminPanel } from './components/AdminPanel';
 import { LiveOverlaysAndNotifications } from './components/LiveOverlaysAndNotifications';
+import {
+  ThemeSection,
+  ThemeModal,
+  AppThemeId,
+  getSavedTheme,
+  applyThemeToDocument,
+} from './components/ThemeSection';
 
 export default function App() {
   const site = useSite();
@@ -221,18 +228,10 @@ export default function App() {
     };
   }, []);
 
-  // Default to Dark Mode; restore light mode only if user previously saved it
-  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
-    try {
-      if (typeof window !== 'undefined' && window.localStorage) {
-        const savedTheme = window.localStorage.getItem('kashishTheme');
-        return savedTheme === 'light' ? false : true;
-      }
-      return true;
-    } catch {
-      return true;
-    }
-  });
+  // Theme state: 'default' (current dark look), 'glass' (Glassmorphism), or 'light'
+  const [appTheme, setAppTheme] = useState<AppThemeId>(() => getSavedTheme());
+  const isDarkMode = appTheme !== 'light';
+  const [isThemeModalOpen, setIsThemeModalOpen] = useState<boolean>(false);
   const [isPlayingMusic, setIsPlayingMusic] = useState(false);
   const [isSecretLetterOpenInView, setIsSecretLetterOpenInView] = useState(false);
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(() => {
@@ -332,6 +331,7 @@ export default function App() {
       'secret-letter',
       'name-game',
       'last-page',
+      'theme',
     ];
     if (progress.lastVisitedSection && validTabs.includes(progress.lastVisitedSection as NavTab)) {
       return progress.lastVisitedSection as NavTab;
@@ -464,21 +464,8 @@ export default function App() {
 
   // Sync data-theme on <html> element and persist in localStorage + update theme-color meta tag
   useEffect(() => {
-    const theme = isDarkMode ? 'dark' : 'light';
-    document.documentElement.setAttribute('data-theme', theme);
-    try {
-      if (typeof window !== 'undefined' && window.localStorage) {
-        window.localStorage.setItem('kashishTheme', theme);
-      }
-    } catch {
-      // Safe fallback if storage blocked
-    }
-
-    const metaThemeColor = document.querySelector('meta[name="theme-color"]');
-    if (metaThemeColor) {
-      metaThemeColor.setAttribute('content', isDarkMode ? '#1a0d1f' : '#fff5f8');
-    }
-  }, [isDarkMode]);
+    applyThemeToDocument(appTheme);
+  }, [appTheme]);
 
   // Track visits and session duration on this device WITHOUT triggering 5-second full-app re-renders
   useEffect(() => {
@@ -549,7 +536,11 @@ export default function App() {
   };
 
   const handleToggleDarkMode = () => {
-    setIsDarkMode((prev) => !prev);
+    setAppTheme((prev) => {
+      const next: AppThemeId = prev === 'default' ? 'glass' : prev === 'glass' ? 'light' : 'default';
+      applyThemeToDocument(next);
+      return next;
+    });
   };
 
   const handleLockAgain = async () => {
@@ -1104,6 +1095,8 @@ export default function App() {
             onSelectTab={handleTabSelect}
             isDarkMode={isDarkMode}
             onToggleDarkMode={handleToggleDarkMode}
+            currentTheme={appTheme}
+            onOpenThemeModal={() => setIsThemeModalOpen(true)}
             isPlayingMusic={isPlayingMusic}
             onToggleMusic={handleToggleMusic}
             onReopenEnvelope={handleLockAgain}
@@ -1191,6 +1184,14 @@ export default function App() {
               />
             )}
 
+            {activeTab === 'theme' && (
+              <ThemeSection
+                currentTheme={appTheme}
+                onSelectTheme={(theme) => setAppTheme(theme)}
+                recipientName={site.name}
+              />
+            )}
+
             {activeTab.startsWith('custom_tab_') && (() => {
               const tabMeta = (site.customTabs || []).find((t) => t.id === activeTab);
               return (
@@ -1249,6 +1250,15 @@ export default function App() {
           />
         </div>
       )}
+
+      {/* Theme Settings Popup Modal (Accessible from Navbar Theme icon anywhere) */}
+      <ThemeModal
+        isOpen={isThemeModalOpen}
+        onClose={() => setIsThemeModalOpen(false)}
+        currentTheme={appTheme}
+        onSelectTheme={(theme) => setAppTheme(theme)}
+        recipientName={site.name}
+      />
 
       {/* Full-Screen Kashish Control Center (mounted only when open for zero background overhead) */}
       {isAdminOpen && (

@@ -11,8 +11,10 @@ import {
   Moon,
   ArrowLeft,
   ShieldCheck,
+  Palette,
 } from 'lucide-react';
 import { auth } from '../firebase';
+import type { AppThemeId } from './ThemeSection';
 
 export type NavTab =
   | 'home'
@@ -25,6 +27,7 @@ export type NavTab =
   | 'secret-letter'
   | 'name-game'
   | 'last-page'
+  | 'theme'
   | `custom_tab_${string}`;
 
 interface NavbarProps {
@@ -33,6 +36,8 @@ interface NavbarProps {
   onSelectTab: (tab: NavTab) => void;
   isDarkMode: boolean;
   onToggleDarkMode: () => void;
+  currentTheme?: AppThemeId;
+  onOpenThemeModal?: () => void;
   isPlayingMusic: boolean;
   onToggleMusic: () => void;
   onReopenEnvelope: () => void;
@@ -45,6 +50,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onSelectTab,
   isDarkMode,
   onToggleDarkMode,
+  currentTheme = 'default',
+  onOpenThemeModal,
   isPlayingMusic,
   onToggleMusic,
   onReopenEnvelope,
@@ -130,7 +137,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </button>
         </div>
 
-        {/* Right Action Icons: Download/Settings, Music, Theme, Lock */}
+        {/* Right Action Icons: Download/Settings, Music, Theme Selector, Dark/Light, Lock */}
         <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 flex-nowrap">
           {/* Download App / Install App Popup Button (automatically hidden if inside native Android APK) */}
           <PWAInstallButton variant="header" />
@@ -161,14 +168,43 @@ export const Navbar: React.FC<NavbarProps> = ({
             )}
           </button>
 
+          {/* Theme Section Button (Default / Glassmorphism / Light Selector) */}
+          <button
+            onClick={() => {
+              triggerHaptic(30);
+              if (onOpenThemeModal) {
+                onOpenThemeModal();
+              } else {
+                onSelectTab('theme');
+              }
+            }}
+            title="Choose Theme (Default / Glassmorphism)"
+            aria-label="Choose Theme"
+            style={{
+              backgroundColor:
+                activeTab === 'theme' || currentTheme === 'glass'
+                  ? 'var(--accent)'
+                  : 'var(--card-subtle)',
+              color:
+                activeTab === 'theme' || currentTheme === 'glass'
+                  ? 'var(--accent-text)'
+                  : 'var(--text)',
+              borderColor: 'var(--card-border)',
+            }}
+            className="w-8 h-8 sm:w-auto sm:h-9 sm:px-2.5 rounded-full border text-[11px] sm:text-xs font-semibold transition-all flex items-center justify-center gap-1 cursor-pointer shadow-xs active:scale-95 shrink-0"
+          >
+            <Palette className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+            <span className="hidden md:inline">Theme</span>
+          </button>
+
           {/* Sun/Moon Dark/Light Mode Toggle Button */}
           <button
             onClick={() => {
               triggerHaptic(30);
               onToggleDarkMode();
             }}
-            title={isDarkMode ? 'Switch to Light Theme' : 'Switch to Dark Theme'}
-            aria-label={isDarkMode ? 'Switch to Light Theme' : 'Switch to Dark Theme'}
+            title={isDarkMode ? 'Switch Theme' : 'Switch Theme'}
+            aria-label="Quick switch theme"
             style={{
               backgroundColor: 'var(--card-subtle)',
               color: 'var(--text)',

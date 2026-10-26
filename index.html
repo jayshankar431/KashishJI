@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="default">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -32,13 +32,15 @@
       (function () {
         try {
           var saved = localStorage.getItem('kashishTheme');
-          if (saved === 'light') {
+          if (saved === 'glass') {
+            document.documentElement.setAttribute('data-theme', 'glass');
+          } else if (saved === 'light') {
             document.documentElement.setAttribute('data-theme', 'light');
           } else {
-            document.documentElement.setAttribute('data-theme', 'dark');
+            document.documentElement.setAttribute('data-theme', 'default');
           }
         } catch (e) {
-          document.documentElement.setAttribute('data-theme', 'dark');
+          document.documentElement.setAttribute('data-theme', 'default');
         }
 
         window.deferredPwaPrompt = null;

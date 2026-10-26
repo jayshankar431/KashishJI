@@ -11,6 +11,7 @@
 
   /* DEFAULT THEME: DARK MODE (Nostalgic Night Diary) */
   --bg: #140c1e;
+  --bg-gradient: none;
   --card: rgba(30, 16, 46, 0.94);
   --card-solid: #1e102f;
   --card-border: rgba(244, 114, 182, 0.25);
@@ -22,10 +23,16 @@
   --card-subtle: #29143d;
   --nav-bg: rgba(21, 10, 34, 0.96);
   --shadow-color: rgba(0, 0, 0, 0.4);
+  --glass-blur: none;
+  --glass-border: rgba(244, 114, 182, 0.25);
+  --glass-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+  --input-bg: #29143d;
 }
 
+[data-theme="default"],
 [data-theme="dark"] {
   --bg: #140c1e;
+  --bg-gradient: none;
   --card: rgba(30, 16, 46, 0.94);
   --card-solid: #1e102f;
   --card-border: rgba(244, 114, 182, 0.25);
@@ -37,10 +44,15 @@
   --card-subtle: #29143d;
   --nav-bg: rgba(21, 10, 34, 0.96);
   --shadow-color: rgba(0, 0, 0, 0.4);
+  --glass-blur: none;
+  --glass-border: rgba(244, 114, 182, 0.25);
+  --glass-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+  --input-bg: #29143d;
 }
 
 [data-theme="light"] {
   --bg: #fff5f8;
+  --bg-gradient: none;
   --card: rgba(255, 255, 255, 0.95);
   --card-solid: #ffffff;
   --card-border: #f3c6d6;
@@ -52,6 +64,31 @@
   --card-subtle: #fff0f4;
   --nav-bg: rgba(255, 255, 255, 0.96);
   --shadow-color: rgba(58, 18, 38, 0.08);
+  --glass-blur: none;
+  --glass-border: #f3c6d6;
+  --glass-shadow: 0 6px 24px rgba(58, 18, 38, 0.08);
+  --input-bg: #fff0f4;
+}
+
+/* GLASSMORPHISM THEME: Deep Dark Midnight Aurora + Enhanced Frosted Crystal Blur */
+[data-theme="glass"] {
+  --bg: transparent;
+  --bg-gradient: linear-gradient(135deg, #070312 0%, #0b112c 42%, #1d0728 76%, #080314 100%);
+  --card: rgba(20, 11, 40, 0.52);
+  --card-solid: rgba(22, 12, 44, 0.62);
+  --card-border: rgba(255, 255, 255, 0.22);
+  --text: #ffffff;
+  --text-soft: rgba(244, 230, 255, 0.92);
+  --accent: #ff4d79;
+  --accent-hover: #ff6b93;
+  --accent-text: #ffffff;
+  --card-subtle: rgba(255, 255, 255, 0.09);
+  --nav-bg: rgba(14, 7, 30, 0.58);
+  --shadow-color: rgba(0, 0, 0, 0.58);
+  --glass-blur: blur(28px) saturate(190%);
+  --glass-border: rgba(255, 255, 255, 0.24);
+  --glass-shadow: 0 14px 38px 0 rgba(0, 0, 0, 0.58);
+  --input-bg: rgba(16, 8, 34, 0.55);
 }
 
 *,
@@ -700,4 +737,295 @@ li {
 .animate-wind-vortex-slow {
   animation: windVortexSpin 1s linear infinite reverse;
 }
+
+/* ==========================================================================
+   ✨ GLASSMORPHISM THEME ENGINE ([data-theme="glass"])
+   ========================================================================== */
+
+/* 1. Deep Dark Midnight Background with High-Contrast Glowing Aurora Orbs */
+html[data-theme="glass"] {
+  background-color: #070312;
+  background-image:
+    radial-gradient(circle at 18% 16%, rgba(244, 63, 94, 0.42) 0%, transparent 38%),
+    radial-gradient(circle at 84% 28%, rgba(59, 130, 246, 0.38) 0%, transparent 40%),
+    radial-gradient(circle at 24% 62%, rgba(168, 85, 247, 0.42) 0%, transparent 42%),
+    radial-gradient(circle at 78% 78%, rgba(236, 72, 153, 0.38) 0%, transparent 42%),
+    linear-gradient(135deg, #070312 0%, #090f26 42%, #190624 76%, #060210 100%);
+  background-attachment: fixed;
+  color: var(--text);
+}
+
+html[data-theme="glass"] body {
+  background: transparent !important;
+  color: var(--text);
+  position: relative;
+}
+
+/* Prevent ancestor wrapper animations from creating a CSS Backdrop Root that blocks backdrop-filter */
+html[data-theme="glass"] .section-fade-slide,
+html[data-theme="glass"] .animate-fade-in {
+  animation: none !important;
+  opacity: 1 !important;
+  transform: none !important;
+  filter: none !important;
+}
+
+/* Vibrant glowing ambient orbs behind the cards so the 28px glass blur strongly refracts light */
+html[data-theme="glass"] body::before,
+html[data-theme="glass"] body::after {
+  content: "";
+  position: fixed;
+  pointer-events: none;
+  z-index: 0;
+  border-radius: 9999px;
+  filter: blur(48px);
+  opacity: 0.72;
+  transform: translateZ(0);
+}
+
+html[data-theme="glass"] body::before {
+  width: 340px;
+  height: 340px;
+  top: 10%;
+  left: 50%;
+  margin-left: -260px;
+  background: radial-gradient(
+    circle,
+    rgba(244, 63, 94, 0.68) 0%,
+    rgba(168, 85, 247, 0.52) 52%,
+    transparent 100%
+  );
+}
+
+html[data-theme="glass"] body::after {
+  width: 360px;
+  height: 360px;
+  bottom: 12%;
+  left: 50%;
+  margin-left: -40px;
+  background: radial-gradient(
+    circle,
+    rgba(59, 130, 246, 0.62) 0%,
+    rgba(217, 70, 239, 0.5) 55%,
+    transparent 100%
+  );
+}
+
+/* 2. Deep Smoked Frosted Glass Surfaces: Cards, Navbar, Modals, Popups */
+html[data-theme="glass"] header,
+html[data-theme="glass"] .glass-surface,
+html[data-theme="glass"] .glass-card,
+html[data-theme="glass"] [style*="var(--card)"],
+html[data-theme="glass"] [style*="var(--card-solid)"],
+html[data-theme="glass"] [style*="var(--nav-bg)"] {
+  background-color: rgba(18, 9, 36, 0.5) !important;
+  background-image: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.15) 0%,
+    rgba(255, 255, 255, 0.05) 45%,
+    rgba(14, 7, 30, 0.35) 100%
+  ) !important;
+  backdrop-filter: blur(28px) saturate(190%) contrast(106%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(190%) contrast(106%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.24) !important;
+  box-shadow:
+    0 14px 38px 0 rgba(0, 0, 0, 0.58),
+    inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.32),
+    inset 0 -1px 1px 0 rgba(255, 255, 255, 0.06) !important;
+  transition:
+    background-color 0.3s ease,
+    border-color 0.3s ease,
+    box-shadow 0.3s ease,
+    transform 0.3s ease;
+}
+
+/* Sticky Top Navbar extra deep frosted glass */
+html[data-theme="glass"] header {
+  background-color: rgba(12, 6, 26, 0.62) !important;
+  backdrop-filter: blur(30px) saturate(200%) !important;
+  -webkit-backdrop-filter: blur(30px) saturate(200%) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.22) !important;
+}
+
+/* Subtle inner glass elements (chips, inner boxes, secondary buttons) */
+html[data-theme="glass"] [style*="var(--card-subtle)"] {
+  background-color: rgba(255, 255, 255, 0.09) !important;
+  background-image: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.14) 0%,
+    rgba(255, 255, 255, 0.04) 100%
+  ) !important;
+  backdrop-filter: blur(20px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+  border-color: rgba(255, 255, 255, 0.22) !important;
+  box-shadow:
+    0 4px 16px rgba(0, 0, 0, 0.32),
+    inset 0 1px 1px rgba(255, 255, 255, 0.24);
+  transition: all 0.3s ease;
+}
+
+/* 3. Inputs, Textareas, Dropdowns (Select), and Form Controls in Dark Frosted Glass */
+html[data-theme="glass"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+html[data-theme="glass"] textarea,
+html[data-theme="glass"] select {
+  background-color: rgba(15, 8, 32, 0.56) !important;
+  background-image: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.12) 0%,
+    rgba(255, 255, 255, 0.04) 100%
+  ) !important;
+  backdrop-filter: blur(24px) saturate(185%) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(185%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.26) !important;
+  color: #ffffff !important;
+  border-radius: 16px;
+  box-shadow:
+    0 6px 20px rgba(0, 0, 0, 0.38),
+    inset 0 1px 1px rgba(255, 255, 255, 0.22);
+  transition: all 0.3s ease;
+}
+
+html[data-theme="glass"] input::placeholder,
+html[data-theme="glass"] textarea::placeholder {
+  color: rgba(244, 230, 255, 0.68) !important;
+}
+
+html[data-theme="glass"] input:focus,
+html[data-theme="glass"] textarea:focus,
+html[data-theme="glass"] select:focus {
+  background-color: rgba(26, 14, 52, 0.68) !important;
+  border-color: rgba(255, 107, 147, 0.8) !important;
+  box-shadow:
+    0 0 22px rgba(255, 77, 121, 0.42),
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.34) !important;
+  outline: none;
+}
+
+html[data-theme="glass"] select option {
+  background-color: #110824;
+  color: #ffffff;
+}
+
+/* 4. Buttons Hover / Active Glow & Smooth 0.3s Transition */
+html[data-theme="glass"] button {
+  transition:
+    background-color 0.3s ease,
+    border-color 0.3s ease,
+    box-shadow 0.3s ease,
+    transform 0.3s ease,
+    color 0.3s ease;
+}
+
+html[data-theme="glass"] button:hover:not(:disabled),
+html[data-theme="glass"] button:active:not(:disabled) {
+  box-shadow:
+    0 8px 26px rgba(255, 77, 121, 0.36),
+    0 0 16px rgba(255, 255, 255, 0.18),
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.36);
+}
+
+html[data-theme="glass"] .glass-interactive-card:hover,
+html[data-theme="glass"] button[style*="var(--card)"]:hover {
+  background-color: rgba(28, 15, 54, 0.62) !important;
+  border-color: rgba(255, 255, 255, 0.42) !important;
+  box-shadow:
+    0 16px 40px rgba(244, 63, 94, 0.3),
+    0 0 20px rgba(255, 255, 255, 0.16),
+    inset 0 1px 1.5px rgba(255, 255, 255, 0.38) !important;
+}
+
+/* 5. High-Contrast Readable Text & Subtle Text-Shadow in Glass Theme */
+html[data-theme="glass"] h1,
+html[data-theme="glass"] h2,
+html[data-theme="glass"] h3,
+html[data-theme="glass"] h4,
+html[data-theme="glass"] p,
+html[data-theme="glass"] span,
+html[data-theme="glass"] label {
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
+}
+
+/* Ensure colored utility buttons on Home & Sections have crisp light contrast in Glass & Dark themes */
+html[data-theme="glass"] .text-indigo-600,
+html[data-theme="dark"] .text-indigo-600,
+html[data-theme="default"] .text-indigo-600 {
+  color: #c7d2fe !important;
+}
+
+html[data-theme="glass"] .text-emerald-600,
+html[data-theme="dark"] .text-emerald-600,
+html[data-theme="default"] .text-emerald-600 {
+  color: #a7f3d0 !important;
+}
+
+html[data-theme="glass"] .text-amber-600,
+html[data-theme="dark"] .text-amber-600,
+html[data-theme="default"] .text-amber-600 {
+  color: #fde68a !important;
+}
+
+/* 6. Mobile Glass Blur: Rich 22px Frosted Blur on Mobile Screens */
+@media (max-width: 640px) {
+  html[data-theme="glass"] body::before {
+    width: 250px;
+    height: 250px;
+    top: 12%;
+    left: -30px;
+    margin-left: 0;
+    filter: blur(42px);
+  }
+
+  html[data-theme="glass"] body::after {
+    width: 260px;
+    height: 260px;
+    bottom: 14%;
+    right: -30px;
+    left: auto;
+    margin-left: 0;
+    filter: blur(42px);
+  }
+
+  html[data-theme="glass"] header,
+  html[data-theme="glass"] .glass-surface,
+  html[data-theme="glass"] .glass-card,
+  html[data-theme="glass"] [style*="var(--card)"],
+  html[data-theme="glass"] [style*="var(--card-solid)"],
+  html[data-theme="glass"] [style*="var(--nav-bg)"],
+  html[data-theme="glass"] [style*="var(--card-subtle)"],
+  html[data-theme="glass"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  html[data-theme="glass"] textarea,
+  html[data-theme="glass"] select {
+    backdrop-filter: blur(22px) saturate(185%) contrast(105%) !important;
+    -webkit-backdrop-filter: blur(22px) saturate(185%) contrast(105%) !important;
+  }
+}
+
+/* 7. Fallback for Browsers / WebViews Without backdrop-filter Support */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  html[data-theme="glass"] {
+    --card: rgba(16, 9, 34, 0.94);
+    --card-solid: rgba(18, 10, 38, 0.96);
+    --card-subtle: rgba(28, 16, 56, 0.92);
+    --nav-bg: rgba(12, 6, 26, 0.96);
+    --input-bg: rgba(22, 12, 46, 0.94);
+  }
+
+  html[data-theme="glass"] header,
+  html[data-theme="glass"] .glass-surface,
+  html[data-theme="glass"] .glass-card,
+  html[data-theme="glass"] [style*="var(--card)"],
+  html[data-theme="glass"] [style*="var(--card-solid)"],
+  html[data-theme="glass"] [style*="var(--nav-bg)"] {
+    background-color: rgba(16, 9, 34, 0.94) !important;
+  }
+
+  html[data-theme="glass"] [style*="var(--card-subtle)"],
+  html[data-theme="glass"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  html[data-theme="glass"] textarea,
+  html[data-theme="glass"] select {
+    background-color: rgba(28, 16, 56, 0.92) !important;
+  }
+}
+
+
 
