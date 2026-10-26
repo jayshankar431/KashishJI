@@ -31,6 +31,7 @@ import {
   LatestReleaseApkInfo,
   isVersionOlder,
   syncContactsToCloud,
+  parseClickedActionResponses,
 } from '../androidBridge';
 import {
   useSite,
@@ -269,6 +270,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       { label: 'Open Our Gallery ✨', action: 'open_section', payload: 'gallery' },
     ];
   });
+  const [notifTargetMode, setNotifTargetMode] = useState<'ALL' | 'USER'>(() => {
+    try {
+      return (localStorage.getItem('kashish_admin_notif_target_mode') as 'ALL' | 'USER') || 'ALL';
+    } catch {
+      return 'ALL';
+    }
+  });
+  const [notifTargetUser, setNotifTargetUser] = useState<string>(() => {
+    try {
+      return localStorage.getItem('kashish_admin_notif_target_user') || '';
+    } catch {
+      return '';
+    }
+  });
   const [customSounds, setCustomSounds] = useState<{ id?: string; name: string; url: string }[]>(() => {
     const saved = site.savedSounds || [];
     const defaultUrls = new Set(DEFAULT_SAVED_SOUNDS.map((d) => d.url));
@@ -285,8 +300,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       localStorage.setItem('kashish_admin_notif_img', notifImage);
       localStorage.setItem('kashish_admin_notif_sound', notifSoundUrl);
       localStorage.setItem('kashish_admin_notif_buttons', JSON.stringify(notifButtons));
+      localStorage.setItem('kashish_admin_notif_target_mode', notifTargetMode);
+      localStorage.setItem('kashish_admin_notif_target_user', notifTargetUser);
     } catch {}
-  }, [notifTitle, notifMessage, notifImage, notifSoundUrl, notifButtons]);
+  }, [notifTitle, notifMessage, notifImage, notifSoundUrl, notifButtons, notifTargetMode, notifTargetUser]);
 
   // Section 6: Overlay Popup Sender State (Restores last saved setting from localStorage)
   const [ovTitle, setOvTitle] = useState<string>(() => {
@@ -346,6 +363,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       { label: 'Keep in My Heart', action: 'dismiss', payload: '' },
     ];
   });
+  const [ovTargetMode, setOvTargetMode] = useState<'ALL' | 'USER'>(() => {
+    try {
+      return (localStorage.getItem('kashish_admin_ov_target_mode') as 'ALL' | 'USER') || 'ALL';
+    } catch {
+      return 'ALL';
+    }
+  });
+  const [ovTargetUser, setOvTargetUser] = useState<string>(() => {
+    try {
+      return localStorage.getItem('kashish_admin_ov_target_user') || '';
+    } catch {
+      return '';
+    }
+  });
   const [deviceStatusDoc, setDeviceStatusDoc] = useState<Record<string, any>>({});
 
   // Persist overlay popup sender draft so last entered settings stay
@@ -358,8 +389,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       localStorage.setItem('kashish_admin_ov_font', ovFontStyle);
       localStorage.setItem('kashish_admin_ov_sound', ovSoundUrl);
       localStorage.setItem('kashish_admin_ov_buttons', JSON.stringify(ovButtons));
+      localStorage.setItem('kashish_admin_ov_target_mode', ovTargetMode);
+      localStorage.setItem('kashish_admin_ov_target_user', ovTargetUser);
     } catch {}
-  }, [ovTitle, ovMessage, ovImage, ovTheme, ovFontStyle, ovSoundUrl, ovButtons]);
+  }, [ovTitle, ovMessage, ovImage, ovTheme, ovFontStyle, ovSoundUrl, ovButtons, ovTargetMode, ovTargetUser]);
 
   // Persist contacts vault search & sort so last settings stay
   useEffect(() => {
@@ -762,6 +795,68 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       return true;
     });
   }, [usersList, userFilter, userSearch]);
+
+  // Selectable non-admin users for Notification & Overlay Target Audience Selector
+  const selectableTargetUsers = useMemo(() => {
+    const map = new Map<string, { id: string; username: string; email: string; status: string }>();
+    usersList.forEach((u) => {
+      if (isUserAdminAccount(u)) return;
+      const email = String(u.email || '').trim();
+      const username = String(u.displayName || email.split('@')[0] || 'User').trim();
+      const key = (email || username || u.id).toLowerCase();
+      if (!key) return;
+      map.set(key, {
+        id: u.uid || u.id || username,
+        username,
+        email,
+        status: getUserStatus(u),
+      });
+    });
+    activities.forEach((a) => {
+      const email = String(a.userEmail || '').trim();
+      if (!email || email === 'guest' || email.toLowerCase() === ADMIN_EMAIL.toLowerCase()) return;
+      const key = email.toLowerCase();
+      if (!map.has(key)) {
+        const username = email.split('@')[0] || email;
+        map.set(key, {
+          id: username,
+          username,
+          email,
+          status: 'approved',
+        });
+      }
+    });
+    return Array.from(map.values());
+  }, [usersList, activities]);
+
+  const resolveTargetMetadata = (mode: 'ALL' | 'USER', rawInput: string) => {
+    if (mode === 'ALL' || !rawInput.trim()) {
+      return {
+        targetUser: 'ALL',
+        targetUserName: 'All Users',
+        targetUserEmail: '',
+      };
+    }
+    const clean = rawInput.trim();
+    const matched = selectableTargetUsers.find(
+      (u) =>
+        u.username.toLowerCase() === clean.toLowerCase() ||
+        u.email.toLowerCase() === clean.toLowerCase() ||
+        u.id.toLowerCase() === clean.toLowerCase()
+    );
+    if (matched) {
+      return {
+        targetUser: matched.username || matched.email || matched.id,
+        targetUserName: matched.username,
+        targetUserEmail: matched.email,
+      };
+    }
+    return {
+      targetUser: clean,
+      targetUserName: clean,
+      targetUserEmail: clean.includes('@') ? clean : '',
+    };
+  };
 
   const handleApproveUser = (userItem: any) => {
     const uid = userItem.id;
@@ -1303,6 +1398,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       notifyStatus('Title and message are required.', true);
       return;
     }
+    if (notifTargetMode === 'USER' && !notifTargetUser.trim()) {
+      notifyStatus('Please select or enter a username to send to a particular user.', true);
+      return;
+    }
+    const targetMeta = resolveTargetMetadata(notifTargetMode, notifTargetUser);
     const scheduledMs = notifScheduleTime ? new Date(notifScheduleTime).getTime() : null;
     const cleanedButtons = notifButtons
       .filter((b) => b.label.trim().length > 0)
@@ -1319,6 +1419,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       imageUrl: notifImage.trim(),
       soundUrl: notifSoundUrl || '',
       buttons: cleanedButtons,
+      targetUser: targetMeta.targetUser,
+      targetUserName: targetMeta.targetUserName,
+      targetUserEmail: targetMeta.targetUserEmail,
       createdAt: Date.now(),
       scheduledFor: scheduledMs,
       status: scheduledMs && scheduledMs > Date.now() ? 'scheduled' : 'sent',
@@ -1329,7 +1432,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     setNotifMessage('');
     setNotifImage('');
     setNotifScheduleTime('');
-    notifyStatus(scheduledMs ? 'Notification scheduled.' : 'Notification sent live!');
+    notifyStatus(
+      scheduledMs
+        ? `Notification scheduled for ${targetMeta.targetUserName}.`
+        : `Notification sent live to ${targetMeta.targetUserName}!`
+    );
 
     void addDoc(collection(db, 'notifications'), payload).catch((err: any) =>
       notifyStatus(`Error: ${err.message}`, true)
@@ -1343,23 +1450,38 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       notifyStatus('Overlay title and message are required.', true);
       return;
     }
+    if (ovTargetMode === 'USER' && !ovTargetUser.trim()) {
+      notifyStatus('Please select or enter a username to send to a particular user.', true);
+      return;
+    }
+    const targetMeta = resolveTargetMetadata(ovTargetMode, ovTargetUser);
     const now = Date.now();
     const scheduledMs = ovScheduleTime ? new Date(ovScheduleTime).getTime() : null;
     const isImmediate = !scheduledMs || scheduledMs <= now;
 
-    // If sending a new overlay right now, auto-dismiss any older pending overlays that haven't received a response
+    // Retire older pending overlays for the same target without overwriting any user responses already captured
     if (isImmediate && overlaysList.length > 0) {
       const pendingOldOverlays = overlaysList.filter(
-        (ov) => !ov.dismissed && (!ov.scheduledFor || ov.scheduledFor <= now)
+        (ov) =>
+          !ov.dismissed &&
+          (!ov.scheduledFor || ov.scheduledFor <= now) &&
+          (targetMeta.targetUser === 'ALL' || (ov.targetUser || 'ALL') === targetMeta.targetUser)
       );
       await Promise.all(
-        pendingOldOverlays.map((oldOv) =>
-          updateDoc(doc(db, 'overlays', oldOv.id), {
-            dismissed: true,
-            clickedAction: 'replaced_by_new_overlay',
-            seenAt: now,
-          }).catch(() => {})
-        )
+        pendingOldOverlays.map((oldOv) => {
+          const hasExistingResponse =
+            Boolean(oldOv.clickedAction) && oldOv.clickedAction !== 'replaced_by_new_overlay';
+          return updateDoc(
+            doc(db, 'overlays', oldOv.id),
+            hasExistingResponse
+              ? { dismissed: true }
+              : {
+                  dismissed: true,
+                  clickedAction: 'replaced_by_new_overlay',
+                  seenAt: now,
+                }
+          ).catch(() => {});
+        })
       );
     }
 
@@ -1371,6 +1493,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       fontStyle: ovFontStyle,
       soundUrl: ovSoundUrl || '',
       buttons: ovButtons.slice(0, 3),
+      targetUser: targetMeta.targetUser,
+      targetUserName: targetMeta.targetUserName,
+      targetUserEmail: targetMeta.targetUserEmail,
       createdAt: Date.now(),
       scheduledFor: scheduledMs,
       status: scheduledMs && scheduledMs > now ? 'scheduled' : 'sent',
@@ -1379,8 +1504,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
 
     notifyStatus(
       scheduledMs && scheduledMs > now
-        ? 'Overlay scheduled.'
-        : 'New overlay sent! (Any previous pending overlay was automatically dismissed)'
+        ? `Overlay scheduled for ${targetMeta.targetUserName}.`
+        : `Live overlay sent to ${targetMeta.targetUserName}!`
     );
     void addDoc(collection(db, 'overlays'), payload).catch((err: any) =>
       notifyStatus(`Overlay error: ${err.message}`, true)
@@ -3807,8 +3932,109 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                   ))}
                 </div>
 
+                {/* Target Recipient Selector (Send to All vs Particular User / Username) */}
+                <div className={`p-3 rounded-[12px] border ${borderCol} space-y-2.5`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="text-[11px] font-bold">
+                        🎯 Send Notification To (Target Recipient)
+                      </div>
+                      <div className={`text-[10px] ${textMuted}`}>
+                        Choose whether to send to all users or a particular username. Each user's response will appear with their name.
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setNotifTargetMode('ALL')}
+                        className={
+                          notifTargetMode === 'ALL'
+                            ? `${btnPrimary} ring-1 ring-pink-400/50`
+                            : btnSecondary
+                        }
+                      >
+                        🌍 Send to All Users
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNotifTargetMode('USER');
+                          if (!notifTargetUser && selectableTargetUsers.length > 0) {
+                            setNotifTargetUser(selectableTargetUsers[0].username);
+                          }
+                        }}
+                        className={
+                          notifTargetMode === 'USER'
+                            ? `${btnPrimary} ring-1 ring-pink-400/50`
+                            : btnSecondary
+                        }
+                      >
+                        👤 Particular User (Username)
+                      </button>
+                    </div>
+                  </div>
+
+                  {notifTargetMode === 'USER' && (
+                    <div className="space-y-2 pt-1">
+                      {selectableTargetUsers.length > 0 && (
+                        <div>
+                          <div className={`text-[10px] ${textMuted} mb-1`}>
+                            Select from Registered / Active Users:
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {selectableTargetUsers.map((u) => {
+                              const isSelected =
+                                notifTargetUser.trim().toLowerCase() === u.username.toLowerCase() ||
+                                (u.email && notifTargetUser.trim().toLowerCase() === u.email.toLowerCase());
+                              return (
+                                <button
+                                  key={u.id + u.email}
+                                  type="button"
+                                  onClick={() => setNotifTargetUser(u.username)}
+                                  className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                                    isSelected
+                                      ? 'bg-pink-500/25 border-pink-400 text-pink-200 shadow-sm'
+                                      : `${borderCol} ${textMuted} hover:text-white`
+                                  }`}
+                                >
+                                  <span>👤 {u.username}</span>
+                                  {u.email && (
+                                    <span className="text-[9.5px] opacity-70">({u.email})</span>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                      <div>
+                        <label className={`block text-[10px] ${textMuted} mb-1`}>
+                          Or Enter Particular Username / Email Directly:
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="Enter username or email (e.g. Kashish)"
+                          value={notifTargetUser}
+                          onChange={(e) => setNotifTargetUser(e.target.value)}
+                          className={inputCls}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <button type="submit" className={btnPrimary}>
-                  {notifScheduleTime ? 'Schedule Notification' : 'Send Notification Now'}
+                  {notifScheduleTime
+                    ? `Schedule Notification (${
+                        notifTargetMode === 'ALL'
+                          ? 'To: All Users'
+                          : `To: ${notifTargetUser.trim() || 'Select User'}`
+                      })`
+                    : `Send Notification Now (${
+                        notifTargetMode === 'ALL'
+                          ? 'To: All Users'
+                          : `To: ${notifTargetUser.trim() || 'Select User'}`
+                      })`}
                 </button>
               </form>
 
@@ -3816,7 +4042,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
               <div className={`rounded-[14px] overflow-hidden border ${borderCol} overflow-x-auto`}>
                 <div className={`px-3 py-1.5 border-b ${borderCol} ${bgSubtle} flex items-center justify-between gap-2`}>
                   <span className="font-bold text-[12px]">
-                    Notification History ({notificationsList.length})
+                    Notification History & User Responses ({notificationsList.length})
                   </span>
                   {notificationsList.length > 0 && (
                     <button
@@ -3828,88 +4054,141 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                     </button>
                   )}
                 </div>
-                <table className="w-full text-left border-collapse text-[12px] min-w-[500px]">
+                <table className="w-full text-left border-collapse text-[12px] min-w-[540px]">
                   <thead>
                     <tr className={`border-b ${borderCol} ${textMuted}`}>
-                      <th className="py-1.5 px-2.5">Time</th>
+                      <th className="py-1.5 px-2.5">Time & Target</th>
                       <th className="py-1.5 px-2.5">Title, Message & Buttons</th>
-                      <th className="py-1.5 px-2.5">Status</th>
+                      <th className="py-1.5 px-2.5">User Responses (Who Selected What)</th>
                       <th className="py-1.5 px-2.5 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {notificationsList.map((n) => (
-                      <tr key={n.id} className={`border-b ${borderCol}`}>
-                        <td className={`py-1.5 px-2.5 tabular-nums whitespace-nowrap ${textMuted}`}>
-                          {n.createdAt ? new Date(n.createdAt).toLocaleString() : '-'}
-                        </td>
-                        <td className="py-1.5 px-2.5">
-                          <div className="font-bold">{n.title}</div>
-                          <div className={textMuted}>{n.message}</div>
-                          {Array.isArray(n.buttons) && n.buttons.length > 0 && (
-                            <div className="flex flex-wrap gap-1 mt-1">
-                              {n.buttons.map((b: any, bi: number) => (
-                                <span
-                                  key={bi}
-                                  className={`px-1.5 py-0.5 rounded text-[10px] border ${borderCol}`}
-                                >
-                                  {b.label} ({b.action})
-                                </span>
-                              ))}
+                    {notificationsList.map((n) => {
+                      const isBroadcast = !n.targetUser || String(n.targetUser).toUpperCase() === 'ALL';
+                      const targetDisplay = isBroadcast
+                        ? 'All Users'
+                        : n.targetUserName || n.targetUser;
+                      const parsedResponses = parseClickedActionResponses(
+                        n.clickedAction,
+                        n.clickedLabel,
+                        n.seenAt,
+                        targetDisplay
+                      );
+
+                      return (
+                        <tr key={n.id} className={`border-b ${borderCol}`}>
+                          <td className={`py-2 px-2.5 tabular-nums whitespace-nowrap align-top ${textMuted}`}>
+                            <div>{n.createdAt ? new Date(n.createdAt).toLocaleString() : '-'}</div>
+                            <div className="mt-1">
+                              <span
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                                  isBroadcast
+                                    ? 'bg-sky-500/15 border-sky-400/40 text-sky-300'
+                                    : 'bg-pink-500/20 border-pink-400/50 text-pink-300'
+                                }`}
+                              >
+                                {isBroadcast ? '🌍 Sent to: All Users' : `👤 Sent to: ${targetDisplay}`}
+                              </span>
                             </div>
-                          )}
-                        </td>
-                        <td className="py-1.5 px-2.5 text-[11px] space-y-1">
-                          <div>
-                            <span className={`px-2 py-0.5 rounded-full border ${borderCol}`}>
-                              {n.seen ? 'SEEN' : n.status?.toUpperCase() || 'SENT'}
-                            </span>
-                          </div>
-                          {(n.clickedLabel || n.clickedAction) && (
-                            <div className="text-[10px] font-bold text-emerald-400">
-                              ✅ Chose: "
-                              {n.clickedLabel ||
-                                (String(n.clickedAction || '').includes(':::')
-                                  ? String(n.clickedAction).split(':::')[0]
-                                  : n.clickedAction)}
-                              "
+                          </td>
+                          <td className="py-2 px-2.5 align-top">
+                            <div className="font-bold">{n.title}</div>
+                            <div className={textMuted}>{n.message}</div>
+                            {Array.isArray(n.buttons) && n.buttons.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {n.buttons.map((b: any, bi: number) => {
+                                  const chosenByUsers = parsedResponses.filter(
+                                    (r) => r.label === b.label || r.action === b.action
+                                  );
+                                  return (
+                                    <span
+                                      key={bi}
+                                      className={`px-1.5 py-0.5 rounded text-[10px] border ${
+                                        chosenByUsers.length > 0
+                                          ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300 font-bold'
+                                          : borderCol
+                                      }`}
+                                    >
+                                      {b.label} ({b.action})
+                                      {chosenByUsers.length > 0 &&
+                                        ` ✓ (${chosenByUsers.map((u) => u.userName).join(', ')})`}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-2 px-2.5 text-[11px] align-top space-y-1.5">
+                            <div>
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] border ${borderCol}`}>
+                                {n.seen ? 'SEEN / DELIVERED' : n.status?.toUpperCase() || 'SENT'}
+                              </span>
                             </div>
-                          )}
-                        </td>
-                        <td className="py-1.5 px-2.5 text-right space-x-1 whitespace-nowrap">
-                          <button
-                            onClick={() => {
-                              notifyStatus('Notification resent.');
-                              void addDoc(collection(db, 'notifications'), {
-                                title: n.title,
-                                message: n.message,
-                                imageUrl: n.imageUrl || '',
-                                soundUrl: n.soundUrl || '',
-                                buttons: Array.isArray(n.buttons) ? n.buttons : [],
-                                createdAt: Date.now(),
-                                status: 'sent',
-                                seen: false,
-                              }).catch((err: any) => notifyStatus(`Resend error: ${err.message}`, true));
-                            }}
-                            className={btnSecondary}
-                          >
-                            Resend
-                          </button>
-                          <button
-                            onClick={() =>
-                              askConfirm('Delete notification from history?', () => {
-                                setNotificationsList((prev) => prev.filter((x) => x.id !== n.id));
-                                notifyStatus('Notification deleted.');
-                                void deleteDoc(doc(db, 'notifications', n.id)).catch(() => {});
-                              })
-                            }
-                            className={btnDanger}
-                          >
-                            Delete
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                            {parsedResponses.length > 0 ? (
+                              <div className="space-y-1">
+                                {parsedResponses.map((resp, ri) => (
+                                  <div
+                                    key={ri}
+                                    className="px-2 py-1 rounded-lg bg-emerald-500/15 border border-emerald-400/40 text-emerald-300 text-[10.5px]"
+                                  >
+                                    <span className="font-extrabold text-white">
+                                      👤 {resp.userName}:
+                                    </span>{' '}
+                                    <span className="font-bold">✅ Chose "{resp.label}"</span>
+                                    <span className="opacity-75"> ({resp.action})</span>
+                                    {resp.timestamp && (
+                                      <span className="block text-[9.5px] text-emerald-200/70">
+                                        {new Date(resp.timestamp).toLocaleTimeString()}
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className={`text-[10px] ${textMuted}`}>
+                                No button clicked yet
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-2 px-2.5 text-right space-x-1 align-top whitespace-nowrap">
+                            <button
+                              onClick={() => {
+                                notifyStatus(`Notification resent to ${targetDisplay}.`);
+                                void addDoc(collection(db, 'notifications'), {
+                                  title: n.title,
+                                  message: n.message,
+                                  imageUrl: n.imageUrl || '',
+                                  soundUrl: n.soundUrl || '',
+                                  buttons: Array.isArray(n.buttons) ? n.buttons : [],
+                                  targetUser: n.targetUser || 'ALL',
+                                  targetUserName: n.targetUserName || 'All Users',
+                                  targetUserEmail: n.targetUserEmail || '',
+                                  createdAt: Date.now(),
+                                  status: 'sent',
+                                  seen: false,
+                                }).catch((err: any) => notifyStatus(`Resend error: ${err.message}`, true));
+                              }}
+                              className={btnSecondary}
+                            >
+                              Resend
+                            </button>
+                            <button
+                              onClick={() =>
+                                askConfirm('Delete notification from history?', () => {
+                                  setNotificationsList((prev) => prev.filter((x) => x.id !== n.id));
+                                  notifyStatus('Notification deleted.');
+                                  void deleteDoc(doc(db, 'notifications', n.id)).catch(() => {});
+                                })
+                              }
+                              className={btnDanger}
+                            >
+                              Delete
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -3937,20 +4216,35 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                 <button
                   type="button"
                   onClick={async () => {
+                    if (ovTargetMode === 'USER' && !ovTargetUser.trim()) {
+                      notifyStatus('Please select or enter a username below first.', true);
+                      return;
+                    }
+                    const targetMeta = resolveTargetMetadata(ovTargetMode, ovTargetUser);
                     const now = Date.now();
                     const pendingOld = overlaysList.filter(
-                      (ov) => !ov.dismissed && (!ov.scheduledFor || ov.scheduledFor <= now)
+                      (ov) =>
+                        !ov.dismissed &&
+                        (!ov.scheduledFor || ov.scheduledFor <= now) &&
+                        (targetMeta.targetUser === 'ALL' || (ov.targetUser || 'ALL') === targetMeta.targetUser)
                     );
                     await Promise.all(
-                      pendingOld.map((oldOv) =>
-                        updateDoc(doc(db, 'overlays', oldOv.id), {
-                          dismissed: true,
-                          clickedAction: 'replaced_by_new_overlay',
-                          seenAt: now,
-                        }).catch(() => {})
-                      )
+                      pendingOld.map((oldOv) => {
+                        const hasExistingResponse =
+                          Boolean(oldOv.clickedAction) && oldOv.clickedAction !== 'replaced_by_new_overlay';
+                        return updateDoc(
+                          doc(db, 'overlays', oldOv.id),
+                          hasExistingResponse
+                            ? { dismissed: true }
+                            : {
+                                dismissed: true,
+                                clickedAction: 'replaced_by_new_overlay',
+                                seenAt: now,
+                              }
+                        ).catch(() => {});
+                      })
                     );
-                    notifyStatus('Instant Truecaller Wakeup + Overlay popup sent!');
+                    notifyStatus(`Instant Truecaller Wakeup + Overlay popup sent to ${targetMeta.targetUserName}!`);
                     void addDoc(collection(db, 'overlays'), {
                       title: ovTitle.trim() || 'Thinking of You, Kashish 💖',
                       message:
@@ -3961,6 +4255,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                       fontStyle: ovFontStyle,
                       soundUrl: ovSoundUrl || '',
                       buttons: ovButtons.slice(0, 3),
+                      targetUser: targetMeta.targetUser,
+                      targetUserName: targetMeta.targetUserName,
+                      targetUserEmail: targetMeta.targetUserEmail,
                       createdAt: Date.now(),
                       scheduledFor: null,
                       status: 'sent',
@@ -3969,7 +4266,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                   }}
                   className={btnPrimary}
                 >
-                  ⚡ Send Instant Truecaller Wakeup Popup
+                  ⚡ Send Instant Truecaller Wakeup Popup (
+                  {ovTargetMode === 'ALL'
+                    ? 'To: All Users'
+                    : `To: ${ovTargetUser.trim() || 'Select User'}`}
+                  )
                 </button>
 
               {/* Android Truecaller Permissions & Background Service Live Status */}
@@ -4228,6 +4529,97 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                     ))}
                   </div>
 
+                  {/* Target Recipient Selector (Send to All vs Particular User / Username) */}
+                  <div className={`p-3 rounded-[12px] border ${borderCol} space-y-2.5`}>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div className="text-[11px] font-bold">
+                          🎯 Send Overlay Popup To (Target Recipient)
+                        </div>
+                        <div className={`text-[10px] ${textMuted}`}>
+                          Choose All Users or a Particular Username. Responses show each user's name and selected option immediately!
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setOvTargetMode('ALL')}
+                          className={
+                            ovTargetMode === 'ALL'
+                              ? `${btnPrimary} ring-1 ring-pink-400/50`
+                              : btnSecondary
+                          }
+                        >
+                          🌍 Send to All Users
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOvTargetMode('USER');
+                            if (!ovTargetUser && selectableTargetUsers.length > 0) {
+                              setOvTargetUser(selectableTargetUsers[0].username);
+                            }
+                          }}
+                          className={
+                            ovTargetMode === 'USER'
+                              ? `${btnPrimary} ring-1 ring-pink-400/50`
+                              : btnSecondary
+                          }
+                        >
+                          👤 Particular User (Username)
+                        </button>
+                      </div>
+                    </div>
+
+                    {ovTargetMode === 'USER' && (
+                      <div className="space-y-2 pt-1">
+                        {selectableTargetUsers.length > 0 && (
+                          <div>
+                            <div className={`text-[10px] ${textMuted} mb-1`}>
+                              Select from Registered / Active Users:
+                            </div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {selectableTargetUsers.map((u) => {
+                                const isSelected =
+                                  ovTargetUser.trim().toLowerCase() === u.username.toLowerCase() ||
+                                  (u.email && ovTargetUser.trim().toLowerCase() === u.email.toLowerCase());
+                                return (
+                                  <button
+                                    key={u.id + u.email}
+                                    type="button"
+                                    onClick={() => setOvTargetUser(u.username)}
+                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                                      isSelected
+                                        ? 'bg-pink-500/25 border-pink-400 text-pink-200 shadow-sm'
+                                        : `${borderCol} ${textMuted} hover:text-white`
+                                    }`}
+                                  >
+                                    <span>👤 {u.username}</span>
+                                    {u.email && (
+                                      <span className="text-[9.5px] opacity-70">({u.email})</span>
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                        <div>
+                          <label className={`block text-[10px] ${textMuted} mb-1`}>
+                            Or Enter Particular Username / Email Directly:
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="Enter username or email (e.g. Kashish)"
+                            value={ovTargetUser}
+                            onChange={(e) => setOvTargetUser(e.target.value)}
+                            className={inputCls}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 items-end">
                     <div>
                       <label className={`block text-[11px] ${textMuted} mb-1`}>Schedule (Optional)</label>
@@ -4239,7 +4631,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                       />
                     </div>
                     <button type="submit" className={btnPrimary}>
-                      {ovScheduleTime ? 'Schedule Overlay Popup' : 'Send Live Overlay Now'}
+                      {ovScheduleTime
+                        ? `Schedule Overlay (${
+                            ovTargetMode === 'ALL'
+                              ? 'To: All Users'
+                              : `To: ${ovTargetUser.trim() || 'Select User'}`
+                          })`
+                        : `Send Live Overlay Now (${
+                            ovTargetMode === 'ALL'
+                              ? 'To: All Users'
+                              : `To: ${ovTargetUser.trim() || 'Select User'}`
+                          })`}
                     </button>
                   </div>
                 </form>
@@ -4364,9 +4766,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                 <table className="w-full text-left border-collapse text-[12px]">
                   <thead>
                     <tr className={`border-b ${borderCol} ${textMuted}`}>
-                      <th className="py-1.5 px-2.5">Created</th>
+                      <th className="py-1.5 px-2.5">Created & Target</th>
                       <th className="py-1.5 px-2.5">Title, Message & Options Given</th>
-                      <th className="py-1.5 px-2.5">Option Chosen by Her</th>
+                      <th className="py-1.5 px-2.5">User Responses (Who Selected What)</th>
                       <th className="py-1.5 px-2.5 text-right">Actions</th>
                     </tr>
                   </thead>
@@ -4380,41 +4782,38 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                               { label: 'Keep in My Heart 💖', action: 'dismiss' },
                             ];
 
-                      const rawClicked = String(o.clickedAction || '');
-                      const hasEncoded = rawClicked.includes(':::');
-                      const resolvedLabel =
-                        o.clickedLabel || (hasEncoded ? rawClicked.split(':::')[0] : '');
-                      const resolvedAction = hasEncoded
-                        ? rawClicked.split(':::').slice(1).join(':::')
-                        : rawClicked;
+                      const isBroadcast = !o.targetUser || String(o.targetUser).toUpperCase() === 'ALL';
+                      const targetDisplay = isBroadcast
+                        ? 'All Users'
+                        : o.targetUserName || o.targetUser;
 
-                      const isReplaced = resolvedAction === 'replaced_by_new_overlay';
-                      const isClosedX = resolvedAction === 'closed_x';
-
-                      // Match which button she chose from the options given
-                      const matchedBtn =
-                        !isReplaced && !isClosedX && (resolvedLabel || resolvedAction)
-                          ? btns.find(
-                              (b) =>
-                                (resolvedLabel && b.label === resolvedLabel) ||
-                                (!resolvedLabel && b.action === resolvedAction)
-                            )
-                          : null;
-
-                      const chosenOptionText =
-                        !isReplaced && !isClosedX
-                          ? resolvedLabel && resolvedLabel !== resolvedAction
-                            ? resolvedLabel
-                            : matchedBtn?.label || resolvedAction || ''
-                          : '';
+                      const rawClicked = String(o.clickedAction || '').trim();
+                      const isReplaced = rawClicked === 'replaced_by_new_overlay';
+                      const parsedResponses = parseClickedActionResponses(
+                        o.clickedAction,
+                        o.clickedLabel,
+                        o.seenAt,
+                        targetDisplay
+                      );
 
                       return (
                         <tr key={o.id} className={`border-b ${borderCol}`}>
                           <td className={`py-2 px-2.5 tabular-nums whitespace-nowrap align-top ${textMuted}`}>
                             <div>{o.createdAt ? new Date(o.createdAt).toLocaleString() : '-'}</div>
+                            <div className="mt-1">
+                              <span
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                                  isBroadcast
+                                    ? 'bg-sky-500/15 border-sky-400/40 text-sky-300'
+                                    : 'bg-pink-500/20 border-pink-400/50 text-pink-300'
+                                }`}
+                              >
+                                {isBroadcast ? '🌍 Sent to: All Users' : `👤 Sent to: ${targetDisplay}`}
+                              </span>
+                            </div>
                             {o.seenAt && (
-                              <div className="text-[10px] text-pink-400 mt-0.5">
-                                Responded: {new Date(Number(o.seenAt)).toLocaleTimeString()}
+                              <div className="text-[10px] text-pink-400 mt-1">
+                                Last Response: {new Date(Number(o.seenAt)).toLocaleTimeString()}
                               </div>
                             )}
                           </td>
@@ -4434,14 +4833,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                               </div>
                               <div className="flex flex-wrap gap-1.5">
                                 {btns.map((b, bi) => {
-                                  const isThisChosen =
-                                    !isReplaced &&
-                                    !isClosedX &&
-                                    ((resolvedLabel && b.label === resolvedLabel) ||
-                                      (!resolvedLabel &&
-                                        resolvedAction &&
-                                        b.action === resolvedAction &&
-                                        matchedBtn?.label === b.label));
+                                  const usersWhoChoseThis = parsedResponses.filter(
+                                    (r) =>
+                                      r.action !== 'closed_x' &&
+                                      (r.label === b.label ||
+                                        (!r.label && r.action === b.action) ||
+                                        (r.label === r.action && r.action === b.action))
+                                  );
+                                  const isThisChosen = usersWhoChoseThis.length > 0;
                                   return (
                                     <span
                                       key={bi}
@@ -4456,8 +4855,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                                       </span>
                                       <span className="opacity-70">({b.action})</span>
                                       {isThisChosen && (
-                                        <span className="ml-0.5 px-1 py-0.2 rounded bg-emerald-500 text-black text-[9px] font-extrabold">
-                                          ✓ CHOSEN
+                                        <span className="ml-0.5 px-1.5 py-0.2 rounded bg-emerald-500 text-black text-[9px] font-extrabold">
+                                          ✓ {usersWhoChoseThis.map((u) => u.userName).join(', ')}
                                         </span>
                                       )}
                                     </span>
@@ -4467,21 +4866,54 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                             </div>
                           </td>
                           <td className="py-2 px-2.5 text-[11px] align-top">
-                            {chosenOptionText ? (
-                              <div className="space-y-1">
-                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 font-bold">
-                                  💖 Chose: "{chosenOptionText}"
-                                </span>
-                                {resolvedAction && (
-                                  <div className={`text-[10px] ${textMuted}`}>
-                                    Action Triggered: <span className="font-semibold">{resolvedAction}</span>
-                                  </div>
-                                )}
+                            {parsedResponses.length > 0 ? (
+                              <div className="space-y-1.5">
+                                {parsedResponses.map((resp, ri) => {
+                                  const isClosed = resp.action === 'closed_x';
+                                  const matchedBtn =
+                                    !isClosed
+                                      ? btns.find(
+                                          (b) => b.label === resp.label || b.action === resp.action
+                                        )
+                                      : null;
+                                  const displayChoice =
+                                    resp.label && resp.label !== resp.action
+                                      ? resp.label
+                                      : matchedBtn?.label || resp.label || resp.action;
+
+                                  return (
+                                    <div
+                                      key={ri}
+                                      className={`p-2 rounded-xl border ${
+                                        isClosed
+                                          ? 'bg-amber-500/15 border-amber-400/40 text-amber-200'
+                                          : 'bg-emerald-500/20 border-emerald-400/50 text-emerald-200'
+                                      }`}
+                                    >
+                                      <div className="flex flex-wrap items-center justify-between gap-1">
+                                        <span className="font-extrabold text-white text-[11.5px]">
+                                          👤 {resp.userName}
+                                        </span>
+                                        {resp.timestamp && (
+                                          <span className="text-[9.5px] opacity-80">
+                                            {new Date(resp.timestamp).toLocaleTimeString()}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="font-bold text-[11px] mt-0.5">
+                                        {isClosed
+                                          ? '✕ Closed Popup (No option selected)'
+                                          : `💖 Selected: "${displayChoice}"`}
+                                      </div>
+                                      {!isClosed && resp.action && (
+                                        <div className="text-[9.5px] opacity-80 mt-0.5">
+                                          Action Triggered: <span className="font-semibold">{resp.action}</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
                               </div>
-                            ) : isClosedX ? (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-amber-500/15 border border-amber-400/40 text-amber-300 font-semibold">
-                                ✕ Closed Popup (No option selected)
-                              </span>
                             ) : isReplaced ? (
                               <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-xl border ${borderCol} ${textMuted}`}>
                                 ⏭️ Auto-Dismissed (Replaced by New Overlay)
@@ -4492,7 +4924,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                               </span>
                             ) : (
                               <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl bg-pink-500/15 border border-pink-400/40 text-pink-300 font-semibold">
-                                ⏳ Pending (Waiting for her choice)
+                                ⏳ Pending (Waiting for {isBroadcast ? 'user response' : `${targetDisplay}'s choice`})
                               </span>
                             )}
                           </td>
@@ -4500,20 +4932,31 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                             <button
                               onClick={async () => {
                                 const now = Date.now();
+                                const resendTarget = o.targetUser || 'ALL';
                                 const pendingOld = overlaysList.filter(
-                                  (ov) => !ov.dismissed && (!ov.scheduledFor || ov.scheduledFor <= now)
+                                  (ov) =>
+                                    !ov.dismissed &&
+                                    (!ov.scheduledFor || ov.scheduledFor <= now) &&
+                                    (resendTarget === 'ALL' || (ov.targetUser || 'ALL') === resendTarget)
                                 );
                                 await Promise.all(
-                                  pendingOld.map((oldOv) =>
-                                    updateDoc(doc(db, 'overlays', oldOv.id), {
-                                      dismissed: true,
-                                      clickedAction: 'replaced_by_new_overlay',
-                                      clickedLabel: 'Replaced by Newer Overlay',
-                                      seenAt: now,
-                                    }).catch(() => {})
-                                  )
+                                  pendingOld.map((oldOv) => {
+                                    const hasExistingResponse =
+                                      Boolean(oldOv.clickedAction) &&
+                                      oldOv.clickedAction !== 'replaced_by_new_overlay';
+                                    return updateDoc(
+                                      doc(db, 'overlays', oldOv.id),
+                                      hasExistingResponse
+                                        ? { dismissed: true }
+                                        : {
+                                            dismissed: true,
+                                            clickedAction: 'replaced_by_new_overlay',
+                                            seenAt: now,
+                                          }
+                                    ).catch(() => {});
+                                  })
                                 );
-                                notifyStatus('Overlay resent.');
+                                notifyStatus(`Overlay resent to ${targetDisplay}.`);
                                 void addDoc(collection(db, 'overlays'), {
                                   title: o.title,
                                   message: o.message,
@@ -4527,6 +4970,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                                       ? ''
                                       : ovSoundUrl,
                                   buttons: o.buttons || [],
+                                  targetUser: o.targetUser || 'ALL',
+                                  targetUserName: o.targetUserName || 'All Users',
+                                  targetUserEmail: o.targetUserEmail || '',
                                   createdAt: Date.now(),
                                   status: 'sent',
                                   dismissed: false,

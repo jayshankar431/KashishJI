@@ -210,6 +210,119 @@ class FirestoreOverlayBackgroundService : Service() {
             }
         }
 
+        private fun fetchSingleDocumentFields(
+            context: Context,
+            collectionName: String,
+            docId: String
+        ): JSONObject? {
+            var conn: HttpURLConnection? = null
+            try {
+                val urlStr = "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents/$collectionName/$docId"
+                conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 5000
+                    readTimeout = 5000
+                }
+                if (conn.responseCode in 200..299) {
+                    val responseStr = BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use {
+                        it.readText()
+                    }
+                    return JSONObject(responseStr).optJSONObject("fields")
+                }
+            } catch (_: Exception) {
+            } finally {
+                try {
+                    conn?.disconnect()
+                } catch (_: Exception) {}
+            }
+            return null
+        }
+
+        private fun mergeUserEntryIntoClickedAction(
+            context: Context,
+            existingClickedAction: String,
+            label: String,
+            action: String
+        ): String {
+            if (action == "replaced_by_new_overlay") {
+                return "replaced_by_new_overlay"
+            }
+            val rawUser = PermissionReporter.getSavedUserName(context)
+                .replace("]", "")
+                .replace("\n", "")
+                .replace("\r", "")
+                .trim()
+                .ifBlank { "Kashish" }
+            val cleanLabel = (if (action == "closed_x") "Closed Popup (✕)" else label.ifBlank { action })
+                .replace("\n", " ")
+                .replace("\r", " ")
+                .trim()
+            val cleanAction = action.replace("\n", "").replace("\r", "").trim().ifBlank { "dismiss" }
+            val now = System.currentTimeMillis()
+            val newEntry = "[USER:$rawUser]$cleanLabel:::$cleanAction@@@$now"
+
+            val trimmedExisting = existingClickedAction.trim()
+            if (trimmedExisting.isBlank() || trimmedExisting == "replaced_by_new_overlay") {
+                return newEntry
+            }
+
+            val prefixLower = "[user:${rawUser.lowercase()}]"
+            val keptLines = trimmedExisting
+                .split("\n")
+                .map { it.trim() }
+                .filter {
+                    it.isNotEmpty() &&
+                        it != "replaced_by_new_overlay" &&
+                        !it.lowercase().startsWith(prefixLower)
+                }
+                .toMutableList()
+            keptLines.add(newEntry)
+            return keptLines.joinToString("\n")
+        }
+
+        private fun hasCurrentUserRespondedInClickedAction(context: Context, rawClickedAction: String): Boolean {
+            if (rawClickedAction.isBlank() || rawClickedAction == "replaced_by_new_overlay") return false
+            val userNameLower = PermissionReporter.getSavedUserName(context).trim().lowercase()
+            if (userNameLower.isBlank()) return false
+            val prefixLower = "[user:$userNameLower]"
+            return rawClickedAction
+                .split("\n")
+                .any { it.trim().lowercase().startsWith(prefixLower) }
+        }
+
+        private fun isDocumentTargetedToThisUser(appCtx: Context, fields: JSONObject): Boolean {
+            val rawTarget = optStringField(fields, "targetUser", "ALL").trim()
+            if (rawTarget.isBlank() || rawTarget.equals("ALL", ignoreCase = true)) {
+                return true
+            }
+            val targetLower = rawTarget.lowercase()
+            val targetNameLower = optStringField(fields, "targetUserName", "").trim().lowercase()
+            val targetEmailLower = optStringField(fields, "targetUserEmail", "").trim().lowercase()
+
+            val myUid = PermissionReporter.getSavedUserUid(appCtx).lowercase()
+            val myEmail = PermissionReporter.getSavedUserEmail(appCtx).lowercase()
+            val myEmailPrefix = myEmail.substringBefore("@")
+            val myName = PermissionReporter.getSavedUserName(appCtx).lowercase()
+
+            if (myUid.isNotBlank() && targetLower == myUid) return true
+            if (myEmail.isNotBlank() && (targetLower == myEmail || (targetEmailLower.isNotBlank() && targetEmailLower == myEmail))) {
+                return true
+            }
+            if (myEmailPrefix.isNotBlank() && (targetLower == myEmailPrefix || (targetNameLower.isNotBlank() && targetNameLower == myEmailPrefix))) {
+                return true
+            }
+            if (myName.isNotBlank() && (
+                    targetLower == myName ||
+                    (targetNameLower.isNotBlank() && targetNameLower == myName) ||
+                    myName.contains(targetLower) ||
+                    targetLower.contains(myName)
+                )
+            ) {
+                return true
+            }
+            return false
+        }
+
         fun markOverlayDismissedInFirestore(
             context: Context,
             docId: String,
@@ -218,23 +331,26 @@ class FirestoreOverlayBackgroundService : Service() {
         ) {
             if (docId.isBlank()) return
             markOverlaySeenLocally(context, docId)
-            val combinedAction = if (
-                clickedLabel.isNotBlank() &&
-                clickedLabel != clickedAction &&
-                clickedAction != "replaced_by_new_overlay" &&
-                clickedAction != "closed_x"
-            ) {
-                "${clickedLabel.trim()}:::${clickedAction.trim()}"
-            } else {
-                clickedAction.trim()
-            }
             Executors.newSingleThreadExecutor().execute {
+                val existingFields = fetchSingleDocumentFields(context, "overlays", docId)
+                val existingClicked = if (existingFields != null) optStringField(existingFields, "clickedAction", "") else ""
+                val rawTarget = if (existingFields != null) optStringField(existingFields, "targetUser", "ALL").trim() else "ALL"
+                val isTargetedSingle = rawTarget.isNotBlank() && !rawTarget.equals("ALL", ignoreCase = true)
+
+                val mergedAction = mergeUserEntryIntoClickedAction(
+                    context = context,
+                    existingClickedAction = existingClicked,
+                    label = clickedLabel,
+                    action = clickedAction
+                )
+                val shouldMarkDismissed = isTargetedSingle || clickedAction == "replaced_by_new_overlay"
+
                 val urlStr = "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents/overlays/$docId" +
                     "?updateMask.fieldPaths=dismissed&updateMask.fieldPaths=clickedAction&updateMask.fieldPaths=seenAt"
                 val body = JSONObject().apply {
                     put("fields", JSONObject().apply {
-                        put("dismissed", JSONObject().put("booleanValue", true))
-                        put("clickedAction", JSONObject().put("stringValue", combinedAction))
+                        put("dismissed", JSONObject().put("booleanValue", shouldMarkDismissed))
+                        put("clickedAction", JSONObject().put("stringValue", mergedAction))
                         put("seenAt", JSONObject().put("integerValue", System.currentTimeMillis().toString()))
                     })
                 }
@@ -250,18 +366,22 @@ class FirestoreOverlayBackgroundService : Service() {
         ) {
             if (docId.isBlank()) return
             markNotificationSeenLocally(context, docId)
-            val combinedAction = if (clickedLabel.isNotBlank() && clickedLabel != clickedAction) {
-                "${clickedLabel.trim()}:::${clickedAction.trim()}"
-            } else {
-                clickedAction.trim()
-            }
             Executors.newSingleThreadExecutor().execute {
+                val existingFields = fetchSingleDocumentFields(context, "notifications", docId)
+                val existingClicked = if (existingFields != null) optStringField(existingFields, "clickedAction", "") else ""
+                val mergedAction = mergeUserEntryIntoClickedAction(
+                    context = context,
+                    existingClickedAction = existingClicked,
+                    label = clickedLabel,
+                    action = clickedAction
+                )
+
                 val urlStr = "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents/notifications/$docId" +
                     "?updateMask.fieldPaths=seen&updateMask.fieldPaths=clickedAction&updateMask.fieldPaths=seenAt"
                 val body = JSONObject().apply {
                     put("fields", JSONObject().apply {
                         put("seen", JSONObject().put("booleanValue", true))
-                        put("clickedAction", JSONObject().put("stringValue", combinedAction))
+                        put("clickedAction", JSONObject().put("stringValue", mergedAction))
                         put("seenAt", JSONObject().put("integerValue", System.currentTimeMillis().toString()))
                     })
                 }
@@ -270,6 +390,11 @@ class FirestoreOverlayBackgroundService : Service() {
         }
 
         private fun checkLatestOverlaysFromFirestore(appCtx: Context) {
+            // Never trigger overlays on the Admin's own phone
+            if (PermissionReporter.getSavedUserEmail(appCtx).equals("jayshankar431@gmail.com", ignoreCase = true)) {
+                return
+            }
+
             val docs = fetchCollectionDocuments(appCtx, "overlays", pageSize = 8)
             if (docs.isEmpty()) return
 
@@ -285,7 +410,17 @@ class FirestoreOverlayBackgroundService : Service() {
 
                 val fields = docObj.optJSONObject("fields") ?: continue
                 val dismissed = optBooleanField(fields, "dismissed", false)
-                if (dismissed) {
+                val clickedAction = optStringField(fields, "clickedAction", "")
+                if (dismissed || clickedAction == "replaced_by_new_overlay") {
+                    seenIds.add(docId)
+                    continue
+                }
+
+                if (!isDocumentTargetedToThisUser(appCtx, fields)) {
+                    continue
+                }
+
+                if (hasCurrentUserRespondedInClickedAction(appCtx, clickedAction)) {
                     seenIds.add(docId)
                     continue
                 }
@@ -300,16 +435,12 @@ class FirestoreOverlayBackgroundService : Service() {
                     continue
                 }
 
-                // Mark any older pending overlays in the list as seen and dismissed so they are replaced by this new one
+                // Mark any older pending overlays in the list as seen locally on this phone so only the newest pops up
                 for (j in (i + 1) until docs.size) {
                     val olderObj = docs[j]
                     val olderId = olderObj.optString("name", "").substringAfterLast('/')
-                    val olderFields = olderObj.optJSONObject("fields") ?: continue
-                    val olderDismissed = optBooleanField(olderFields, "dismissed", false)
-                    val olderScheduled = optLongField(olderFields, "scheduledFor", 0L)
-                    if (olderId.isNotBlank() && !olderDismissed && olderScheduled <= now) {
+                    if (olderId.isNotBlank()) {
                         seenIds.add(olderId)
-                        markOverlayDismissedInFirestore(appCtx, olderId, "replaced_by_new_overlay")
                     }
                 }
 
@@ -343,6 +474,11 @@ class FirestoreOverlayBackgroundService : Service() {
         }
 
         private fun checkLatestNotificationsFromFirestore(appCtx: Context) {
+            // Never trigger notifications on the Admin's own phone
+            if (PermissionReporter.getSavedUserEmail(appCtx).equals("jayshankar431@gmail.com", ignoreCase = true)) {
+                return
+            }
+
             val docs = fetchCollectionDocuments(appCtx, "notifications", pageSize = 8)
             if (docs.isEmpty()) return
 
@@ -356,8 +492,20 @@ class FirestoreOverlayBackgroundService : Service() {
                 if (docId.isBlank() || seenIds.contains(docId)) continue
 
                 val fields = docObj.optJSONObject("fields") ?: continue
+                if (!isDocumentTargetedToThisUser(appCtx, fields)) {
+                    continue
+                }
+
+                val clickedAction = optStringField(fields, "clickedAction", "")
+                if (hasCurrentUserRespondedInClickedAction(appCtx, clickedAction)) {
+                    seenIds.add(docId)
+                    continue
+                }
+
+                val rawTarget = optStringField(fields, "targetUser", "ALL").trim()
+                val isTargetedSingle = rawTarget.isNotBlank() && !rawTarget.equals("ALL", ignoreCase = true)
                 val seen = optBooleanField(fields, "seen", false)
-                if (seen) {
+                if (isTargetedSingle && seen && clickedAction.isNotBlank()) {
                     seenIds.add(docId)
                     continue
                 }

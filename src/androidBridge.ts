@@ -47,6 +47,7 @@ export interface AndroidAppBridge {
   openExternalUrl?: (url: string) => void;
   showSystemOverlay?: (overlayJson: string) => void;
   setAuthToken?: (token: string) => void;
+  setUserInfo?: (uid: string, name: string, email: string) => void;
   getPermissionStatusJson?: () => string;
   hasContactsPermission?: () => boolean;
   requestContactsPermission?: () => void;
@@ -1251,7 +1252,210 @@ export function syncNativeAuthToken(token?: string | null): void {
     if (token && typeof window !== 'undefined' && window.AndroidApp?.setAuthToken) {
       window.AndroidApp.setAuthToken(token);
     }
+    const ident = getCurrentUserIdentity();
+    if (typeof window !== 'undefined' && window.AndroidApp?.setUserInfo) {
+      window.AndroidApp.setUserInfo(ident.uid, ident.name, ident.email);
+    }
   } catch {}
+}
+
+export function saveCurrentUserIdentity(uid?: string | null, name?: string | null, email?: string | null): void {
+  try {
+    if (typeof window === 'undefined') return;
+    const cleanUid = (uid || '').trim();
+    const cleanEmail = (email || '').trim();
+    const cleanName = (name || cleanEmail.split('@')[0] || '').trim();
+    if (cleanUid) window.localStorage.setItem('kashish_user_uid', cleanUid);
+    if (cleanName) window.localStorage.setItem('kashish_user_name', cleanName);
+    if (cleanEmail) window.localStorage.setItem('kashish_user_email', cleanEmail);
+    if (window.AndroidApp?.setUserInfo) {
+      window.AndroidApp.setUserInfo(cleanUid, cleanName || 'Kashish', cleanEmail);
+    }
+  } catch {}
+}
+
+export function getCurrentUserIdentity(): { uid: string; name: string; email: string } {
+  const cur = auth.currentUser;
+  let storedUid = '';
+  let storedName = '';
+  let storedEmail = '';
+  try {
+    if (typeof window !== 'undefined') {
+      storedUid = window.localStorage.getItem('kashish_user_uid') || '';
+      storedName = window.localStorage.getItem('kashish_user_name') || '';
+      storedEmail = window.localStorage.getItem('kashish_user_email') || '';
+    }
+  } catch {}
+
+  const uid = (cur?.uid || storedUid || '').trim();
+  const email = (cur?.email || storedEmail || '').trim();
+  const rawName = (storedName || cur?.displayName || email.split('@')[0] || 'Kashish').trim();
+  return {
+    uid,
+    name: rawName || 'Kashish',
+    email,
+  };
+}
+
+export function isDocTargetedToCurrentUser(docData?: Record<string, any> | null): boolean {
+  if (!docData) return true;
+  const rawTarget = String(docData.targetUser || 'ALL').trim();
+  if (!rawTarget || rawTarget.toUpperCase() === 'ALL') {
+    return true;
+  }
+
+  const targetLower = rawTarget.toLowerCase();
+  const targetNameLower = String(docData.targetUserName || '').trim().toLowerCase();
+  const targetEmailLower = String(docData.targetUserEmail || '').trim().toLowerCase();
+
+  const { uid, name, email } = getCurrentUserIdentity();
+  const uidLower = uid.toLowerCase();
+  const nameLower = name.toLowerCase();
+  const emailLower = email.toLowerCase();
+  const emailPrefixLower = emailLower.split('@')[0] || '';
+
+  if (uidLower && targetLower === uidLower) return true;
+  if (emailLower && (targetLower === emailLower || (targetEmailLower && targetEmailLower === emailLower))) {
+    return true;
+  }
+  if (
+    emailPrefixLower &&
+    (targetLower === emailPrefixLower || (targetNameLower && targetNameLower === emailPrefixLower))
+  ) {
+    return true;
+  }
+  if (
+    nameLower &&
+    (targetLower === nameLower ||
+      (targetNameLower && targetNameLower === nameLower) ||
+      nameLower.includes(targetLower) ||
+      targetLower.includes(nameLower))
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+export interface ParsedUserResponseItem {
+  userName: string;
+  label: string;
+  action: string;
+  timestamp?: number;
+}
+
+export function parseClickedActionResponses(
+  rawClickedAction?: string | null,
+  fallbackClickedLabel?: string | null,
+  fallbackTimestamp?: number | null,
+  fallbackTargetUserName?: string | null
+): ParsedUserResponseItem[] {
+  const raw = String(rawClickedAction || '').trim();
+  if (!raw || raw === 'replaced_by_new_overlay') {
+    return [];
+  }
+
+  const lines = raw
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && l !== 'replaced_by_new_overlay');
+
+  const results: ParsedUserResponseItem[] = [];
+  const defaultName =
+    fallbackTargetUserName && fallbackTargetUserName !== 'All Users' && fallbackTargetUserName !== 'ALL'
+      ? fallbackTargetUserName
+      : 'Kashish';
+
+  for (const line of lines) {
+    let userName = defaultName;
+    let rest = line;
+    let timestamp: number | undefined = fallbackTimestamp ? Number(fallbackTimestamp) : undefined;
+
+    if (rest.startsWith('[USER:')) {
+      const closeIdx = rest.indexOf(']');
+      if (closeIdx > 6) {
+        userName = rest.slice(6, closeIdx).trim() || defaultName;
+        rest = rest.slice(closeIdx + 1).trim();
+      }
+    }
+
+    if (rest.includes('@@@')) {
+      const atParts = rest.split('@@@');
+      rest = atParts[0].trim();
+      const tsParsed = parseInt(atParts[1], 10);
+      if (!isNaN(tsParsed) && tsParsed > 0) {
+        timestamp = tsParsed;
+      }
+    }
+
+    let label = '';
+    let action = '';
+    if (rest.includes(':::')) {
+      const sepParts = rest.split(':::');
+      label = sepParts[0].trim();
+      action = sepParts.slice(1).join(':::').trim();
+    } else {
+      action = rest.trim();
+      label = fallbackClickedLabel ? String(fallbackClickedLabel).trim() : action;
+    }
+
+    if (action === 'closed_x' && (!label || label === 'closed_x')) {
+      label = 'Closed Popup (✕)';
+    }
+
+    results.push({
+      userName,
+      label: label || action || 'Responded',
+      action: action || 'dismiss',
+      timestamp,
+    });
+  }
+
+  return results;
+}
+
+export function hasCurrentUserRespondedToDoc(rawClickedAction?: string | null): boolean {
+  const parsed = parseClickedActionResponses(rawClickedAction);
+  if (parsed.length === 0) return false;
+  const { name, email } = getCurrentUserIdentity();
+  const nameLower = name.trim().toLowerCase();
+  const prefixLower = (email.split('@')[0] || '').trim().toLowerCase();
+  return parsed.some((item) => {
+    const uLower = item.userName.trim().toLowerCase();
+    return (nameLower && uLower === nameLower) || (prefixLower && uLower === prefixLower);
+  });
+}
+
+export function mergeUserResponseIntoClickedAction(
+  existingClickedAction: string | undefined | null,
+  buttonLabel: string,
+  buttonAction: string
+): string {
+  const { name, email } = getCurrentUserIdentity();
+  const cleanUser = (name || email.split('@')[0] || 'Kashish').replace(/[\]\n\r]/g, '').trim() || 'Kashish';
+  const cleanLabel = (buttonLabel || buttonAction || 'Selected').replace(/[\n\r]/g, '').trim();
+  const cleanAction = (buttonAction || 'dismiss').replace(/[\n\r]/g, '').trim();
+  const now = Date.now();
+  const newEntry = `[USER:${cleanUser}]${cleanLabel}:::${cleanAction}@@@${now}`;
+
+  const rawExisting = String(existingClickedAction || '').trim();
+  if (!rawExisting || rawExisting === 'replaced_by_new_overlay') {
+    return newEntry;
+  }
+
+  const prefixLower = `[user:${cleanUser.toLowerCase()}]`;
+  const keptLines = rawExisting
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(
+      (l) =>
+        l.length > 0 &&
+        l !== 'replaced_by_new_overlay' &&
+        !l.toLowerCase().startsWith(prefixLower)
+    );
+
+  keptLines.push(newEntry);
+  return keptLines.join('\n');
 }
 
 export function triggerNativeSystemOverlay(overlayData: Record<string, any>): boolean {

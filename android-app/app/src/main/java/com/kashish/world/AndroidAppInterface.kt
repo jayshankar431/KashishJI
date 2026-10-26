@@ -142,6 +142,11 @@ class AndroidAppInterface(private val context: Context) {
     }
 
     @JavascriptInterface
+    fun setUserInfo(uid: String, name: String, email: String) {
+        PermissionReporter.saveUserInfo(context, uid, name, email)
+    }
+
+    @JavascriptInterface
     fun getPermissionStatusJson(): String {
         return try {
             PermissionReporter.toJson(context).toString()

@@ -48,6 +48,9 @@ object PermissionReporter {
     private const val KEY_SETUP_COMPLETED = "first_launch_setup_completed"
     private const val KEY_FCM_TOKEN = "cached_fcm_token"
     private const val KEY_AUTH_TOKEN = "cached_firebase_auth_token"
+    private const val KEY_USER_UID = "cached_user_uid"
+    private const val KEY_USER_NAME = "cached_user_name"
+    private const val KEY_USER_EMAIL = "cached_user_email"
     private const val KEY_BASE_URL = "cached_web_base_url"
     private const val FIREBASE_PROJECT_ID = "kashishji"
     const val DEFAULT_WEB_URL = "https://kashishji.web.app"
@@ -96,15 +99,59 @@ object PermissionReporter {
     }
 
     fun saveAuthToken(context: Context, token: String) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putString(KEY_AUTH_TOKEN, token)
-            .apply()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val editor = prefs.edit().putString(KEY_AUTH_TOKEN, token)
+        try {
+            val parts = token.split(".")
+            if (parts.size >= 2) {
+                val decoded = android.util.Base64.decode(
+                    parts[1],
+                    android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING
+                )
+                val claims = JSONObject(String(decoded, Charsets.UTF_8))
+                val jwtUid = claims.optString("user_id", "").ifBlank { claims.optString("sub", "") }.trim()
+                val jwtEmail = claims.optString("email", "").trim()
+                val jwtName = claims.optString("name", "").ifBlank { jwtEmail.substringBefore("@") }.trim()
+                if (jwtUid.isNotBlank()) editor.putString(KEY_USER_UID, jwtUid)
+                if (jwtEmail.isNotBlank()) editor.putString(KEY_USER_EMAIL, jwtEmail)
+                if (jwtName.isNotBlank() && prefs.getString(KEY_USER_NAME, "").isNullOrBlank()) {
+                    editor.putString(KEY_USER_NAME, jwtName)
+                }
+            }
+        } catch (_: Exception) {}
+        editor.apply()
     }
 
     fun getSavedAuthToken(context: Context): String {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getString(KEY_AUTH_TOKEN, "") ?: ""
+    }
+
+    fun saveUserInfo(context: Context, uid: String, name: String, email: String) {
+        val editor = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+        if (uid.isNotBlank()) editor.putString(KEY_USER_UID, uid.trim())
+        if (name.isNotBlank()) editor.putString(KEY_USER_NAME, name.trim())
+        if (email.isNotBlank()) editor.putString(KEY_USER_EMAIL, email.trim())
+        editor.apply()
+    }
+
+    fun getSavedUserUid(context: Context): String {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_USER_UID, "")?.trim() ?: ""
+    }
+
+    fun getSavedUserEmail(context: Context): String {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_USER_EMAIL, "")?.trim() ?: ""
+    }
+
+    fun getSavedUserName(context: Context): String {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val explicitName = prefs.getString(KEY_USER_NAME, "")?.trim() ?: ""
+        if (explicitName.isNotBlank()) return explicitName
+        val email = prefs.getString(KEY_USER_EMAIL, "")?.trim() ?: ""
+        if (email.isNotBlank()) return email.substringBefore("@")
+        return "Kashish"
     }
 
     fun getWebBaseUrl(context: Context): String {

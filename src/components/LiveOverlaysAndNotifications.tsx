@@ -11,6 +11,11 @@ import {
   triggerNativeSystemOverlay,
   syncNativeAuthToken,
   canDrawOverlays,
+  isDocTargetedToCurrentUser,
+  hasCurrentUserRespondedToDoc,
+  mergeUserResponseIntoClickedAction,
+  getCurrentUserIdentity,
+  logNativeActivity,
 } from '../androidBridge';
 import type { NavTab } from './Navbar';
 
@@ -179,7 +184,13 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
         const now = Date.now();
         snap.forEach((docSnap) => {
           const d = docSnap.data();
-          if (seenNotifIds.has(docSnap.id) || d.seen) return;
+          const isTargetedSingle = Boolean(d.targetUser && String(d.targetUser).toUpperCase() !== 'ALL');
+          if (!isDocTargetedToCurrentUser(d)) return;
+          if (seenNotifIds.has(docSnap.id) || hasCurrentUserRespondedToDoc(d.clickedAction)) {
+            seenNotifIds.add(docSnap.id);
+            return;
+          }
+          if (isTargetedSingle && d.seen && d.clickedAction) return;
           if (d.scheduledFor && d.scheduledFor > now) return;
 
           // Only show notifications created within the last 24 hours
@@ -241,7 +252,7 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
     const unsubOverlays = onSnapshot(
       qOverlays,
       (snap) => {
-        // Never allow the Admin's own device to consume or auto-dismiss overlays meant for Kashish
+        // Never allow the Admin's own device to consume or auto-dismiss overlays meant for users
         const isAdminViewer =
           auth.currentUser?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
         if (isAdminViewer) return;
@@ -249,21 +260,35 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
         const now = Date.now();
         const docs = snap.docs;
 
-        // 1. If the currently open overlay was dismissed remotely (or replaced by a newer overlay), close it
+        // Keep activeOverlay in sync with latest clickedAction from Firestore so multi-user responses merge cleanly
         const currentOpenId = activeOverlayIdRef.current;
         if (currentOpenId) {
           const openDoc = docs.find((d) => d.id === currentOpenId);
-          if (openDoc && openDoc.data().dismissed) {
-            stopOverlayAudio();
-            setActiveOverlay(null);
-            activeOverlayIdRef.current = null;
+          if (openDoc) {
+            const openData = openDoc.data();
+            if (openData.dismissed || openData.clickedAction === 'replaced_by_new_overlay') {
+              stopOverlayAudio();
+              setActiveOverlay(null);
+              activeOverlayIdRef.current = null;
+            } else {
+              setActiveOverlay((prev: any) =>
+                prev && prev.id === currentOpenId
+                  ? { ...prev, clickedAction: openData.clickedAction }
+                  : prev
+              );
+            }
           }
         }
 
-        // 2. Find all due, non-dismissed overlays (ordered newest first because of orderBy('createdAt', 'desc'))
+        // 2. Find all due overlays targeted to this user that this user hasn't seen/answered yet
         const validDueDocs = docs.filter((docSnap) => {
           const d = docSnap.data();
-          if (d.dismissed) return false;
+          if (d.dismissed || d.clickedAction === 'replaced_by_new_overlay') return false;
+          if (!isDocTargetedToCurrentUser(d)) return false;
+          if (hasCurrentUserRespondedToDoc(d.clickedAction)) {
+            seenOverlayIds.add(docSnap.id);
+            return false;
+          }
           if (d.scheduledFor && d.scheduledFor > now) return false;
           if (!d.createdAt || now - d.createdAt >= 86400000) return false;
           return true;
@@ -271,37 +296,22 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
 
         if (validDueDocs.length === 0) return;
 
-        // The first item in validDueDocs is the newest pending overlay
+        // The first item in validDueDocs is the newest pending overlay for this user
         const newestDoc = validDueDocs[0];
         const olderPendingDocs = validDueDocs.slice(1);
 
-        // Automatically dismiss any older pending overlays in Firestore so they never stay pending
+        // Mark older pending overlays as seen locally on this device so only the newest one pops up
         if (olderPendingDocs.length > 0) {
           olderPendingDocs.forEach((oldDoc) => {
             seenOverlayIds.add(oldDoc.id);
-            updateDoc(doc(db, 'overlays', oldDoc.id), {
-              dismissed: true,
-              clickedAction: 'replaced_by_new_overlay',
-              seenAt: now,
-            }).catch(() => {});
           });
           try {
             localStorage.setItem('kashish_seen_overlays', JSON.stringify(Array.from(seenOverlayIds)));
           } catch {}
         }
 
-        // Show the newest overlay if it hasn't been seen yet
+        // Show the newest overlay if it hasn't been seen yet on this device
         if (!seenOverlayIds.has(newestDoc.id)) {
-          // If an older overlay is currently open on screen, mark it dismissed in Firestore before replacing
-          if (activeOverlayIdRef.current && activeOverlayIdRef.current !== newestDoc.id) {
-            const prevId = activeOverlayIdRef.current;
-            updateDoc(doc(db, 'overlays', prevId), {
-              dismissed: true,
-              clickedAction: 'replaced_by_new_overlay',
-              seenAt: now,
-            }).catch(() => {});
-          }
-
           seenOverlayIds.add(newestDoc.id);
           try {
             localStorage.setItem('kashish_seen_overlays', JSON.stringify(Array.from(seenOverlayIds)));
@@ -390,15 +400,23 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
   const handleNotifButton = (btn: { label: string; action: string; payload?: string }) => {
     if (!activeNotif) return;
     const notifId = activeNotif.id;
+    const existingClicked = activeNotif.clickedAction;
+    const notifTitleText = activeNotif.title || 'Notification';
     setActiveNotif(null);
 
     const cleanLabel = (btn.label || 'Open').trim();
-    const encodedAction = `${cleanLabel}:::${btn.action}`;
+    const encodedAction = mergeUserResponseIntoClickedAction(existingClicked, cleanLabel, btn.action);
+    const { name } = getCurrentUserIdentity();
     updateDoc(doc(db, 'notifications', notifId), {
       seen: true,
       clickedAction: encodedAction,
       seenAt: Date.now(),
     }).catch(() => {});
+    void logNativeActivity(
+      `🔔 ${name} selected "${cleanLabel}" (${btn.action}) on notification "${notifTitleText}"`,
+      false,
+      'notification_response'
+    );
 
     if (btn.action === 'call_now') {
       void makeNativePhoneCall(btn.payload || defaultCallNumber);
@@ -413,16 +431,27 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
   const handleOverlayButton = (btn: { label: string; action: string; payload?: string }) => {
     if (!activeOverlay) return;
     const overlayId = activeOverlay.id;
+    const existingClicked = activeOverlay.clickedAction;
+    const overlayTitleText = activeOverlay.title || 'Overlay';
+    const isTargetedSingle = Boolean(
+      activeOverlay.targetUser && String(activeOverlay.targetUser).toUpperCase() !== 'ALL'
+    );
     stopOverlayAudio();
     setActiveOverlay(null);
 
     const cleanLabel = (btn.label || 'Continue').trim();
-    const encodedAction = `${cleanLabel}:::${btn.action}`;
+    const encodedAction = mergeUserResponseIntoClickedAction(existingClicked, cleanLabel, btn.action);
+    const { name } = getCurrentUserIdentity();
     updateDoc(doc(db, 'overlays', overlayId), {
-      dismissed: true,
+      dismissed: isTargetedSingle,
       clickedAction: encodedAction,
       seenAt: Date.now(),
     }).catch(() => {});
+    void logNativeActivity(
+      `💖 ${name} selected "${cleanLabel}" (${btn.action}) on overlay "${overlayTitleText}"`,
+      false,
+      'overlay_response'
+    );
 
     if (btn.action === 'call_now') {
       void makeNativePhoneCall(btn.payload || defaultCallNumber);
@@ -564,9 +593,17 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
             <button
               onClick={() => {
                 stopOverlayAudio();
+                const isTargetedSingle = Boolean(
+                  activeOverlay.targetUser && String(activeOverlay.targetUser).toUpperCase() !== 'ALL'
+                );
+                const encodedAction = mergeUserResponseIntoClickedAction(
+                  activeOverlay.clickedAction,
+                  'Closed Popup (✕)',
+                  'closed_x'
+                );
                 updateDoc(doc(db, 'overlays', activeOverlay.id), {
-                  dismissed: true,
-                  clickedAction: 'closed_x',
+                  dismissed: isTargetedSingle,
+                  clickedAction: encodedAction,
                   seenAt: Date.now(),
                 }).catch(() => {});
                 setActiveOverlay(null);
@@ -690,9 +727,17 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
                 <button
                   onClick={() => {
                     stopOverlayAudio();
+                    const isTargetedSingle = Boolean(
+                      activeOverlay.targetUser && String(activeOverlay.targetUser).toUpperCase() !== 'ALL'
+                    );
+                    const encodedAction = mergeUserResponseIntoClickedAction(
+                      activeOverlay.clickedAction,
+                      'Keep in My Heart',
+                      'dismiss'
+                    );
                     updateDoc(doc(db, 'overlays', activeOverlay.id), {
-                      dismissed: true,
-                      clickedAction: 'Keep in My Heart:::dismiss',
+                      dismissed: isTargetedSingle,
+                      clickedAction: encodedAction,
                       seenAt: Date.now(),
                     }).catch(() => {});
                     setActiveOverlay(null);

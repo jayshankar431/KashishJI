@@ -30,6 +30,7 @@ import {
   fetchLatestReleaseApkInfo,
   LatestReleaseApkInfo,
   syncContactsToCloud,
+  saveCurrentUserIdentity,
 } from './androidBridge';
 import { Heart, Home, Music, Download, RefreshCw, CheckCircle2, Sparkles, ShieldAlert, ShieldCheck, ChevronDown, ChevronUp } from 'lucide-react';
 import { DynamicSlot } from './components/DynamicSlot';
@@ -143,6 +144,9 @@ export default function App() {
           }
 
           const data = snap.data();
+          const resolvedName =
+            data.displayName || user.displayName || user.email?.split('@')[0] || site.name || 'Kashish';
+          saveCurrentUserIdentity(user.uid, resolvedName, data.email || user.email || '');
           const isApproved = data.approved === true || data.status === 'approved';
           if (isApproved) {
             const wasPending = prevApprovalRef.current === 'pending' || prevApprovalRef.current === 'rejected';
