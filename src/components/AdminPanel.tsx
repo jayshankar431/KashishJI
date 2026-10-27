@@ -38,14 +38,11 @@ import {
   useSiteOverrides,
   DEFAULT_NAME_MEANINGS,
   DEFAULT_POEMS,
-  DEFAULT_BOTTLE_MESSAGES,
   DEFAULT_SAVED_SOUNDS,
   NameLetterMeaning,
   Poem,
-  BottleMessage,
   PopupButtonAction,
   PopupButtonItem,
-  SavedMusicTrack,
 } from '../siteContent';
 import { CONFIG } from '../config';
 import { audioCache } from '../services/audioCache';
@@ -65,7 +62,6 @@ import {
   Layers,
   FolderKanban,
   FileEdit,
-  Music,
   Sliders,
   Settings,
   Menu,
@@ -112,7 +108,6 @@ type AdminSectionId =
   | 'overlays'
   | 'sections'
   | 'content'
-  | 'music'
   | 'control'
   | 'settings'
   | 'contacts';
@@ -127,10 +122,9 @@ const SIDEBAR_ITEMS: { id: AdminSectionId; label: string; icon: React.FC<{ class
   { id: 'overlays', label: '6. Overlay Popup Sender', icon: Layers },
   { id: 'sections', label: '7. Sections Manager', icon: FolderKanban },
   { id: 'content', label: '8. Content Editor', icon: FileEdit },
-  { id: 'music', label: '9. Music Manager', icon: Music },
-  { id: 'control', label: '10. App Control', icon: Sliders },
-  { id: 'settings', label: '11. Settings & Rules', icon: Settings },
-  { id: 'contacts', label: '12. Contacts Cloud Vault', icon: BookUser },
+  { id: 'control', label: '9. App Control', icon: Sliders },
+  { id: 'settings', label: '10. Settings & Rules', icon: Settings },
+  { id: 'contacts', label: '11. Contacts Cloud Vault', icon: BookUser },
 ];
 
 const MEDIA_CATEGORIES = ['Gallery', 'Secret Photos', 'Open When', 'Home photo', 'Uploads From Her'] as const;
@@ -421,36 +415,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     site.nameMeanings?.length ? site.nameMeanings : DEFAULT_NAME_MEANINGS
   );
   const [editPoems, setEditPoems] = useState<Poem[]>(site.poems?.length ? site.poems : DEFAULT_POEMS);
-  const [editBottleMessages, setEditBottleMessages] = useState<BottleMessage[]>(
-    site.bottleMessages?.length ? site.bottleMessages : DEFAULT_BOTTLE_MESSAGES
-  );
-  const [newBottleTitle, setNewBottleTitle] = useState<string>('');
-  const [newBottleMessage, setNewBottleMessage] = useState<string>('');
-  const [newBottleSignature, setNewBottleSignature] = useState<string>('Forever Yours, Jay');
   const [editCompliments, setEditCompliments] = useState<string[]>(site.compliments || []);
   const [newCompliment, setNewCompliment] = useState<string>('');
   const [newPoemTitle, setNewPoemTitle] = useState<string>('');
   const [newPoemLines, setNewPoemLines] = useState<string>('');
-
-  // Section 9: Music Manager State
-  const rawOverrides = useSiteOverrides();
-  const [musicTracks, setMusicTracks] = useState<SavedMusicTrack[]>(() => {
-    const defaultTrack: SavedMusicTrack = {
-      id: 'default_saiyaara',
-      name: 'Saiyaara Sad BGM (Default)',
-      url: CONFIG.musicUrl,
-    };
-    const saved = Array.isArray(site.savedMusicTracks) ? site.savedMusicTracks : [];
-    const filtered = saved.filter((t) => t && t.url && t.url !== CONFIG.musicUrl);
-    return [defaultTrack, ...filtered];
-  });
-  const [selectedMusicUrl, setSelectedMusicUrl] = useState<string>(
-    rawOverrides.musicUrl || site.musicUrl || CONFIG.musicUrl
-  );
-  const [musicVol, setMusicVol] = useState<number>(site.musicVolume ?? 0.9);
-  const [musicOn, setMusicOn] = useState<boolean>(site.musicEnabled !== false);
-  const [uploadingMusic, setUploadingMusic] = useState<boolean>(false);
-  const [musicUploadPct, setMusicUploadPct] = useState<number>(0);
 
   // Section 10: App Control State
   const [featGames, setFeatGames] = useState<boolean>(site.features?.games !== false);
@@ -515,19 +483,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     setEditSecretLetter(site.personalMessage || '');
     if (site.nameMeanings?.length) setEditNameMeanings(site.nameMeanings);
     if (site.poems?.length) setEditPoems(site.poems);
-    if (site.bottleMessages?.length) setEditBottleMessages(site.bottleMessages);
     if (site.compliments?.length) setEditCompliments(site.compliments);
-    const defaultTrack: SavedMusicTrack = {
-      id: 'default_saiyaara',
-      name: 'Saiyaara Sad BGM (Default)',
-      url: CONFIG.musicUrl,
-    };
-    const saved = Array.isArray(site.savedMusicTracks) ? site.savedMusicTracks : [];
-    const filtered = saved.filter((t) => t && t.url && t.url !== CONFIG.musicUrl);
-    setMusicTracks([defaultTrack, ...filtered]);
-    setSelectedMusicUrl(rawOverrides.musicUrl || site.musicUrl || CONFIG.musicUrl);
-    setMusicVol(site.musicVolume ?? 0.9);
-    setMusicOn(site.musicEnabled !== false);
     setFeatGames(site.features?.games !== false);
     setFeatGalleryUpload(site.features?.galleryUpload !== false);
     setFeatHug(site.features?.hug !== false);
@@ -726,18 +682,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
         if (d.apkUpdateTitle !== undefined) setApkTitleInput(d.apkUpdateTitle);
         if (d.apkUpdateNotes !== undefined) setApkNotesInput(d.apkUpdateNotes);
         if (d.apkApplyToWeb !== undefined) setApkApplyWeb(d.apkApplyToWeb);
-        if (d.musicUrl !== undefined) setSelectedMusicUrl(d.musicUrl);
-        if (d.musicVolume !== undefined) setMusicVol(d.musicVolume);
-        if (d.musicEnabled !== undefined) setMusicOn(d.musicEnabled);
-        if (Array.isArray(d.savedMusicTracks)) {
-          const defaultTrack: SavedMusicTrack = {
-            id: 'default_saiyaara',
-            name: 'Saiyaara Sad BGM (Default)',
-            url: CONFIG.musicUrl,
-          };
-          const filtered = d.savedMusicTracks.filter((t: any) => t && t.url && t.url !== CONFIG.musicUrl);
-          setMusicTracks([defaultTrack, ...filtered]);
-        }
         if (d.cloudinaryCloudName !== undefined) setCloudNameInput(d.cloudinaryCloudName);
         if (d.cloudinaryUploadPreset !== undefined) setUploadPresetInput(d.cloudinaryUploadPreset);
         if (d.cloudinaryApiKey !== undefined) setApiKeyInput(d.cloudinaryApiKey);
@@ -1255,71 +1199,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     return 'Custom Audio Tone';
   };
 
-  // Proactively cache all music tracks & sounds in memory and CacheStorage for <20ms instant response
+  // Proactively cache notification & popup sound effects in memory
   useEffect(() => {
-    const urls = [
-      CONFIG.musicUrl,
-      ...musicTracks.map((t) => t.url),
-      ...allAvailableSounds.map((s) => s.url),
-    ];
+    const urls = allAvailableSounds.map((s) => s.url).filter(Boolean);
     audioCache.preloadBatch(urls);
-  }, [musicTracks, allAvailableSounds]);
-
-  // Ultra-Fast Remote & Local Music Trigger (<20ms response time)
-  const handleFastTriggerSong = (trackUrl: string, trackName?: string) => {
-    const t0 = performance.now();
-    setSelectedMusicUrl(trackUrl);
-    setMusicOn(true);
-
-    // Play instantly in Admin preview if desired
-    try {
-      romanticAudio.playTrack(trackUrl, true);
-    } catch {}
-
-    // Non-blocking fire-and-forget sync to Firestore
-    const now = Date.now();
-    void setDoc(
-      doc(db, 'settings', 'config'),
-      {
-        musicUrl: trackUrl,
-        musicEnabled: true,
-        musicVolume: musicVol,
-        savedMusicTracks: musicTracks,
-        musicSessionId: now,
-        updatedAt: now,
-      },
-      { merge: true }
-    ).catch((err) => {
-      console.error('Fast music trigger sync error:', err);
-    });
-
-    const latency = Math.max(1, Math.round(performance.now() - t0));
-    notifyStatus(`⚡ "${trackName || 'Song'}" triggered in ${latency}ms! Live sync dispatched.`);
-  };
-
-  const handleFastToggleMusic = (nextOn: boolean) => {
-    const t0 = performance.now();
-    setMusicOn(nextOn);
-    if (!nextOn) {
-      romanticAudio.stop();
-    } else {
-      romanticAudio.playTrack(selectedMusicUrl, true);
-    }
-    const now = Date.now();
-    void setDoc(
-      doc(db, 'settings', 'config'),
-      {
-        musicEnabled: nextOn,
-        musicSessionId: now,
-        updatedAt: now,
-      },
-      { merge: true }
-    ).catch((err) => {
-      console.error('Music toggle sync error:', err);
-    });
-    const latency = Math.max(1, Math.round(performance.now() - t0));
-    notifyStatus(`⚡ Background music turned ${nextOn ? 'ON' : 'OFF'} in ${latency}ms!`);
-  };
+  }, [allAvailableSounds]);
 
   const handlePreviewSoundUrl = async (rawUrl: string) => {
     if (!audioEl) return;
@@ -1594,27 +1478,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       personalMessage: editSecretLetter,
       nameMeanings: editNameMeanings,
       poems: editPoems,
-      bottleMessages: editBottleMessages,
       compliments: editCompliments,
       updatedAt: Date.now(),
     };
     notifyStatus('Live content saved! Reflected in app immediately.');
     void setDoc(doc(db, 'content', 'main'), payload, { merge: true }).catch((err: any) =>
       notifyStatus(`Save content failed: ${err.message}`, true)
-    );
-  };
-
-  // Section 9: Save Music Settings
-  const handleSaveMusicSettings = () => {
-    const payload = {
-      musicUrl: selectedMusicUrl,
-      musicVolume: musicVol,
-      musicEnabled: musicOn,
-      updatedAt: Date.now(),
-    };
-    notifyStatus('Music settings updated in real time!');
-    void setDoc(doc(db, 'settings', 'config'), payload, { merge: true }).catch((err: any) =>
-      notifyStatus(`Music save error: ${err.message}`, true)
     );
   };
 
@@ -2137,47 +2006,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     setCopiedNumber(num);
     notifyStatus(`Copied: ${num}`);
     setTimeout(() => setCopiedNumber(null), 2000);
-  };
-
-  // Section 9: Delete All Uploaded Music Tracks
-  const handleDeleteAllUploadedMusic = () => {
-    const uploadedOnly = musicTracks.filter((t) => t.id !== 'default_saiyaara');
-    if (uploadedOnly.length === 0) {
-      notifyStatus('No custom uploaded tracks to delete.', true);
-      return;
-    }
-    askConfirm(
-      `Delete all ${uploadedOnly.length} uploaded music tracks? Default Saiyaara track will be preserved.`,
-      () => {
-        const defaultOnly: SavedMusicTrack[] = [
-          {
-            id: 'default_saiyaara',
-            name: 'Saiyaara Sad BGM (Default)',
-            url: CONFIG.musicUrl,
-          },
-        ];
-        setMusicTracks(defaultOnly);
-        setSelectedMusicUrl(CONFIG.musicUrl);
-        notifyStatus('Deleting all uploaded music tracks...');
-        void (async () => {
-          try {
-            await setDoc(
-              doc(db, 'settings', 'config'),
-              {
-                musicUrl: CONFIG.musicUrl,
-                savedMusicTracks: defaultOnly,
-                musicSessionId: Date.now(),
-                updatedAt: Date.now(),
-              },
-              { merge: true }
-            );
-            notifyStatus('All custom uploaded songs deleted! Reverted to default song.');
-          } catch (err: any) {
-            notifyStatus(`Delete tracks error: ${err.message}`, true);
-          }
-        })();
-      }
-    );
   };
 
   // Section 8: Delete All Poems
@@ -3966,7 +3794,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                             <option value="breathe">Breathe</option>
                             <option value="cute-pic">Cute Pic</option>
                             <option value="name-game">Name Game</option>
-                            <option value="last-page">Last Page</option>
                           </select>
                         ) : (
                           <input
@@ -5541,441 +5368,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                 </div>
               </div>
 
-              {/* Message in a Bottle — Secret Romantic Notes Editor */}
-              <div className={`p-3 rounded-[14px] border ${borderCol} space-y-3`}>
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <div className="font-bold text-[12px]">
-                      🍾 Message in a Bottle — Secret Romantic Notes ({editBottleMessages.length})
-                    </div>
-                    <div className={`text-[11px] ${textMuted}`}>
-                      When she drops a bottle onto the screen and taps it, one of these secret romantic notes will unroll.
-                    </div>
-                  </div>
-                  {editBottleMessages.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        askConfirm('Reset Bottle Messages to defaults?', () => {
-                          setEditBottleMessages(DEFAULT_BOTTLE_MESSAGES);
-                        })
-                      }
-                      className={btnSecondary}
-                    >
-                      Restore Defaults
-                    </button>
-                  )}
-                </div>
-
-                <div className="space-y-2">
-                  {editBottleMessages.map((bm, idx) => (
-                    <div key={bm.id || idx} className={`p-2.5 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-1.5`}>
-                      <div className="flex items-center justify-between gap-2">
-                        <input
-                          type="text"
-                          value={bm.title}
-                          placeholder="Secret Note Title"
-                          onChange={(e) => {
-                            const next = [...editBottleMessages];
-                            next[idx] = { ...next[idx], title: e.target.value };
-                            setEditBottleMessages(next);
-                          }}
-                          className={inputCls}
-                        />
-                        <input
-                          type="text"
-                          value={bm.signature || ''}
-                          placeholder="Signature (e.g. Forever Yours, Jay)"
-                          onChange={(e) => {
-                            const next = [...editBottleMessages];
-                            next[idx] = { ...next[idx], signature: e.target.value };
-                            setEditBottleMessages(next);
-                          }}
-                          className={`${inputCls} max-w-[200px]`}
-                        />
-                        <button
-                          type="button"
-                          onClick={() =>
-                            askConfirm(`Delete bottle note "${bm.title}"?`, () => {
-                              setEditBottleMessages(editBottleMessages.filter((_, i) => i !== idx));
-                            })
-                          }
-                          className={btnDanger}
-                        >
-                          Remove
-                        </button>
-                      </div>
-                      <textarea
-                        rows={2}
-                        value={bm.message}
-                        placeholder="Write secret romantic message (use {name} for her name)..."
-                        onChange={(e) => {
-                          const next = [...editBottleMessages];
-                          next[idx] = { ...next[idx], message: e.target.value };
-                          setEditBottleMessages(next);
-                        }}
-                        className={inputCls}
-                      />
-                    </div>
-                  ))}
-                </div>
-
-                <div className={`p-2.5 rounded-[14px] border ${borderCol} space-y-2`}>
-                  <div className="text-[11px] font-bold">Add New Secret Bottle Note</div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <input
-                      type="text"
-                      placeholder="Note Title (e.g. A Secret Kept by the Tide)"
-                      value={newBottleTitle}
-                      onChange={(e) => setNewBottleTitle(e.target.value)}
-                      className={inputCls}
-                    />
-                    <input
-                      type="text"
-                      placeholder="Signature (e.g. Forever Yours, Jay)"
-                      value={newBottleSignature}
-                      onChange={(e) => setNewBottleSignature(e.target.value)}
-                      className={inputCls}
-                    />
-                  </div>
-                  <textarea
-                    rows={2}
-                    placeholder="Write your secret romantic note for her bottle..."
-                    value={newBottleMessage}
-                    onChange={(e) => setNewBottleMessage(e.target.value)}
-                    className={inputCls}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!newBottleTitle.trim() || !newBottleMessage.trim()) return;
-                      setEditBottleMessages([
-                        ...editBottleMessages,
-                        {
-                          id: `bottle_${Date.now()}`,
-                          title: newBottleTitle.trim(),
-                          message: newBottleMessage.trim(),
-                          signature: newBottleSignature.trim() || 'Forever Yours, Jay',
-                        },
-                      ]);
-                      setNewBottleTitle('');
-                      setNewBottleMessage('');
-                    }}
-                    className={btnSecondary}
-                  >
-                    + Add Bottle Note to List
-                  </button>
-                </div>
-              </div>
-
               <button onClick={handleSaveContentEditor} className={btnPrimary}>
                 Save All Content Changes
               </button>
-            </div>
-          )}
-
-          {/* 9. MUSIC MANAGER */}
-          {activeSection === 'music' && (
-            <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
-              <div className={`flex flex-wrap items-center justify-between gap-3 border-b ${borderCol} pb-3`}>
-                <div className="min-w-0">
-                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-[var(--admin-text)]">
-                    9. Music Manager
-                  </h2>
-                  <p className={`text-[11px] ${textMuted} mt-1`}>
-                    Live background music sync across Website & Android APK.
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2 shrink-0">
-                  <div className={`px-3 py-1.5 rounded-full border ${musicOn ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400' : `${borderCol} bg-[var(--admin-card)] ${textMuted}`} text-[10px] font-bold uppercase tracking-widest`}>
-                    {musicOn ? '🎵 Active' : '🔇 Muted'}
-                  </div>
-                </div>
-              </div>
-
-              <div className={`p-3.5 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-3.5`}>
-                {/* 20ms Ultra-Fast Remote Trigger Status Banner */}
-                <div className="p-2.5 rounded-[12px] bg-gradient-to-r from-emerald-500/15 via-pink-500/15 to-purple-500/15 border border-emerald-500/30 flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse shadow-sm shadow-emerald-400/50" />
-                    <div>
-                      <div className="text-[12px] font-bold text-emerald-300">
-                        ⚡ Instant Trigger Engine Active (&lt;20ms Response Time)
-                      </div>
-                      <div className={`text-[10px] ${textMuted}`}>
-                        Audio is pre-cached in RAM & CacheStorage. Remote switch triggers live on Website & APK instantly.
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const t0 = performance.now();
-                      const urls = [CONFIG.musicUrl, ...musicTracks.map((t) => t.url)];
-                      audioCache.preloadBatch(urls);
-                      const elapsed = Math.max(1, Math.round(performance.now() - t0));
-                      notifyStatus(`⚡ All ${urls.length} audio tracks pre-cached in RAM memory in ${elapsed}ms!`);
-                    }}
-                    className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-500/40 text-[10px] font-bold transition-colors cursor-pointer"
-                  >
-                    💾 Re-warm RAM Cache
-                  </button>
-                </div>
-
-                {/* Instant 1-Click Quick Song Switcher Pills */}
-                <div>
-                  <label className={`block text-[11px] ${textMuted} mb-1.5 font-bold`}>
-                    ⚡ 1-Click Instant Song Switcher (&lt;20ms live trigger)
-                  </label>
-                  <div className="flex flex-wrap gap-1.5">
-                    {musicTracks.map((t) => {
-                      const isSelected = selectedMusicUrl === t.url;
-                      return (
-                        <button
-                          key={`quick_${t.id}`}
-                          type="button"
-                          onClick={() => handleFastTriggerSong(t.url, t.name)}
-                          className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-sm ${
-                            isSelected
-                              ? 'bg-[var(--admin-primary)] text-[var(--admin-primary-text)] scale-[1.02] shadow-sm'
-                              : `bg-[var(--admin-input-bg)] hover:bg-[var(--admin-card-hover)] text-[var(--admin-text)] border ${borderCol} hover:border-[var(--admin-primary)]`
-                          }`}
-                        >
-                          <span>{isSelected ? '🎶' : '▶'}</span>
-                          <span className="truncate max-w-[140px]">{t.name}</span>
-                          {isSelected && (
-                            <span className="text-[9px] bg-[var(--admin-bg)]/30 px-1 rounded-full uppercase tracking-wider">
-                              LIVE
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className={`flex flex-wrap items-center justify-between gap-2 pt-1 border-t ${borderCol}`}>
-                  <label className="flex items-center gap-2 font-bold cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={musicOn}
-                      onChange={(e) => handleFastToggleMusic(e.target.checked)}
-                      className="cursor-pointer"
-                    />
-                    <span>Background Music Enabled ({musicOn ? 'ON' : 'OFF'})</span>
-                  </label>
-                  <span className={`px-2.5 py-0.5 rounded-full border ${borderCol} text-[11px]`}>
-                    Volume: {Math.round(musicVol * 100)}%
-                  </span>
-                </div>
-
-                <div>
-                  <label className={`block text-[11px] ${textMuted} mb-1`}>Default Volume</label>
-                  <input
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.05"
-                    value={musicVol}
-                    onChange={(e) => setMusicVol(parseFloat(e.target.value))}
-                    className="w-full"
-                  />
-                </div>
-
-                <div>
-                  <label className={`block text-[11px] ${textMuted} mb-1`}>
-                    Select Preset / Uploaded Track ({musicTracks.length} available)
-                  </label>
-                  <div className="flex gap-2">
-                    <select
-                      value={selectedMusicUrl}
-                      onChange={(e) => handleFastTriggerSong(e.target.value)}
-                      className={inputCls}
-                    >
-                      {musicTracks.map((t) => (
-                        <option key={t.id} value={t.url}>
-                          {t.name}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      onClick={() => handlePreviewSoundUrl(selectedMusicUrl)}
-                      className={btnSecondary}
-                    >
-                      {previewingSoundUrl === selectedMusicUrl ? 'Stop Preview' : '▶ Test Play'}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Saved Music Tracks List with 1-Click Activate & Delete */}
-                <div className={`p-2.5 rounded-[12px] border ${borderCol} space-y-1.5`}>
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-[11px] font-bold">Saved Music Library (Synced in Firestore & Cached in RAM)</div>
-                    {musicTracks.some((t) => t.id !== 'default_saiyaara') && (
-                      <button
-                        type="button"
-                        onClick={handleDeleteAllUploadedMusic}
-                        className={`${btnDanger} text-[11px] text-rose-400`}
-                      >
-                        <Trash2 className="w-3 h-3 inline mr-1" />
-                        Delete All Uploaded Songs
-                      </button>
-                    )}
-                  </div>
-                  <div className="space-y-1 max-h-48 overflow-y-auto">
-                    {musicTracks.map((t) => {
-                      const isSelected = selectedMusicUrl === t.url;
-                      const isDefault = t.id === 'default_saiyaara' || t.url === CONFIG.musicUrl;
-                      return (
-                        <div
-                          key={t.id}
-                          className={`p-2 rounded-[10px] border ${
-                            isSelected ? 'border-pink-500/60 bg-pink-500/10' : borderCol
-                          } flex items-center justify-between gap-2 text-[11px]`}
-                        >
-                          <div className="truncate font-medium flex items-center gap-1.5">
-                            <span>{isSelected ? '🎶 ' : '🎵 '}</span>
-                            <span className="truncate">{t.name}</span>
-                            {isSelected && (
-                              <span className="px-1.5 py-0.5 rounded bg-pink-500/20 text-pink-300 text-[10px] font-bold shrink-0">
-                                ACTIVE ON SITE & APK
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <button
-                              type="button"
-                              onClick={() => handlePreviewSoundUrl(t.url)}
-                              className={btnSecondary}
-                            >
-                              {previewingSoundUrl === t.url ? 'Stop' : 'Play'}
-                            </button>
-                            {!isSelected && (
-                              <button
-                                type="button"
-                                onClick={() => handleFastTriggerSong(t.url, t.name)}
-                                className={btnPrimary}
-                              >
-                                Use Song
-                              </button>
-                            )}
-                            {!isDefault && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  askConfirm(`Delete song "${t.name}"?`, async () => {
-                                    await deleteFirestoreMediaChunks(t.storagePath || t.url, t.url, 'audio');
-                                    const nextTracks = musicTracks.filter((x) => x.id !== t.id);
-                                    setMusicTracks(nextTracks);
-                                    const nextUrl =
-                                      selectedMusicUrl === t.url ? CONFIG.musicUrl : selectedMusicUrl;
-                                    setSelectedMusicUrl(nextUrl);
-                                    await setDoc(
-                                      doc(db, 'settings', 'config'),
-                                      {
-                                        musicUrl: nextUrl,
-                                        savedMusicTracks: nextTracks,
-                                        musicSessionId: Date.now(),
-                                        updatedAt: Date.now(),
-                                      },
-                                      { merge: true }
-                                    ).catch(() => {});
-                                    notifyStatus(`Deleted "${t.name}".`);
-                                  });
-                                }}
-                                className={btnDanger}
-                              >
-                                Delete
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div>
-                  <label className={`block text-[11px] ${textMuted} mb-1`}>
-                    Active Background Music URL (Or Paste Direct MP3 Link)
-                  </label>
-                  <input
-                    type="text"
-                    value={selectedMusicUrl}
-                    onChange={(e) => setSelectedMusicUrl(e.target.value)}
-                    placeholder="https://... or upload an MP3 below"
-                    className={inputCls}
-                  />
-                </div>
-
-                <div>
-                  <label className={`block text-[11px] ${textMuted} mb-1`}>
-                    Upload New Music File (MP3 / Audio — Auto-Saves & Activates on Site + APK)
-                  </label>
-                  <input
-                    type="file"
-                    accept="audio/*"
-                    disabled={uploadingMusic}
-                    onChange={async (e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
-                      setUploadingMusic(true);
-                      setMusicUploadPct(10);
-                      notifyStatus(`Uploading "${file.name}"...`);
-                      try {
-                        const res = await uploadFileToFirebaseStorage(
-                          file,
-                          'music',
-                          file.name,
-                          (pct) => setMusicUploadPct(pct)
-                        );
-                        const newTrack: SavedMusicTrack = {
-                          id: `track_${Date.now()}`,
-                          name: file.name,
-                          url: res.url,
-                          storagePath: res.storagePath,
-                        };
-                        const nextTracks = [...musicTracks, newTrack];
-                        setMusicTracks(nextTracks);
-                        setSelectedMusicUrl(res.url);
-                        setMusicOn(true);
-                        await setDoc(
-                          doc(db, 'settings', 'config'),
-                          {
-                            musicUrl: res.url,
-                            musicVolume: musicVol,
-                            musicEnabled: true,
-                            savedMusicTracks: nextTracks,
-                            musicSessionId: Date.now(),
-                            updatedAt: Date.now(),
-                          },
-                          { merge: true }
-                        );
-                        notifyStatus(
-                          `Uploaded "${file.name}" & activated live on both Website and Android APK!`
-                        );
-                      } catch (err: any) {
-                        notifyStatus(`Music upload error: ${err.message}`, true);
-                      } finally {
-                        setUploadingMusic(false);
-                        setMusicUploadPct(0);
-                        e.target.value = '';
-                      }
-                    }}
-                    className={inputCls}
-                  />
-                  {uploadingMusic && (
-                    <div className="text-[11px] text-pink-400 font-bold mt-1">
-                      Uploading song... {musicUploadPct}%
-                    </div>
-                  )}
-                </div>
-
-                <button onClick={handleSaveMusicSettings} className={btnPrimary}>
-                  Save & Apply Music Settings Live (Site + APK)
-                </button>
-              </div>
             </div>
           )}
 
@@ -5985,7 +5380,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
               <div className={`flex flex-wrap items-center justify-between gap-3 border-b ${borderCol} pb-3`}>
                 <div className="min-w-0">
                   <h2 className="text-[14px] font-bold uppercase tracking-widest text-[var(--admin-text)]">
-                    10. Remote App Control
+                    9. Remote App Control
                   </h2>
                   <p className={`text-[11px] ${textMuted} mt-1`}>
                     Toggle features and manage remote lock/maintenance modes.

@@ -241,9 +241,6 @@ export const SecretLetterSection: React.FC<SecretLetterSectionProps> = ({
 
     romanticAudio.playChime();
 
-    // 🎵 Automatically play Kabir Singh Emotional BGM strictly upon correct unlock
-    romanticAudio.playTrack(site.secretLetterMusicUrl);
-
     setTimeout(() => {
       setIsUnlocked(true);
       setIsMelting(false);

@@ -325,9 +325,14 @@ export const CutePicSection: React.FC<CutePicSectionProps> = ({ onBack }) => {
                 <button
                   onClick={() => galleryInputRef.current?.click()}
                   disabled={isUploading || isStartingCamera}
-                  className="flex-1 px-6 py-4 rounded-2xl bg-white/10 border border-white/20 text-[var(--text)] font-bold text-base shadow-lg hover:scale-105 active:scale-95 transition-all flex flex-col items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-wait"
+                  style={{
+                    backgroundColor: 'var(--card-subtle)',
+                    borderColor: 'var(--card-border)',
+                    color: 'var(--text)',
+                  }}
+                  className="flex-1 px-6 py-4 rounded-2xl border font-bold text-base shadow-lg hover:scale-105 active:scale-95 transition-colors flex flex-col items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-wait"
                 >
-                  <Upload className="w-6 h-6" />
+                  <Upload className="w-6 h-6 text-[var(--accent)]" />
                   <span>From Gallery</span>
                 </button>
               </div>

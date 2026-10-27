@@ -1,10 +1,16 @@
 import React from 'react';
-import { createPortal } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import { Palette, Sparkles, Check, Moon, Sun, Layers, X, Heart } from 'lucide-react';
 import { romanticAudio } from '../audio';
 import { triggerHaptic, logNativeActivity } from '../androidBridge';
 
 export type AppThemeId = 'default' | 'glass' | 'light';
+export type ThemeOriginSource =
+  | React.MouseEvent<HTMLElement>
+  | HTMLElement
+  | { x: number; y: number }
+  | null
+  | undefined;
 
 export function getSavedTheme(): AppThemeId {
   try {
@@ -22,7 +28,9 @@ export function getSavedTheme(): AppThemeId {
 
 export function applyThemeToDocument(theme: AppThemeId): void {
   if (typeof document !== 'undefined') {
-    document.documentElement.setAttribute('data-theme', theme);
+    const root = document.documentElement;
+    root.setAttribute('data-theme', theme);
+    root.style.colorScheme = theme === 'light' ? 'light' : 'dark';
     const metaThemeColor = document.querySelector('meta[name="theme-color"]');
     if (metaThemeColor) {
       const colorMap: Record<AppThemeId, string> = {
@@ -42,9 +50,168 @@ export function applyThemeToDocument(theme: AppThemeId): void {
   }
 }
 
+interface ViewTransitionHandle {
+  ready: Promise<void>;
+  finished: Promise<void>;
+  skipTransition: () => void;
+}
+
+let activeViewTransition: ViewTransitionHandle | null = null;
+let fallbackSmoothTimer: number | null = null;
+
+function resolveOriginCoordinates(origin?: ThemeOriginSource): { x: number; y: number } {
+  if (typeof window === 'undefined') return { x: 0, y: 0 };
+
+  if (origin && typeof origin === 'object') {
+    if ('clientX' in origin && typeof origin.clientX === 'number') {
+      // Keyboard activation on a button fires clientX=0, clientY=0; use element center in that case
+      if (origin.clientX === 0 && origin.clientY === 0 && origin.currentTarget) {
+        const rect = origin.currentTarget.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      }
+      return { x: origin.clientX, y: origin.clientY };
+    }
+    if ('getBoundingClientRect' in origin && typeof origin.getBoundingClientRect === 'function') {
+      const rect = origin.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    }
+    if ('x' in origin && 'y' in origin && typeof origin.x === 'number' && typeof origin.y === 'number') {
+      return { x: origin.x, y: origin.y };
+    }
+  }
+
+  const toggleBtn = document.getElementById('kashish-theme-toggle-btn');
+  if (toggleBtn) {
+    const rect = toggleBtn.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    }
+  }
+
+  return { x: Math.max(24, window.innerWidth - 48), y: 28 };
+}
+
+/**
+ * Coordinates a Telegram-style circular reveal (when View Transitions API is supported)
+ * or a synchronized 280ms color crossfade fallback. Handles rapid repeated toggles cleanly
+ * and respects prefers-reduced-motion.
+ */
+export function transitionThemeChange(
+  nextTheme: AppThemeId,
+  onStateUpdate: (theme: AppThemeId) => void,
+  origin?: ThemeOriginSource
+): void {
+  if (typeof document === 'undefined' || typeof window === 'undefined') {
+    applyThemeToDocument(nextTheme);
+    onStateUpdate(nextTheme);
+    return;
+  }
+
+  const root = document.documentElement;
+  const currentAttr = root.getAttribute('data-theme') as AppThemeId | null;
+  if (currentAttr === nextTheme) {
+    applyThemeToDocument(nextTheme);
+    onStateUpdate(nextTheme);
+    return;
+  }
+
+  // Cancel any in-flight transition cleanly so rapid toggles never get stuck
+  if (activeViewTransition) {
+    try {
+      activeViewTransition.skipTransition();
+    } catch {}
+    activeViewTransition = null;
+  }
+  if (fallbackSmoothTimer !== null) {
+    window.clearTimeout(fallbackSmoothTimer);
+    fallbackSmoothTimer = null;
+  }
+
+  const prefersReducedMotion =
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  if (prefersReducedMotion) {
+    root.removeAttribute('data-theme-vt');
+    root.removeAttribute('data-theme-transition');
+    applyThemeToDocument(nextTheme);
+    onStateUpdate(nextTheme);
+    return;
+  }
+
+  const docWithVT = document as Document & {
+    startViewTransition?: (callback: () => void) => ViewTransitionHandle;
+  };
+
+  if (typeof docWithVT.startViewTransition === 'function') {
+    const { x, y } = resolveOriginCoordinates(origin);
+    const maxRadius = Math.hypot(
+      Math.max(x, window.innerWidth - x),
+      Math.max(y, window.innerHeight - y)
+    );
+
+    root.setAttribute('data-theme-vt', 'active');
+    root.removeAttribute('data-theme-transition');
+
+    try {
+      const vt = docWithVT.startViewTransition(() => {
+        flushSync(() => {
+          applyThemeToDocument(nextTheme);
+          onStateUpdate(nextTheme);
+        });
+      });
+
+      activeViewTransition = vt;
+
+      vt.ready
+        .then(() => {
+          root.animate(
+            {
+              clipPath: [
+                `circle(0px at ${x}px ${y}px)`,
+                `circle(${Math.ceil(maxRadius)}px at ${x}px ${y}px)`,
+              ],
+            },
+            {
+              duration: 300,
+              easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+              pseudoElement: '::view-transition-new(root)',
+            }
+          );
+        })
+        .catch(() => {
+          // Safe ignore if transition was skipped by a rapid toggle
+        });
+
+      vt.finished
+        .finally(() => {
+          if (activeViewTransition === vt) {
+            activeViewTransition = null;
+            root.removeAttribute('data-theme-vt');
+          }
+        })
+        .catch(() => {});
+
+      return;
+    } catch {
+      root.removeAttribute('data-theme-vt');
+    }
+  }
+
+  // Fallback: coordinated smooth CSS variable crossfade
+  root.setAttribute('data-theme-transition', 'smooth');
+  applyThemeToDocument(nextTheme);
+  onStateUpdate(nextTheme);
+
+  fallbackSmoothTimer = window.setTimeout(() => {
+    root.removeAttribute('data-theme-transition');
+    fallbackSmoothTimer = null;
+  }, 320);
+}
+
 interface ThemeSectionProps {
   currentTheme: AppThemeId;
-  onSelectTheme: (theme: AppThemeId) => void;
+  onSelectTheme: (theme: AppThemeId, origin?: ThemeOriginSource) => void;
   recipientName?: string;
   compact?: boolean;
 }
@@ -55,11 +222,14 @@ export const ThemeSection: React.FC<ThemeSectionProps> = ({
   recipientName = 'Kashish',
   compact = false,
 }) => {
-  const handleSelect = (theme: AppThemeId, label: string) => {
+  const handleSelect = (
+    theme: AppThemeId,
+    label: string,
+    origin?: ThemeOriginSource
+  ) => {
     triggerHaptic(35);
     romanticAudio.playChime();
-    applyThemeToDocument(theme);
-    onSelectTheme(theme);
+    onSelectTheme(theme, origin);
     void logNativeActivity(`🎨 ${recipientName} switched app theme to <b>${label}</b>`);
   };
 
@@ -169,7 +339,7 @@ export const ThemeSection: React.FC<ThemeSectionProps> = ({
             <button
               key={t.id}
               type="button"
-              onClick={() => handleSelect(t.id, t.title)}
+              onClick={(e) => handleSelect(t.id, t.title, e)}
               aria-pressed={isSelected}
               style={{
                 backgroundColor: 'var(--card)',
@@ -178,7 +348,7 @@ export const ThemeSection: React.FC<ThemeSectionProps> = ({
                   ? '0 10px 30px rgba(244, 63, 94, 0.28), 0 0 0 2px var(--accent)'
                   : '0 6px 20px var(--shadow-color)',
               }}
-              className="group text-left rounded-3xl p-4 sm:p-5 border transition-all duration-300 flex flex-col justify-between gap-4 cursor-pointer active:scale-[0.98] hover:scale-[1.01] w-full"
+              className="group text-left rounded-3xl p-4 sm:p-5 border transition-colors duration-300 flex flex-col justify-between gap-4 cursor-pointer active:scale-[0.98] hover:scale-[1.01] w-full"
             >
               {/* Visual Theme Preview Miniature */}
               <div
@@ -389,7 +559,8 @@ export const ThemeSection: React.FC<ThemeSectionProps> = ({
                 const next = e.target.value as AppThemeId;
                 handleSelect(
                   next,
-                  next === 'glass' ? 'Glassmorphism' : next === 'light' ? 'Soft Blush' : 'Default'
+                  next === 'glass' ? 'Glassmorphism' : next === 'light' ? 'Soft Blush' : 'Default',
+                  e.currentTarget
                 );
               }}
               style={{
@@ -406,10 +577,11 @@ export const ThemeSection: React.FC<ThemeSectionProps> = ({
 
             <button
               type="button"
-              onClick={() =>
+              onClick={(e) =>
                 handleSelect(
                   currentTheme === 'glass' ? 'default' : 'glass',
-                  currentTheme === 'glass' ? 'Default' : 'Glassmorphism'
+                  currentTheme === 'glass' ? 'Default' : 'Glassmorphism',
+                  e
                 )
               }
               style={{
@@ -434,7 +606,7 @@ interface ThemeModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentTheme: AppThemeId;
-  onSelectTheme: (theme: AppThemeId) => void;
+  onSelectTheme: (theme: AppThemeId, origin?: ThemeOriginSource) => void;
   recipientName?: string;
 }
 

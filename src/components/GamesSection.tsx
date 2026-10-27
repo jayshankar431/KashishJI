@@ -1318,17 +1318,25 @@ const TruthOrDareGame: React.FC<{ isDarkMode: boolean }> = ({ isDarkMode }) => {
         <div className="grid grid-cols-2 gap-4">
           <button
             onClick={() => pick('Truth')}
-            className="h-32 rounded-3xl border border-rose-200 dark:border-rose-900 bg-white dark:bg-[#1a0f2b] flex flex-col items-center justify-center gap-2 hover:border-rose-400 transition-all cursor-pointer shadow-sm group"
+            style={{
+              backgroundColor: 'var(--card-solid)',
+              borderColor: 'var(--card-border)',
+            }}
+            className="h-32 rounded-3xl border flex flex-col items-center justify-center gap-2 hover:border-rose-400 transition-colors cursor-pointer shadow-sm group"
           >
             <HelpCircle className="w-8 h-8 text-rose-500 group-hover:scale-110 transition-transform" />
-            <span className="font-bold text-rose-600 dark:text-rose-400">Truth</span>
+            <span style={{ color: 'var(--accent)' }} className="font-bold">Truth</span>
           </button>
           <button
             onClick={() => pick('Dare')}
-            className="h-32 rounded-3xl border border-rose-200 dark:border-rose-900 bg-white dark:bg-[#1a0f2b] flex flex-col items-center justify-center gap-2 hover:border-rose-400 transition-all cursor-pointer shadow-sm group"
+            style={{
+              backgroundColor: 'var(--card-solid)',
+              borderColor: 'var(--card-border)',
+            }}
+            className="h-32 rounded-3xl border flex flex-col items-center justify-center gap-2 hover:border-rose-400 transition-colors cursor-pointer shadow-sm group"
           >
             <Flame className="w-8 h-8 text-rose-500 group-hover:scale-110 transition-transform" />
-            <span className="font-bold text-rose-600 dark:text-rose-400">Dare</span>
+            <span style={{ color: 'var(--accent)' }} className="font-bold">Dare</span>
           </button>
         </div>
       ) : (

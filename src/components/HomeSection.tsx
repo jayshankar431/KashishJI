@@ -25,7 +25,6 @@ import { BirthdaySurpriseSpinner } from './BirthdaySurpriseSpinner';
 import { triggerHaptic, logNativeActivity, sendTelegramVoice, logVoiceNoteToFirestore, incrementStat, showNativeToast, isNativeApp, requestNativePermissions, makeNativePhoneCall } from '../androidBridge';
 import { Phone, Mic, StopCircle, Send, Trash2, Volume2 } from 'lucide-react';
 import { DynamicSlot } from './DynamicSlot';
-import { MessageInABottle } from './MessageInABottle';
 import { useSite } from '../siteContent';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth, ADMIN_EMAIL } from '../firebase';
@@ -106,7 +105,6 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const recordingRequestedRef = useRef(false);
   const stopActionRef = useRef<'send' | 'preview' | 'cancel'>('send');
-  const wasMusicPlayingRef = useRef(false);
 
   const cleanupMicStream = () => {
     if (timerRef.current) {
@@ -203,11 +201,8 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
         return;
       }
 
-      // Immediately pause background music so it does not bleed into the recording
-      wasMusicPlayingRef.current = romanticAudio.getIsPlaying();
-      if (wasMusicPlayingRef.current) {
-        romanticAudio.stop(false);
-      }
+      // Pause active Darling music player if playing so it does not bleed into the voice recording
+      window.dispatchEvent(new CustomEvent('kashish-pause-darling-player'));
 
       if (isNativeApp()) {
         requestNativePermissions(['MICROPHONE']);
@@ -232,7 +227,6 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
       if (!recordingRequestedRef.current) {
         cleanupMicStream();
         setIsStartingMic(false);
-        if (wasMusicPlayingRef.current) romanticAudio.play();
         return;
       }
 
@@ -277,7 +271,6 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
         cleanupMicStream();
         setIsRecording(false);
         setIsStartingMic(false);
-        if (wasMusicPlayingRef.current) romanticAudio.play();
         showNativeToast('Recorder interrupted. Tap Record Voice to try again 🎙️');
       };
 
@@ -288,10 +281,6 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
         setIsRecording(false);
         setIsStartingMic(false);
         cleanupMicStream();
-
-        if (wasMusicPlayingRef.current && action !== 'preview') {
-          romanticAudio.play();
-        }
 
         if (action === 'cancel') {
           audioChunksRef.current = [];
@@ -348,7 +337,6 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
       cleanupMicStream();
       setIsRecording(false);
       setIsStartingMic(false);
-      if (wasMusicPlayingRef.current) romanticAudio.play();
 
       const errName = String(err?.name || '');
       console.warn('Microphone error:', errName, err?.message || err);
@@ -396,9 +384,6 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
     }
     setRecordedPreviewBlob(null);
     setRecordedPreviewUrl('');
-    if (wasMusicPlayingRef.current) {
-      romanticAudio.play();
-    }
     showNativeToast('Voice note discarded.');
   };
 
@@ -450,7 +435,7 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
   const cards = [
     {
       id: 'gallery' as NavTab,
-      title: 'Our Photo Gallery',
+      title: 'Memories of Kashish',
       subtitle: 'Memories, candid moments & surprises',
       icon: Images,
     },
@@ -493,12 +478,6 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
       title: 'The Name Game',
       subtitle: 'Meaning of your name',
       icon: Sparkles,
-    },
-    {
-      id: 'last-page' as NavTab,
-      title: 'A Final Note',
-      subtitle: 'A heartfelt note for you',
-      icon: Heart,
     },
     {
       id: 'theme' as NavTab,
@@ -948,9 +927,6 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
         )}
       </section>
 
-      {/* Message in a Bottle Interactive Feature */}
-      <MessageInABottle recipientName={name} isDarkMode={isDarkMode} />
-
       {/* Dynamic Slot: Home Before Rooms */}
       <DynamicSlot slotId="home_before_rooms" onNavigate={onNavigate} isDarkMode={isDarkMode} />
 
@@ -976,6 +952,9 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
             Tap any room
           </span>
         </div>
+
+        {/* Music Player 4 You Darling (Inline Portal Slot at the top of Room section) */}
+        <div id="darling-player-slot" className="w-full" />
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
           {cards.map((card) => {

@@ -163,8 +163,8 @@ so I let this website speak for my heart.`,
 
 
 
-  // 🎵 Background Music URL (Emotional Sad BGM - Saiyaara Sad Background Music)
-  musicUrl: "https://res.cloudinary.com/dsfcu9y1h/video/upload/v1791126913/Saiyaara_Sad_Background_Music___Film_Version___Recreated_by_Dhaval_K_Raval_saiyaara_xpnhvm.mp3",
+  // 🎵 Legacy background music disabled (replaced by in-app YouTube Music Player)
+  musicUrl: "",
 
 
   // 💌 "OPEN WHEN..." POST OFFICE ENVELOPES (12 emotional letters & interactive surprises)

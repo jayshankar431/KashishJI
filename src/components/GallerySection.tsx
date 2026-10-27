@@ -401,7 +401,7 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ name, isDarkMode
 
           <h1 className="font-serif text-3xl sm:text-4xl font-bold flex items-center justify-center gap-3">
             <Images className="w-8 h-8 text-[var(--accent)]" />
-            <span>{name}'s Photo Gallery 💖</span>
+            <span>Memories of Kashish 💖</span>
           </h1>
 
           <p className="text-xs sm:text-sm text-[var(--text-soft)] font-medium leading-relaxed">

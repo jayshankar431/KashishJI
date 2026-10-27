@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { useSite } from './siteContent';
 import { romanticAudio } from './audio';
-import { audioCache } from './services/audioCache';
 import { BackgroundEffects } from './components/BackgroundEffects';
 import { NostalgicLockScreen } from './components/NostalgicLockScreen';
 import { Navbar, NavTab } from './components/Navbar';
@@ -11,7 +10,6 @@ import { PoetrySection } from './components/PoetrySection';
 import { SecretLetterSection } from './components/SecretLetterSection';
 import { NameGameSection } from './components/NameGameSection';
 import { CutePicSection } from './components/CutePicSection';
-import { LastPageSection } from './components/LastPageSection';
 import { OpenWhenSection } from './components/OpenWhenSection';
 import { BreatheSection } from './components/BreatheSection';
 import { GallerySection } from './components/GallerySection';
@@ -39,12 +37,15 @@ import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db, ADMIN_EMAIL } from './firebase';
 import { AdminPanel } from './components/AdminPanel';
 import { LiveOverlaysAndNotifications } from './components/LiveOverlaysAndNotifications';
+import { DarlingMusicPlayer } from './components/DarlingMusicPlayer';
 import {
   ThemeSection,
   ThemeModal,
   AppThemeId,
+  ThemeOriginSource,
   getSavedTheme,
   applyThemeToDocument,
+  transitionThemeChange,
 } from './components/ThemeSection';
 
 export default function App() {
@@ -173,7 +174,6 @@ export default function App() {
             setApprovalStatus(nextStat);
             prevApprovalRef.current = nextStat;
             setIsUnlocked(false);
-            romanticAudio.stop();
             try {
               window.localStorage.removeItem('kashish_unlocked_persist');
               window.sessionStorage.removeItem('kashishUnlocked');
@@ -243,8 +243,6 @@ export default function App() {
   const [appTheme, setAppTheme] = useState<AppThemeId>(() => getSavedTheme());
   const isDarkMode = appTheme !== 'light';
   const [isThemeModalOpen, setIsThemeModalOpen] = useState<boolean>(false);
-  const [isPlayingMusic, setIsPlayingMusic] = useState(false);
-  const [isSecretLetterOpenInView, setIsSecretLetterOpenInView] = useState(false);
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(() => {
     return typeof window !== 'undefined' && window.location.hash === '#admin';
   });
@@ -341,7 +339,6 @@ export default function App() {
       'poetry',
       'secret-letter',
       'name-game',
-      'last-page',
       'theme',
     ];
     if (progress.lastVisitedSection && validTabs.includes(progress.lastVisitedSection as NavTab)) {
@@ -354,124 +351,6 @@ export default function App() {
   useEffect(() => {
     saveProgress(progress);
   }, [progress]);
-
-  // Keep isPlayingMusic state 100% in sync with real audio playback & live Admin Music controls
-  useEffect(() => {
-    romanticAudio.init(site.musicUrl);
-    const unsubscribe = romanticAudio.subscribe((playing) => {
-      setIsPlayingMusic(playing);
-    });
-    return unsubscribe;
-  }, [site.musicUrl]);
-
-  useEffect(() => {
-    if (typeof site.musicVolume === 'number' && !Number.isNaN(site.musicVolume)) {
-      romanticAudio.setVolume(site.musicVolume);
-    }
-  }, [site.musicVolume]);
-
-  // Proactively cache all music tracks & sounds in CacheStorage and in-memory Blob RAM
-  useEffect(() => {
-    const urlsToCache = [
-      site.musicUrl,
-      site.secretLetterMusicUrl,
-      ...(site.savedMusicTracks || []).map((t) => t?.url),
-    ];
-    audioCache.preloadBatch(urlsToCache);
-  }, [site.musicUrl, site.secretLetterMusicUrl, site.savedMusicTracks]);
-
-  const prevMusicSessionRef = useRef<number>(site.musicSessionId || 0);
-
-  useEffect(() => {
-    const targetUrl =
-      activeTab === 'secret-letter' && isSecretLetterOpenInView && site.secretLetterMusicUrl
-        ? site.secretLetterMusicUrl
-        : site.musicUrl;
-
-    const adminTriggeredChange =
-      Boolean(site.musicSessionId) && site.musicSessionId !== prevMusicSessionRef.current;
-    if (site.musicSessionId) {
-      prevMusicSessionRef.current = site.musicSessionId;
-    }
-
-    if (site.musicEnabled === false) {
-      if (romanticAudio.getIsPlaying()) {
-        romanticAudio.stop();
-      }
-      return;
-    }
-
-    if (!targetUrl) return;
-
-    if (adminTriggeredChange && isUnlocked) {
-      // Admin just saved new music settings live — play/switch track immediately on both Site & APK
-      romanticAudio.playTrack(targetUrl, true);
-      return;
-    }
-
-    if (isUnlocked && romanticAudio.getIsPlaying() && romanticAudio.getCurrentUrl() !== targetUrl) {
-      romanticAudio.playTrack(targetUrl);
-    } else {
-      romanticAudio.init(targetUrl);
-    }
-  }, [
-    site.musicEnabled,
-    site.musicUrl,
-    site.musicSessionId,
-    site.secretLetterMusicUrl,
-    isUnlocked,
-    activeTab,
-    isSecretLetterOpenInView,
-  ]);
-
-  // Universal first-touch audio warmup to unblock AudioContext & media autoplay in Android WebView / browser
-  useEffect(() => {
-    const warmupAudio = () => {
-      romanticAudio.resumeContext();
-      ['click', 'touchstart', 'touchend', 'pointerdown', 'keydown'].forEach((evt) => {
-        window.removeEventListener(evt, warmupAudio);
-      });
-    };
-
-    ['click', 'touchstart', 'touchend', 'pointerdown', 'keydown'].forEach((evt) => {
-      window.addEventListener(evt, warmupAudio, { once: true, passive: true });
-    });
-
-    return () => {
-      ['click', 'touchstart', 'touchend', 'pointerdown', 'keydown'].forEach((evt) => {
-        window.removeEventListener(evt, warmupAudio);
-      });
-    };
-  }, []);
-
-  // When unlocked, start background music on first user interaction ONCE (never override manual pause)
-  const hasAutoStartedMusicRef = useRef(false);
-  useEffect(() => {
-    if (!isUnlocked || site.musicEnabled === false || hasAutoStartedMusicRef.current) return;
-
-    if (romanticAudio.getIsPlaying()) {
-      hasAutoStartedMusicRef.current = true;
-      setIsPlayingMusic(true);
-      return;
-    }
-
-    const startOnInteraction = () => {
-      hasAutoStartedMusicRef.current = true;
-      if (!romanticAudio.getIsPlaying() && !romanticAudio.isUserPaused() && site.musicEnabled !== false) {
-        romanticAudio.play(site.musicUrl);
-      }
-      window.removeEventListener('pointerdown', startOnInteraction);
-      window.removeEventListener('keydown', startOnInteraction);
-    };
-
-    window.addEventListener('pointerdown', startOnInteraction, { once: true, passive: true });
-    window.addEventListener('keydown', startOnInteraction, { once: true, passive: true });
-
-    return () => {
-      window.removeEventListener('pointerdown', startOnInteraction);
-      window.removeEventListener('keydown', startOnInteraction);
-    };
-  }, [isUnlocked, site.musicEnabled, site.musicUrl]);
 
   // Sync data-theme on <html> element and persist in localStorage + update theme-color meta tag
   useEffect(() => {
@@ -529,29 +408,19 @@ export default function App() {
       }
     }
 
-    romanticAudio.play(site.musicUrl);
-
     void incrementStat('unlocks');
     void trackSectionVisit('home');
     void logNativeActivity(`🔓 <b>${site.name}</b> logged in & entered ${site.name}'s World!`, true);
   };
 
-  const handleToggleMusic = () => {
-    const targetUrl =
-      activeTab === 'secret-letter' && isSecretLetterOpenInView && site.secretLetterMusicUrl
-        ? site.secretLetterMusicUrl
-        : site.musicUrl;
-    const nowPlaying = romanticAudio.toggle(targetUrl);
-    setIsPlayingMusic(nowPlaying);
-    triggerHaptic(25);
+  const handleSelectThemeSmooth = (nextTheme: AppThemeId, origin?: ThemeOriginSource) => {
+    transitionThemeChange(nextTheme, (resolved) => setAppTheme(resolved), origin);
   };
 
-  const handleToggleDarkMode = () => {
-    setAppTheme((prev) => {
-      const next: AppThemeId = prev === 'default' ? 'glass' : prev === 'glass' ? 'light' : 'default';
-      applyThemeToDocument(next);
-      return next;
-    });
+  const handleToggleDarkMode = (origin?: ThemeOriginSource) => {
+    const next: AppThemeId =
+      appTheme === 'default' ? 'glass' : appTheme === 'glass' ? 'light' : 'default';
+    transitionThemeChange(next, (resolved) => setAppTheme(resolved), origin);
   };
 
   const handleLockAgain = async () => {
@@ -560,14 +429,12 @@ export default function App() {
     } catch {}
     setIsUnlocked(false);
     setApprovalStatus('unauthenticated');
-    setIsSecretLetterOpenInView(false);
     try {
       if (typeof window !== 'undefined') {
         window.localStorage.removeItem('kashish_unlocked_persist');
         window.sessionStorage.removeItem('kashishUnlocked');
       }
     } catch {}
-    romanticAudio.stop();
   };
 
   const resetScrollToTopInstant = () => {
@@ -613,19 +480,6 @@ export default function App() {
     incrementStat(`visit_${tab}`);
     trackSectionVisit(tab);
     logNativeActivity(`🚶 ${site.name} moved to <b>${tab}</b> section`);
-
-    // When navigating away from secret letter, resume main background music (Saiyaara)
-    if (tab !== 'secret-letter') {
-      setIsSecretLetterOpenInView(false);
-      if (isPlayingMusic || romanticAudio.getIsPlaying()) {
-        romanticAudio.playTrack(site.musicUrl);
-      }
-    } else {
-      // If entering secret-letter and it's not yet unlocked with password, keep playing Saiyaara
-      if (!isSecretLetterOpenInView && (isPlayingMusic || romanticAudio.getIsPlaying())) {
-        romanticAudio.playTrack(site.musicUrl);
-      }
-    }
 
     setProgress((prev) => {
       const currentSections = prev.sectionsOpened || [];
@@ -743,7 +597,6 @@ export default function App() {
 
   // Secret Letter Unlock (triggered strictly upon entering correct password)
   const handleUnlockSecretLetter = () => {
-    setIsSecretLetterOpenInView(true);
     triggerHaptic(40);
     showNativeToast("Letter Unlocked! 💌");
     logNativeActivity("💌 Kashish opened Secret Letter: A Letter For You");
@@ -779,7 +632,7 @@ export default function App() {
           role="status"
           aria-label="Loading assets"
           style={{
-            backgroundColor: isDarkMode ? '#12071a' : '#fff5f8',
+            backgroundColor: 'var(--bg)',
             transition: 'opacity 0.4s cubic-bezier(0.65, 0, 0.35, 1)',
             transform: 'translateZ(0)',
           }}
@@ -1110,8 +963,6 @@ export default function App() {
             onToggleDarkMode={handleToggleDarkMode}
             currentTheme={appTheme}
             onOpenThemeModal={() => setIsThemeModalOpen(true)}
-            isPlayingMusic={isPlayingMusic}
-            onToggleMusic={handleToggleMusic}
             onReopenEnvelope={handleLockAgain}
             onShowAdmin={() => setIsAdminOpen(true)}
           />
@@ -1189,18 +1040,10 @@ export default function App() {
               <NameGameSection name={site.name} isDarkMode={isDarkMode} />
             )}
 
-            {activeTab === 'last-page' && (
-              <LastPageSection
-                name={site.name}
-                personalMessage={site.personalMessage}
-                isDarkMode={isDarkMode}
-              />
-            )}
-
             {activeTab === 'theme' && (
               <ThemeSection
                 currentTheme={appTheme}
-                onSelectTheme={(theme) => setAppTheme(theme)}
+                onSelectTheme={handleSelectThemeSmooth}
                 recipientName={site.name}
               />
             )}
@@ -1256,6 +1099,13 @@ export default function App() {
             </div>
           </main>
 
+          {/* Persistent In-App YouTube Music Player 4 You Darling */}
+          <DarlingMusicPlayer
+            activeTab={activeTab}
+            recipientName={site.name}
+            userId={authUser?.uid || 'guest'}
+          />
+
           {/* Real-Time Notifications & Truecaller-Style Overlay Popups */}
           <LiveOverlaysAndNotifications
             onNavigate={handleTabSelect}
@@ -1269,7 +1119,7 @@ export default function App() {
         isOpen={isThemeModalOpen}
         onClose={() => setIsThemeModalOpen(false)}
         currentTheme={appTheme}
-        onSelectTheme={(theme) => setAppTheme(theme)}
+        onSelectTheme={handleSelectThemeSmooth}
         recipientName={site.name}
       />
 

@@ -9,6 +9,10 @@
   --font-sunshine: 'My Sunshine', cursive, sans-serif;
   --font-lucy: 'Lucy Said Ok', 'Lucy Said Ok Personal Use', cursive, serif;
 
+  /* SMOOTH THEME TRANSITION TOKENS (Telegram-grade 280ms natural easing) */
+  --theme-duration: 280ms;
+  --theme-ease: cubic-bezier(0.22, 1, 0.36, 1);
+
   /* DEFAULT THEME: DARK MODE (Nostalgic Night Diary) */
   --bg: #140c1e;
   --bg-gradient: none;
@@ -44,6 +48,7 @@
 
 [data-theme="default"],
 [data-theme="dark"] {
+  color-scheme: dark;
   --bg: #140c1e;
   --bg-gradient: none;
   --card: rgba(30, 16, 46, 0.94);
@@ -64,6 +69,7 @@
 }
 
 [data-theme="light"] {
+  color-scheme: light;
   --bg: #fff5f8;
   --bg-gradient: none;
   --card: rgba(255, 255, 255, 0.95);
@@ -85,7 +91,8 @@
 
 /* GLASSMORPHISM THEME: Deep Dark Midnight Aurora + Enhanced Frosted Crystal Blur */
 [data-theme="glass"] {
-  --bg: transparent;
+  color-scheme: dark;
+  --bg: #070312;
   --bg-gradient: linear-gradient(135deg, #070312 0%, #0b112c 42%, #1d0728 76%, #080314 100%);
   --card: rgba(20, 11, 40, 0.52);
   --card-solid: rgba(22, 12, 44, 0.62);
@@ -123,7 +130,9 @@ html {
   -webkit-touch-callout: none;
   user-select: none;
   -webkit-user-select: none;
-  transition: background-color 0.3s ease, color 0.3s ease;
+  transition:
+    background-color var(--theme-duration) var(--theme-ease),
+    color var(--theme-duration) var(--theme-ease);
   height: auto;
 }
 
@@ -145,6 +154,86 @@ body {
   -webkit-touch-callout: none;
   user-select: none;
   -webkit-user-select: none;
+  transition:
+    background-color var(--theme-duration) var(--theme-ease),
+    color var(--theme-duration) var(--theme-ease);
+}
+
+/* ==========================================================================
+   🎨 TELEGRAM-GRADE SMOOTH THEME SWITCHING & VIEW TRANSITION ENGINE
+   ========================================================================== */
+
+/* View Transition API circular reveal configuration */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+::view-transition-old(root) {
+  z-index: 1;
+}
+
+::view-transition-new(root) {
+  z-index: 9999;
+}
+
+/* Suppress element CSS transitions while View Transition captures the new state snapshot */
+html[data-theme-vt="active"],
+html[data-theme-vt="active"] *,
+html[data-theme-vt="active"] *::before,
+html[data-theme-vt="active"] *::after {
+  transition: none !important;
+}
+
+/* Consistent, layout-safe color transitions across all theme-dependent UI elements */
+header,
+main,
+section,
+footer,
+nav,
+aside,
+.theme-card,
+.theme-card-solid,
+.theme-subtle,
+.glass-surface,
+.glass-card,
+[style*="var(--bg)"],
+[style*="var(--card)"],
+[style*="var(--card-solid)"],
+[style*="var(--card-subtle)"],
+[style*="var(--card-border)"],
+[style*="var(--nav-bg)"],
+[style*="var(--text)"],
+[style*="var(--text-soft)"],
+[style*="var(--accent)"],
+button,
+input:not([type="range"]),
+select,
+textarea {
+  transition-property: background-color, border-color, color, box-shadow, fill, stroke, opacity, transform;
+  transition-duration: var(--theme-duration);
+  transition-timing-function: var(--theme-ease);
+}
+
+/* When fallback crossfade theme transition is active, smoothly interpolate all text & dividers */
+html[data-theme-transition="smooth"] h1,
+html[data-theme-transition="smooth"] h2,
+html[data-theme-transition="smooth"] h3,
+html[data-theme-transition="smooth"] h4,
+html[data-theme-transition="smooth"] p,
+html[data-theme-transition="smooth"] span,
+html[data-theme-transition="smooth"] label,
+html[data-theme-transition="smooth"] div,
+html[data-theme-transition="smooth"] svg {
+  transition:
+    background-color var(--theme-duration) var(--theme-ease),
+    border-color var(--theme-duration) var(--theme-ease),
+    color var(--theme-duration) var(--theme-ease),
+    box-shadow var(--theme-duration) var(--theme-ease),
+    fill var(--theme-duration) var(--theme-ease),
+    stroke var(--theme-duration) var(--theme-ease),
+    text-shadow var(--theme-duration) var(--theme-ease);
 }
 
 /* Allow text selection inside editable inputs, textareas, and code containers */
@@ -758,18 +847,11 @@ li {
 /* 1. Deep Dark Midnight Background with High-Contrast Glowing Aurora Orbs */
 html[data-theme="glass"] {
   background-color: #070312;
-  background-image:
-    radial-gradient(circle at 18% 16%, rgba(244, 63, 94, 0.42) 0%, transparent 38%),
-    radial-gradient(circle at 84% 28%, rgba(59, 130, 246, 0.38) 0%, transparent 40%),
-    radial-gradient(circle at 24% 62%, rgba(168, 85, 247, 0.42) 0%, transparent 42%),
-    radial-gradient(circle at 78% 78%, rgba(236, 72, 153, 0.38) 0%, transparent 42%),
-    linear-gradient(135deg, #070312 0%, #090f26 42%, #190624 76%, #060210 100%);
-  background-attachment: fixed;
   color: var(--text);
 }
 
 html[data-theme="glass"] body {
-  background: transparent !important;
+  background-color: transparent !important;
   color: var(--text);
   position: relative;
 }
@@ -783,20 +865,21 @@ html[data-theme="glass"] .animate-fade-in {
   filter: none !important;
 }
 
-/* Vibrant glowing ambient orbs behind the cards so the 28px glass blur strongly refracts light */
-html[data-theme="glass"] body::before,
-html[data-theme="glass"] body::after {
+/* Persistent ambient aurora layers on body::before & body::after so switching to/from Glassmorphism crossfades smoothly */
+body::before,
+body::after {
   content: "";
   position: fixed;
   pointer-events: none;
   z-index: 0;
   border-radius: 9999px;
   filter: blur(48px);
-  opacity: 0.72;
+  opacity: 0;
   transform: translateZ(0);
+  transition: opacity var(--theme-duration) var(--theme-ease);
 }
 
-html[data-theme="glass"] body::before {
+body::before {
   width: 340px;
   height: 340px;
   top: 10%;
@@ -810,7 +893,7 @@ html[data-theme="glass"] body::before {
   );
 }
 
-html[data-theme="glass"] body::after {
+body::after {
   width: 360px;
   height: 360px;
   bottom: 12%;
@@ -822,6 +905,11 @@ html[data-theme="glass"] body::after {
     rgba(217, 70, 239, 0.5) 55%,
     transparent 100%
   );
+}
+
+html[data-theme="glass"] body::before,
+html[data-theme="glass"] body::after {
+  opacity: 0.72;
 }
 
 /* 2. Deep Smoked Frosted Glass Surfaces: Cards, Navbar, Modals, Popups */
@@ -846,10 +934,11 @@ html[data-theme="glass"] [style*="var(--nav-bg)"] {
     inset 0 1px 1.5px 0 rgba(255, 255, 255, 0.32),
     inset 0 -1px 1px 0 rgba(255, 255, 255, 0.06) !important;
   transition:
-    background-color 0.3s ease,
-    border-color 0.3s ease,
-    box-shadow 0.3s ease,
-    transform 0.3s ease;
+    background-color var(--theme-duration) var(--theme-ease),
+    border-color var(--theme-duration) var(--theme-ease),
+    color var(--theme-duration) var(--theme-ease),
+    box-shadow var(--theme-duration) var(--theme-ease),
+    transform var(--theme-duration) var(--theme-ease);
 }
 
 /* Sticky Top Navbar extra deep frosted glass */
@@ -874,7 +963,11 @@ html[data-theme="glass"] [style*="var(--card-subtle)"] {
   box-shadow:
     0 4px 16px rgba(0, 0, 0, 0.32),
     inset 0 1px 1px rgba(255, 255, 255, 0.24);
-  transition: all 0.3s ease;
+  transition:
+    background-color var(--theme-duration) var(--theme-ease),
+    border-color var(--theme-duration) var(--theme-ease),
+    color var(--theme-duration) var(--theme-ease),
+    box-shadow var(--theme-duration) var(--theme-ease);
 }
 
 /* 3. Inputs, Textareas, Dropdowns (Select), and Form Controls in Dark Frosted Glass */
@@ -895,7 +988,11 @@ html[data-theme="glass"] select {
   box-shadow:
     0 6px 20px rgba(0, 0, 0, 0.38),
     inset 0 1px 1px rgba(255, 255, 255, 0.22);
-  transition: all 0.3s ease;
+  transition:
+    background-color var(--theme-duration) var(--theme-ease),
+    border-color var(--theme-duration) var(--theme-ease),
+    color var(--theme-duration) var(--theme-ease),
+    box-shadow var(--theme-duration) var(--theme-ease);
 }
 
 html[data-theme="glass"] input::placeholder,
@@ -919,14 +1016,14 @@ html[data-theme="glass"] select option {
   color: #ffffff;
 }
 
-/* 4. Buttons Hover / Active Glow & Smooth 0.3s Transition */
+/* 4. Buttons Hover / Active Glow & Smooth Transition */
 html[data-theme="glass"] button {
   transition:
-    background-color 0.3s ease,
-    border-color 0.3s ease,
-    box-shadow 0.3s ease,
-    transform 0.3s ease,
-    color 0.3s ease;
+    background-color var(--theme-duration) var(--theme-ease),
+    border-color var(--theme-duration) var(--theme-ease),
+    box-shadow var(--theme-duration) var(--theme-ease),
+    transform var(--theme-duration) var(--theme-ease),
+    color var(--theme-duration) var(--theme-ease);
 }
 
 html[data-theme="glass"] button:hover:not(:disabled),

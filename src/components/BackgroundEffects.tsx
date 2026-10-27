@@ -19,6 +19,11 @@ interface Particle {
 
 export const BackgroundEffects: React.FC<BackgroundEffectsProps> = ({ isDarkMode }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const isDarkModeRef = useRef<boolean>(isDarkMode);
+
+  useEffect(() => {
+    isDarkModeRef.current = isDarkMode;
+  }, [isDarkMode]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -132,6 +137,10 @@ export const BackgroundEffects: React.FC<BackgroundEffectsProps> = ({ isDarkMode
       c.restore();
     };
 
+    // Smoothly interpolate between light (0) and dark (1) palette without resetting particles
+    let themeMix = isDarkModeRef.current ? 1 : 0;
+    const lerpChannel = (a: number, b: number, t: number) => Math.round(a + (b - a) * t);
+
     let lastTime = performance.now();
 
     const render = (currentTime: number) => {
@@ -145,11 +154,22 @@ export const BackgroundEffects: React.FC<BackgroundEffectsProps> = ({ isDarkMode
       lastTime = currentTime;
       const dt = Math.min(elapsed / 16.67, 2.5);
 
+      const targetMix = isDarkModeRef.current ? 1 : 0;
+      if (Math.abs(targetMix - themeMix) > 0.002) {
+        themeMix += (targetMix - themeMix) * Math.min(1, 0.14 * dt);
+      } else {
+        themeMix = targetMix;
+      }
+
       ctx.clearRect(0, 0, width, height);
 
-      const heartColor = isDarkMode ? '#f472b6' : '#fb7185';
-      const petalColor = isDarkMode ? '#e879f9' : '#fbcfe8';
-      const sparkleColor = isDarkMode ? '#fef08a' : '#fde047';
+      // Light -> Dark RGB interpolation:
+      // Heart: #fb7185 (251,113,133) -> #f472b6 (244,114,182)
+      // Petal: #fbcfe8 (251,207,232) -> #e879f9 (232,121,249)
+      // Sparkle: #fde047 (253,224,71) -> #fef08a (254,240,138)
+      const heartColor = `rgb(${lerpChannel(251, 244, themeMix)}, ${lerpChannel(113, 114, themeMix)}, ${lerpChannel(133, 182, themeMix)})`;
+      const petalColor = `rgb(${lerpChannel(251, 232, themeMix)}, ${lerpChannel(207, 121, themeMix)}, ${lerpChannel(232, 249, themeMix)})`;
+      const sparkleColor = `rgb(${lerpChannel(253, 254, themeMix)}, ${lerpChannel(224, 240, themeMix)}, ${lerpChannel(71, 138, themeMix)})`;
 
       for (let i = 0; i < particles.length; i++) {
         const p = particles[i];
@@ -188,13 +208,13 @@ export const BackgroundEffects: React.FC<BackgroundEffectsProps> = ({ isDarkMode
       window.removeEventListener('resize', handleResize);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [isDarkMode]);
+  }, []);
 
   return (
     <canvas
       ref={canvasRef}
       aria-hidden="true"
-      className="fixed inset-0 pointer-events-none z-0 transition-opacity duration-700"
+      className="fixed inset-0 pointer-events-none z-0 transition-opacity duration-300"
       style={{
         opacity: isDarkMode ? 0.45 : 0.65,
         transform: 'translateZ(0)',

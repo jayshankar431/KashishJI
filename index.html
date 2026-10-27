@@ -10,9 +10,9 @@
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
 
-    <!-- Color scheme & theme color: Default dark theme #1a0d1f -->
+    <!-- Color scheme & theme color: Default dark theme #140c1e -->
     <meta name="color-scheme" content="dark light" />
-    <meta name="theme-color" content="#1a0d1f" />
+    <meta name="theme-color" content="#140c1e" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -27,21 +27,49 @@
     <link rel="icon" type="image/png" sizes="64x64" href="/favicon.png" />
     <link rel="shortcut icon" href="/favicon.png" />
 
+    <!-- Critical initial theme CSS to prevent any wrong-theme flash before stylesheet loads -->
+    <style>
+      html[data-theme="default"], html[data-theme="dark"] { background-color: #140c1e; color: #fdf2f4; color-scheme: dark; }
+      html[data-theme="glass"] { background-color: #070312; color: #ffffff; color-scheme: dark; }
+      html[data-theme="light"] { background-color: #fff5f8; color: #3a1226; color-scheme: light; }
+      html:not(.theme-ready), html:not(.theme-ready) *, html:not(.theme-ready) *::before, html:not(.theme-ready) *::after {
+        transition: none !important;
+      }
+    </style>
+
     <!-- Anti-flash inline script & Early PWA install prompt capture -->
     <script>
       (function () {
+        var root = document.documentElement;
+        var theme = 'default';
         try {
           var saved = localStorage.getItem('kashishTheme');
           if (saved === 'glass') {
-            document.documentElement.setAttribute('data-theme', 'glass');
+            theme = 'glass';
           } else if (saved === 'light') {
-            document.documentElement.setAttribute('data-theme', 'light');
+            theme = 'light';
           } else {
-            document.documentElement.setAttribute('data-theme', 'default');
+            theme = 'default';
           }
         } catch (e) {
-          document.documentElement.setAttribute('data-theme', 'default');
+          theme = 'default';
         }
+        root.setAttribute('data-theme', theme);
+        root.style.colorScheme = theme === 'light' ? 'light' : 'dark';
+        var metaTheme = document.querySelector('meta[name="theme-color"]');
+        if (metaTheme) {
+          metaTheme.setAttribute(
+            'content',
+            theme === 'light' ? '#fff5f8' : theme === 'glass' ? '#070312' : '#140c1e'
+          );
+        }
+        window.addEventListener('DOMContentLoaded', function () {
+          requestAnimationFrame(function () {
+            requestAnimationFrame(function () {
+              root.classList.add('theme-ready');
+            });
+          });
+        });
 
         window.deferredPwaPrompt = null;
         window.addEventListener('beforeinstallprompt', function (e) {
@@ -51,11 +79,20 @@
       })();
     </script>
     
-    <!-- Preconnect & DNS-Prefetch for high-speed font and image streaming -->
+    <!-- Preconnect & DNS-Prefetch for high-speed font, image, and YouTube Music streaming -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preconnect" href="https://res.cloudinary.com" crossorigin>
     <link rel="dns-prefetch" href="https://res.cloudinary.com">
+    <link rel="preconnect" href="https://www.youtube.com" crossorigin>
+    <link rel="preconnect" href="https://i.ytimg.com" crossorigin>
+    <link rel="preconnect" href="https://s.ytimg.com" crossorigin>
+    <link rel="preconnect" href="https://pipedapi.ducks.party" crossorigin>
+    <link rel="preconnect" href="https://api.piped.private.coffee" crossorigin>
+    <link rel="dns-prefetch" href="https://www.youtube.com">
+    <link rel="dns-prefetch" href="https://i.ytimg.com">
+    <link rel="dns-prefetch" href="https://s.ytimg.com">
+    <script id="youtube-iframe-api-script" src="https://www.youtube.com/iframe_api" async></script>
 
     <!-- Preload key visual assets for 60fps instant rendering -->
     <link rel="preload" as="image" href="https://res.cloudinary.com/dsfcu9y1h/image/upload/v1790940725/Golden_Gaze_in_a_Neon_Circle_hztvx3.png" fetchpriority="high" />

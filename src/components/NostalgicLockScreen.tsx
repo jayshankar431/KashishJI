@@ -39,7 +39,7 @@ interface NostalgicLockScreenProps {
   placeholder?: string;
   onUnlock: () => void;
   isDarkMode: boolean;
-  onToggleDarkMode: () => void;
+  onToggleDarkMode: (origin?: React.MouseEvent<HTMLElement>) => void;
   approvalStatus?: 'loading' | 'approved' | 'pending' | 'rejected' | 'unauthenticated';
   currentUserEmail?: string | null;
   currentUserName?: string | null;
@@ -378,7 +378,7 @@ export const NostalgicLockScreen: React.FC<NostalgicLockScreenProps> = ({
         paddingTop: 'max(1rem, env(safe-area-inset-top, 0px))',
         paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 0px))',
       }}
-      className={`fixed inset-0 z-50 overflow-y-auto min-h-[100vh] min-h-[100dvh] flex flex-col justify-between items-center px-3 sm:px-4 py-4 sm:py-6 transition-all duration-700 select-none ${
+      className={`fixed inset-0 z-50 overflow-y-auto min-h-[100vh] min-h-[100dvh] flex flex-col justify-between items-center px-3 sm:px-4 py-4 sm:py-6 transition-colors duration-300 select-none ${
         isDiaryFlipping ? 'opacity-0 scale-95 transition-all duration-700' : ''
       }`}
     >
@@ -390,7 +390,7 @@ export const NostalgicLockScreen: React.FC<NostalgicLockScreenProps> = ({
               ? 'radial-gradient(ellipse at center, transparent 40%, rgba(10, 4, 18, 0.7) 100%)'
               : 'radial-gradient(ellipse at center, transparent 45%, rgba(107, 58, 82, 0.15) 100%)',
           }}
-          className="absolute inset-0"
+          className="absolute inset-0 transition-opacity duration-300"
         />
 
         {/* Fairy Lights String across the top */}
@@ -421,15 +421,16 @@ export const NostalgicLockScreen: React.FC<NostalgicLockScreenProps> = ({
         </div>
 
         <button
-          onClick={onToggleDarkMode}
-          title={isDarkMode ? 'Switch to Light Theme' : 'Switch to Dark Theme'}
-          aria-label={isDarkMode ? 'Switch to Light Theme' : 'Switch to Dark Theme'}
+          id="kashish-theme-toggle-btn"
+          onClick={(e) => onToggleDarkMode(e)}
+          title={isDarkMode ? 'Switch Theme' : 'Switch Theme'}
+          aria-label={isDarkMode ? 'Switch Theme' : 'Switch Theme'}
           style={{
             backgroundColor: 'var(--card-subtle)',
             color: 'var(--text)',
             borderColor: 'var(--card-border)',
           }}
-          className="min-h-[44px] min-w-[44px] p-2.5 rounded-full border flex items-center justify-center cursor-pointer shadow-xs active:scale-95"
+          className="min-h-[44px] min-w-[44px] p-2.5 rounded-full border transition-colors duration-300 flex items-center justify-center cursor-pointer shadow-xs active:scale-95"
         >
           {isDarkMode ? <Sun className="w-5 h-5 text-amber-300" /> : <Moon className="w-5 h-5 text-[var(--accent)]" />}
         </button>
@@ -485,8 +486,8 @@ export const NostalgicLockScreen: React.FC<NostalgicLockScreenProps> = ({
               borderColor: 'var(--card-border)',
               boxShadow: '0 15px 35px var(--shadow-color)',
             }}
-            className={`p-3 pb-4 rounded-2xl border-2 transition-all duration-700 transform rotate-1 ${
-              isSuccess ? 'rotate-y-180 scale-105' : 'hover:rotate-0'
+            className={`p-3 pb-4 rounded-2xl border-2 transition-colors duration-300 transform rotate-1 ${
+              isSuccess ? 'rotate-y-180 scale-105 transition-transform duration-700' : 'hover:rotate-0'
             }`}
           >
             <div

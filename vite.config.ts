@@ -3,10 +3,22 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig} from 'vite';
 import {VitePWA} from 'vite-plugin-pwa';
+import {createYTMusicSearchMiddleware} from './src/services/ytmusicServer';
 
 export default defineConfig(() => {
+  const ytMusicMiddleware = createYTMusicSearchMiddleware();
+
   return {
     plugins: [
+      {
+        name: 'kashish-ytmusic-catalog-api',
+        configureServer(server) {
+          server.middlewares.use(ytMusicMiddleware);
+        },
+        configurePreviewServer(server) {
+          server.middlewares.use(ytMusicMiddleware);
+        },
+      },
       react(),
       tailwindcss(),
       VitePWA({
@@ -72,6 +84,34 @@ export default defineConfig(() => {
                 cacheName: 'cloudinary-media-cache',
                 expiration: {
                   maxEntries: 60,
+                  maxAgeSeconds: 30 * 24 * 60 * 60,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              urlPattern: /^https:\/\/(?:www\.youtube\.com\/(?:iframe_api|s\/player\/.*)|s\.ytimg\.com\/.*)/i,
+              handler: 'StaleWhileRevalidate',
+              options: {
+                cacheName: 'youtube-player-script-cache',
+                expiration: {
+                  maxEntries: 15,
+                  maxAgeSeconds: 7 * 24 * 60 * 60,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              urlPattern: /^https:\/\/(?:(?:i|i9)\.ytimg\.com|(?:yt3|lh3)\.googleusercontent\.com)\/.*/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'youtube-thumbnails-cache',
+                expiration: {
+                  maxEntries: 150,
                   maxAgeSeconds: 30 * 24 * 60 * 60,
                 },
                 cacheableResponse: {

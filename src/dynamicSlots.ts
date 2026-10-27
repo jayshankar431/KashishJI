@@ -13,7 +13,6 @@ export type DynamicSlotId =
   | 'poetry_bottom'
   | 'secret_letter_bottom'
   | 'name_game_bottom'
-  | 'last_page_bottom'
   | `custom_tab_${string}`;
 
 export type BlockType =
@@ -89,5 +88,4 @@ export const SLOT_DEFINITIONS: { id: DynamicSlotId; label: string; location: str
   { id: 'poetry_bottom', label: 'Poetry Bottom Slot', location: 'Under poem parchment' },
   { id: 'secret_letter_bottom', label: 'Secret Letter Bottom', location: 'Inside secret letter' },
   { id: 'name_game_bottom', label: 'Name Game Bottom', location: 'Under name anagram cards' },
-  { id: 'last_page_bottom', label: 'Last Page Bottom', location: 'Under the final note' },
 ];

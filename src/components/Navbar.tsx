@@ -1,17 +1,12 @@
 import React from 'react';
 import { CONFIG } from '../config';
-import { PWAInstallButton } from './PWAInstallButton';
 import { isNativeApp, triggerHaptic } from '../androidBridge';
 import {
   Home,
-  Lock,
-  Volume2,
-  VolumeX,
   Sun,
   Moon,
   ArrowLeft,
   ShieldCheck,
-  Palette,
 } from 'lucide-react';
 import { auth } from '../firebase';
 import type { AppThemeId } from './ThemeSection';
@@ -26,7 +21,6 @@ export type NavTab =
   | 'poetry'
   | 'secret-letter'
   | 'name-game'
-  | 'last-page'
   | 'theme'
   | `custom_tab_${string}`;
 
@@ -35,12 +29,10 @@ interface NavbarProps {
   activeTab: NavTab;
   onSelectTab: (tab: NavTab) => void;
   isDarkMode: boolean;
-  onToggleDarkMode: () => void;
+  onToggleDarkMode: (origin?: React.MouseEvent<HTMLElement>) => void;
   currentTheme?: AppThemeId;
   onOpenThemeModal?: () => void;
-  isPlayingMusic: boolean;
-  onToggleMusic: () => void;
-  onReopenEnvelope: () => void;
+  onReopenEnvelope?: () => void;
   onShowAdmin: () => void;
 }
 
@@ -52,8 +44,6 @@ export const Navbar: React.FC<NavbarProps> = ({
   onToggleDarkMode,
   currentTheme = 'default',
   onOpenThemeModal,
-  isPlayingMusic,
-  onToggleMusic,
   onReopenEnvelope,
   onShowAdmin,
 }) => {
@@ -137,71 +127,14 @@ export const Navbar: React.FC<NavbarProps> = ({
           </button>
         </div>
 
-        {/* Right Action Icons: Download/Settings, Music, Theme Selector, Dark/Light, Lock */}
+        {/* Right Action Icons: Dark/Light, Admin */}
         <div className="flex items-center gap-1 sm:gap-1.5 shrink-0 flex-nowrap">
-          {/* Download App / Install App Popup Button (automatically hidden if inside native Android APK) */}
-          <PWAInstallButton variant="header" />
-
-
-          {/* Music Play/Pause */}
-          <button
-            onClick={() => {
-              triggerHaptic(30);
-              onToggleMusic();
-            }}
-            title={isPlayingMusic ? 'Mute Music' : 'Play Romantic Music'}
-            aria-label="Toggle romantic music"
-            style={{
-              backgroundColor: isPlayingMusic ? 'var(--accent)' : 'var(--card-subtle)',
-              color: isPlayingMusic ? 'var(--accent-text)' : 'var(--text)',
-              borderColor: 'var(--card-border)',
-            }}
-            className="w-8 h-8 sm:w-9 sm:h-9 rounded-full border transition-all flex items-center justify-center relative cursor-pointer shadow-xs active:scale-95 shrink-0"
-          >
-            {isPlayingMusic ? (
-              <>
-                <Volume2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-emerald-500 rounded-full animate-ping" />
-              </>
-            ) : (
-              <VolumeX className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-            )}
-          </button>
-
-          {/* Theme Section Button (Default / Glassmorphism / Light Selector) */}
-          <button
-            onClick={() => {
-              triggerHaptic(30);
-              if (onOpenThemeModal) {
-                onOpenThemeModal();
-              } else {
-                onSelectTab('theme');
-              }
-            }}
-            title="Choose Theme (Default / Glassmorphism)"
-            aria-label="Choose Theme"
-            style={{
-              backgroundColor:
-                activeTab === 'theme' || currentTheme === 'glass'
-                  ? 'var(--accent)'
-                  : 'var(--card-subtle)',
-              color:
-                activeTab === 'theme' || currentTheme === 'glass'
-                  ? 'var(--accent-text)'
-                  : 'var(--text)',
-              borderColor: 'var(--card-border)',
-            }}
-            className="w-8 h-8 sm:w-auto sm:h-9 sm:px-2.5 rounded-full border text-[11px] sm:text-xs font-semibold transition-all flex items-center justify-center gap-1 cursor-pointer shadow-xs active:scale-95 shrink-0"
-          >
-            <Palette className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
-            <span className="hidden md:inline">Theme</span>
-          </button>
-
           {/* Sun/Moon Dark/Light Mode Toggle Button */}
           <button
-            onClick={() => {
+            id="kashish-theme-toggle-btn"
+            onClick={(e) => {
               triggerHaptic(30);
-              onToggleDarkMode();
+              onToggleDarkMode(e);
             }}
             title={isDarkMode ? 'Switch Theme' : 'Switch Theme'}
             aria-label="Quick switch theme"
@@ -210,32 +143,13 @@ export const Navbar: React.FC<NavbarProps> = ({
               color: 'var(--text)',
               borderColor: 'var(--card-border)',
             }}
-            className="w-8 h-8 sm:w-9 sm:h-9 rounded-full border transition-all flex items-center justify-center cursor-pointer shadow-xs active:scale-95 shrink-0"
+            className="w-8 h-8 sm:w-9 sm:h-9 rounded-full border transition-colors duration-300 flex items-center justify-center cursor-pointer shadow-xs active:scale-95 shrink-0"
           >
             {isDarkMode ? (
-              <Sun className="w-4 h-4 sm:w-5 sm:h-5 text-amber-300" />
+              <Sun className="w-4 h-4 sm:w-5 sm:h-5 text-amber-300 transition-transform duration-300" />
             ) : (
-              <Moon className="w-4 h-4 sm:w-5 sm:h-5 text-[var(--accent)]" />
+              <Moon className="w-4 h-4 sm:w-5 sm:h-5 text-[var(--accent)] transition-transform duration-300" />
             )}
-          </button>
-
-          {/* Lock Diary */}
-          <button
-            onClick={() => {
-              triggerHaptic(40);
-              onReopenEnvelope();
-            }}
-            title="Lock Diary"
-            aria-label="Lock Diary"
-            style={{
-              backgroundColor: 'var(--card-subtle)',
-              color: 'var(--text)',
-              borderColor: 'var(--card-border)',
-            }}
-            className="w-8 h-8 sm:w-auto sm:h-9 sm:px-2.5 rounded-full border text-[11px] sm:text-xs font-semibold flex items-center justify-center gap-1 cursor-pointer shadow-xs active:scale-95 shrink-0"
-          >
-            <Lock className="w-3.5 h-3.5 text-[var(--accent)] shrink-0" />
-            <span className="hidden md:inline">Lock</span>
           </button>
 
           {/* Admin Panel Access - Restricted to specific email */}

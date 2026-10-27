@@ -118,17 +118,21 @@ const MusicBlock: React.FC<{
   scheme: { bg: string; text: string; accent: string };
 }> = ({ item, scheme }) => {
   const [playing, setPlaying] = useState(false);
+  const audioElRef = React.useRef<HTMLAudioElement | null>(null);
   const audioUrl = item.mediaUrl || item.actionPayload || '';
 
   const togglePlay = () => {
     triggerHaptic(35);
-    if (!audioUrl) return;
-    if (playing && romanticAudio.getCurrentUrl() === audioUrl && romanticAudio.getIsPlaying()) {
-      romanticAudio.stop();
+    const el = audioElRef.current;
+    if (!audioUrl || !el) return;
+    if (!el.paused) {
+      el.pause();
       setPlaying(false);
     } else {
-      romanticAudio.play(audioUrl);
-      setPlaying(true);
+      window.dispatchEvent(new CustomEvent('kashish-pause-darling-player'));
+      el.play()
+        .then(() => setPlaying(true))
+        .catch(() => setPlaying(false));
     }
   };
 
@@ -153,7 +157,16 @@ const MusicBlock: React.FC<{
         </div>
       </div>
       {audioUrl && (
-        <audio controls src={audioUrl} className="w-full h-9 rounded-lg" preload="metadata" />
+        <audio
+          ref={audioElRef}
+          controls
+          src={audioUrl}
+          onPlay={() => setPlaying(true)}
+          onPause={() => setPlaying(false)}
+          onEnded={() => setPlaying(false)}
+          className="w-full h-9 rounded-lg"
+          preload="metadata"
+        />
       )}
     </div>
   );

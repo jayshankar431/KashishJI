@@ -235,11 +235,11 @@ export const OpenWhenSection: React.FC<OpenWhenSectionProps> = ({
                 {/* Envelope Body */}
                 <div
                   style={{
-                    backgroundColor: isDarkMode ? '#231235' : '#ffffff',
+                    backgroundColor: 'var(--card-solid)',
                     borderColor: env.moodColor,
                     boxShadow: '0 8px 20px var(--shadow-color)',
                   }}
-                  className="w-full aspect-4/3 rounded-2xl border-2 p-3.5 flex flex-col justify-between relative overflow-hidden transition-all duration-300 group-hover:scale-[1.02]"
+                  className="w-full aspect-4/3 rounded-2xl border-2 p-3.5 flex flex-col justify-between relative overflow-hidden transition-colors duration-300 group-hover:scale-[1.02]"
                 >
                   {/* Subtle envelope flap triangle watermark */}
                   <div
@@ -1025,9 +1025,14 @@ const ScreamCloudsSurprise: React.FC = () => {
             <button
               key={c.id}
               onClick={() => dispelCloud(c.id)}
-              className="px-4 py-2 rounded-full bg-slate-300 dark:bg-slate-700 text-slate-800 dark:text-slate-100 font-bold text-xs border border-slate-400 flex items-center gap-1.5 cursor-pointer animate-float shadow-xs"
+              style={{
+                backgroundColor: 'var(--card-subtle)',
+                borderColor: 'var(--card-border)',
+                color: 'var(--text)',
+              }}
+              className="px-4 py-2 rounded-full font-bold text-xs border flex items-center gap-1.5 cursor-pointer animate-float shadow-xs"
             >
-              <Cloud className="w-4 h-4" />
+              <Cloud className="w-4 h-4 text-[var(--accent)]" />
               <span>{c.text}</span>
             </button>
           ) : null
@@ -1098,11 +1103,16 @@ const CompassSurprise: React.FC = () => {
 
   return (
     <div className="text-center space-y-3 py-2">
-      <span className="text-xs font-bold uppercase tracking-wider text-cyan-600 dark:text-cyan-400">
+      <span className="text-xs font-bold uppercase tracking-wider text-cyan-500">
         The Celestial Compass
       </span>
-      <div className="relative w-28 h-28 mx-auto rounded-full border-4 border-amber-600 bg-amber-50 dark:bg-slate-900 flex items-center justify-center shadow-md">
-        <span className="absolute top-1 text-[9px] font-bold text-amber-800 dark:text-amber-300">
+      <div
+        style={{
+          backgroundColor: 'var(--card-subtle)',
+        }}
+        className="relative w-28 h-28 mx-auto rounded-full border-4 border-amber-500 flex items-center justify-center shadow-md"
+      >
+        <span className="absolute top-1 text-[9px] font-bold text-amber-500">
           NORTH
         </span>
         {/* Needle */}
