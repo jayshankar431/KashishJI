@@ -37,10 +37,8 @@ import {
   useSite,
   useSiteOverrides,
   DEFAULT_NAME_MEANINGS,
-  DEFAULT_POEMS,
   DEFAULT_SAVED_SOUNDS,
   NameLetterMeaning,
-  Poem,
   PopupButtonAction,
   PopupButtonItem,
 } from '../siteContent';
@@ -106,7 +104,6 @@ type AdminSectionId =
   | 'inbox'
   | 'notifications'
   | 'overlays'
-  | 'sections'
   | 'content'
   | 'control'
   | 'settings'
@@ -120,7 +117,6 @@ const SIDEBAR_ITEMS: { id: AdminSectionId; label: string; icon: React.FC<{ class
   { id: 'inbox', label: '4. Inbox (From Her)', icon: Inbox },
   { id: 'notifications', label: '5. Notification Sender', icon: Bell },
   { id: 'overlays', label: '6. Overlay Popup Sender', icon: Layers },
-  { id: 'sections', label: '7. Sections Manager', icon: FolderKanban },
   { id: 'content', label: '8. Content Editor', icon: FileEdit },
   { id: 'control', label: '9. App Control', icon: Sliders },
   { id: 'settings', label: '10. Settings & Rules', icon: Settings },
@@ -173,7 +169,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
   const [inboxItems, setInboxItems] = useState<any[]>([]);
   const [notificationsList, setNotificationsList] = useState<any[]>([]);
   const [overlaysList, setOverlaysList] = useState<any[]>([]);
-  const [sectionsList, setSectionsList] = useState<any[]>([]);
   const [usersList, setUsersList] = useState<any[]>([]);
   const [contactsList, setContactsList] = useState<any[]>([]);
   const [contactsSearch, setContactsSearch] = useState<string>(() => {
@@ -396,16 +391,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     } catch {}
   }, [contactsSearch, contactsSort]);
 
-  // Section 7: Sections Manager State
-  const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
-  const [secTitle, setSecTitle] = useState<string>('');
-  const [secIcon, setSecIcon] = useState<string>('💌');
-  const [secContent, setSecContent] = useState<string>('');
-  const [secImageUrl, setSecImageUrl] = useState<string>('');
-  const [secAudioUrl, setSecAudioUrl] = useState<string>('');
-  const [secVideoUrl, setSecVideoUrl] = useState<string>('');
-  const [secVisible, setSecVisible] = useState<boolean>(true);
-
   // Section 8: Content Editor State
   const [editRecipientName, setEditRecipientName] = useState<string>(site.name);
   const [editCountdownDate, setEditCountdownDate] = useState<string>(site.birthday || '2026-12-17');
@@ -414,11 +399,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
   const [editNameMeanings, setEditNameMeanings] = useState<NameLetterMeaning[]>(
     site.nameMeanings?.length ? site.nameMeanings : DEFAULT_NAME_MEANINGS
   );
-  const [editPoems, setEditPoems] = useState<Poem[]>(site.poems?.length ? site.poems : DEFAULT_POEMS);
   const [editCompliments, setEditCompliments] = useState<string[]>(site.compliments || []);
   const [newCompliment, setNewCompliment] = useState<string>('');
-  const [newPoemTitle, setNewPoemTitle] = useState<string>('');
-  const [newPoemLines, setNewPoemLines] = useState<string>('');
 
   // Section 10: App Control State
   const [featGames, setFeatGames] = useState<boolean>(site.features?.games !== false);
@@ -482,7 +464,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     setEditHomeMessage(site.homeMessage || '');
     setEditSecretLetter(site.personalMessage || '');
     if (site.nameMeanings?.length) setEditNameMeanings(site.nameMeanings);
-    if (site.poems?.length) setEditPoems(site.poems);
     if (site.compliments?.length) setEditCompliments(site.compliments);
     setFeatGames(site.features?.games !== false);
     setFeatGalleryUpload(site.features?.galleryUpload !== false);
@@ -598,17 +579,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       },
       () => {}
     );
-
-    const unsubSections = onSnapshot(
-      query(collection(db, 'sections'), orderBy('order', 'asc')),
-      (snap) => {
-        const list: any[] = [];
-        snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
-        setSectionsList(list);
-      },
-      () => {}
-    );
-
     const unsubUsers = onSnapshot(
       collection(db, 'users'),
       (snap) => {
@@ -649,7 +619,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
         if (d.homeMessage !== undefined) setEditHomeMessage(d.homeMessage);
         if (d.personalMessage !== undefined) setEditSecretLetter(d.personalMessage);
         if (Array.isArray(d.nameMeanings) && d.nameMeanings.length > 0) setEditNameMeanings(d.nameMeanings);
-        if (Array.isArray(d.poems)) setEditPoems(d.poems);
         if (Array.isArray(d.compliments)) setEditCompliments(d.compliments);
       },
       () => {}
@@ -701,7 +670,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       unsubInbox();
       unsubNotifs();
       unsubOverlays();
-      unsubSections();
       unsubUsers();
       unsubContacts();
       unsubDeviceStatus();
@@ -1408,67 +1376,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     );
   };
 
-  // Section 7: Save / Reorder Sections
-  const handleSaveSection = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!secTitle.trim()) {
-      notifyStatus('Section title is required.', true);
-      return;
-    }
-    const payload = {
-      title: secTitle.trim(),
-      icon: secIcon.trim() || '💌',
-      content: secContent,
-      imageUrl: secImageUrl.trim(),
-      audioUrl: secAudioUrl.trim(),
-      videoUrl: secVideoUrl.trim(),
-      visible: secVisible,
-      updatedAt: Date.now(),
-    };
-    const editId = editingSectionId;
-
-    setEditingSectionId(null);
-    setSecTitle('');
-    setSecIcon('💌');
-    setSecContent('');
-    setSecImageUrl('');
-    setSecAudioUrl('');
-    setSecVideoUrl('');
-    setSecVisible(true);
-    notifyStatus(editId ? 'Section updated.' : 'New section created.');
-
-    if (editId) {
-      void updateDoc(doc(db, 'sections', editId), payload).catch((err: any) =>
-        notifyStatus(`Save section error: ${err.message}`, true)
-      );
-    } else {
-      void addDoc(collection(db, 'sections'), {
-        ...payload,
-        order: sectionsList.length,
-        createdAt: Date.now(),
-      }).catch((err: any) => notifyStatus(`Save section error: ${err.message}`, true));
-    }
-  };
-
-  const handleMoveSection = (index: number, direction: -1 | 1) => {
-    const targetIdx = index + direction;
-    if (targetIdx < 0 || targetIdx >= sectionsList.length) return;
-    const itemA = sectionsList[index];
-    const itemB = sectionsList[targetIdx];
-
-    // Optimistic reorder in UI
-    const nextList = [...sectionsList];
-    nextList[index] = itemB;
-    nextList[targetIdx] = itemA;
-    setSectionsList(nextList);
-    notifyStatus('Order updated.');
-
-    void Promise.all([
-      updateDoc(doc(db, 'sections', itemA.id), { order: targetIdx }),
-      updateDoc(doc(db, 'sections', itemB.id), { order: index }),
-    ]).catch((err: any) => notifyStatus(`Reorder failed: ${err.message}`, true));
-  };
-
   // Section 8: Save Live Content Editor
   const handleSaveContentEditor = () => {
     const payload = {
@@ -1477,7 +1384,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       homeMessage: editHomeMessage,
       personalMessage: editSecretLetter,
       nameMeanings: editNameMeanings,
-      poems: editPoems,
       compliments: editCompliments,
       updatedAt: Date.now(),
     };
@@ -1776,37 +1682,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     );
   };
 
-  // Section 7: Delete All Custom Sections
-  const handleDeleteAllSections = () => {
-    if (sectionsList.length === 0) {
-      notifyStatus('No custom sections to delete.', true);
-      return;
-    }
-    askConfirm(
-      `Delete all ${sectionsList.length} custom sections permanently?`,
-      () => {
-        const itemsToDelete = [...sectionsList];
-        setSectionsList([]);
-        notifyStatus('Deleting all custom sections...');
-        void (async () => {
-          try {
-            const chunkSize = 450;
-            for (let i = 0; i < itemsToDelete.length; i += chunkSize) {
-              const batch = writeBatch(db);
-              itemsToDelete.slice(i, i + chunkSize).forEach((item) => {
-                batch.delete(doc(db, 'sections', item.id));
-              });
-              await batch.commit();
-            }
-            notifyStatus('All custom sections deleted.');
-          } catch (err: any) {
-            notifyStatus(`Delete all sections failed: ${err.message}`, true);
-          }
-        })();
-      }
-    );
-  };
-
   // User Approvals: Delete All Non-Admin Users
   const handleDeleteAllNonAdminUsers = () => {
     const nonAdminUsers = usersList.filter((u) => !isUserAdminAccount(u));
@@ -2006,21 +1881,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     setCopiedNumber(num);
     notifyStatus(`Copied: ${num}`);
     setTimeout(() => setCopiedNumber(null), 2000);
-  };
-
-  // Section 8: Delete All Poems
-  const handleDeleteAllPoems = () => {
-    if (editPoems.length === 0) {
-      notifyStatus('No poems to delete.', true);
-      return;
-    }
-    askConfirm(
-      `Delete all ${editPoems.length} poems from the editor? Remember to click Save All Content to apply.`,
-      () => {
-        setEditPoems([]);
-        notifyStatus('All poems cleared from list.');
-      }
-    );
   };
 
   // Section 8: Delete All Compliments
@@ -3787,11 +3647,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                           >
                             <option value="home">Home</option>
                             <option value="gallery">Gallery</option>
-                            <option value="poetry">Poetry</option>
                             <option value="secret-letter">Secret Letter</option>
-                            <option value="open-when">Open When</option>
                             <option value="games">Games</option>
-                            <option value="breathe">Breathe</option>
                             <option value="cute-pic">Cute Pic</option>
                             <option value="name-game">Name Game</option>
                           </select>
@@ -4402,7 +4259,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                               btn.action === 'call_now'
                                 ? 'Phone number'
                                 : btn.action === 'open_section'
-                                ? 'gallery / poetry / games'
+                                ? 'gallery / games'
                                 : btn.action === 'open_url'
                                 ? 'https://...'
                                 : 'No payload needed'
@@ -4903,214 +4760,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
             </div>
           )}
 
-          {/* 7. SECTIONS MANAGER */}
-          {activeSection === 'sections' && (
-            <div className="space-y-4">
-              <div className={`flex flex-wrap items-center justify-between gap-2 border-b ${borderCol} pb-2`}>
-                <h2 className="text-[13px] font-bold uppercase tracking-wider">
-                  7. Sections Manager (Open When Cards & Dynamic Cards)
-                </h2>
-                <div className="flex items-center gap-2">
-                  <span className={`text-[11px] ${textMuted} hidden sm:inline`}>
-                    Empty or hidden sections stay hidden in app automatically
-                  </span>
-                  {sectionsList.length > 0 && (
-                    <button
-                      onClick={handleDeleteAllSections}
-                      className={`${btnDanger} text-rose-400`}
-                    >
-                      <Trash2 className="w-3.5 h-3.5 inline mr-1" />
-                      Delete All Sections ({sectionsList.length})
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <form onSubmit={handleSaveSection} className={`p-3 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-2.5`}>
-                <div className="font-bold text-[12px]">
-                  {editingSectionId ? 'Edit Section' : 'Add New Section'}
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
-                  <div className="sm:col-span-2">
-                    <label className={`block text-[11px] ${textMuted} mb-1`}>Title (e.g. Open When You Miss Me)</label>
-                    <input
-                      type="text"
-                      required
-                      value={secTitle}
-                      onChange={(e) => setSecTitle(e.target.value)}
-                      className={inputCls}
-                    />
-                  </div>
-                  <div>
-                    <label className={`block text-[11px] ${textMuted} mb-1`}>Icon / Emoji</label>
-                    <input
-                      type="text"
-                      value={secIcon}
-                      onChange={(e) => setSecIcon(e.target.value)}
-                      className={inputCls}
-                    />
-                  </div>
-                  <div className="flex items-end pb-1">
-                    <label className="flex items-center gap-2 cursor-pointer text-[12px]">
-                      <input
-                        type="checkbox"
-                        checked={secVisible}
-                        onChange={(e) => setSecVisible(e.target.checked)}
-                      />
-                      <span>Visible in App</span>
-                    </label>
-                  </div>
-                </div>
-
-                <div>
-                  <label className={`block text-[11px] ${textMuted} mb-1`}>Text Content / Letter</label>
-                  <textarea
-                    rows={3}
-                    value={secContent}
-                    onChange={(e) => setSecContent(e.target.value)}
-                    placeholder="Write letter or section text..."
-                    className={inputCls}
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <div>
-                    <label className={`block text-[11px] ${textMuted} mb-1`}>Image URL (Optional)</label>
-                    <input
-                      type="text"
-                      value={secImageUrl}
-                      onChange={(e) => setSecImageUrl(e.target.value)}
-                      className={inputCls}
-                    />
-                  </div>
-                  <div>
-                    <label className={`block text-[11px] ${textMuted} mb-1`}>Audio URL (Optional)</label>
-                    <input
-                      type="text"
-                      value={secAudioUrl}
-                      onChange={(e) => setSecAudioUrl(e.target.value)}
-                      className={inputCls}
-                    />
-                  </div>
-                  <div>
-                    <label className={`block text-[11px] ${textMuted} mb-1`}>Video URL (Optional)</label>
-                    <input
-                      type="text"
-                      value={secVideoUrl}
-                      onChange={(e) => setSecVideoUrl(e.target.value)}
-                      className={inputCls}
-                    />
-                  </div>
-                </div>
-
-                <div className="flex gap-2">
-                  <button type="submit" className={btnPrimary}>
-                    {editingSectionId ? 'Update Section' : 'Create Section'}
-                  </button>
-                  {editingSectionId && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingSectionId(null);
-                        setSecTitle('');
-                        setSecContent('');
-                      }}
-                      className={btnSecondary}
-                    >
-                      Cancel
-                    </button>
-                  )}
-                </div>
-              </form>
-
-              <div className={`rounded-[14px] overflow-hidden border ${borderCol} overflow-x-auto`}>
-                <table className="w-full text-left border-collapse text-[12px]">
-                  <thead>
-                    <tr className={`border-b ${borderCol} ${bgSubtle} ${textMuted}`}>
-                      <th className="py-1.5 px-2.5">Order</th>
-                      <th className="py-1.5 px-2.5">Icon</th>
-                      <th className="py-1.5 px-2.5">Title</th>
-                      <th className="py-1.5 px-2.5">Status</th>
-                      <th className="py-1.5 px-2.5 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sectionsList.map((s, idx) => {
-                      const isEmpty = !s.content?.trim() && !s.imageUrl && !s.audioUrl && !s.videoUrl;
-                      return (
-                        <tr key={s.id} className={`border-b ${borderCol}`}>
-                          <td className="py-1.5 px-2.5 whitespace-nowrap space-x-1">
-                            <button onClick={() => handleMoveSection(idx, -1)} className={btnSecondary}>
-                              ↑
-                            </button>
-                            <button onClick={() => handleMoveSection(idx, 1)} className={btnSecondary}>
-                              ↓
-                            </button>
-                          </td>
-                          <td className="py-1.5 px-2.5">{s.icon || '💌'}</td>
-                          <td className="py-1.5 px-2.5 font-medium">{s.title}</td>
-                          <td className="py-1.5 px-2.5 text-[11px]">
-                            <span className={`px-2 py-0.5 rounded-full border ${borderCol}`}>
-                              {isEmpty ? 'HIDDEN (EMPTY)' : s.visible === false ? 'HIDDEN' : 'VISIBLE'}
-                            </span>
-                          </td>
-                          <td className="py-1.5 px-2.5 text-right space-x-1">
-                            <button
-                              onClick={() => {
-                                const nextVis = s.visible === false;
-                                setSectionsList((prev) =>
-                                  prev.map((x) => (x.id === s.id ? { ...x, visible: nextVis } : x))
-                                );
-                                void updateDoc(doc(db, 'sections', s.id), { visible: nextVis }).catch(() => {});
-                              }}
-                              className={btnSecondary}
-                            >
-                              {s.visible === false ? 'Show' : 'Hide'}
-                            </button>
-                            <button
-                              onClick={() => {
-                                setEditingSectionId(s.id);
-                                setSecTitle(s.title || '');
-                                setSecIcon(s.icon || '💌');
-                                setSecContent(s.content || '');
-                                setSecImageUrl(s.imageUrl || '');
-                                setSecAudioUrl(s.audioUrl || '');
-                                setSecVideoUrl(s.videoUrl || '');
-                                setSecVisible(s.visible !== false);
-                              }}
-                              className={btnSecondary}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              onClick={() =>
-                                askConfirm(`Delete section "${s.title}"?`, () => {
-                                  setSectionsList((prev) => prev.filter((x) => x.id !== s.id));
-                                  notifyStatus('Section deleted.');
-                                  void deleteDoc(doc(db, 'sections', s.id)).catch(() => {});
-                                })
-                              }
-                              className={btnDanger}
-                            >
-                              Delete
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                    {sectionsList.length === 0 && (
-                      <tr>
-                        <td colSpan={5} className={`py-6 text-center ${textMuted}`}>
-                          No custom sections added yet.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
           {/* 8. CONTENT EDITOR */}
           {activeSection === 'content' && (
             <div className="space-y-4">
@@ -5216,94 +4865,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                       />
                     </div>
                   ))}
-                </div>
-              </div>
-
-              {/* Poems Editor */}
-              <div className={`p-3 rounded-[14px] border ${borderCol} space-y-3`}>
-                <div className="flex items-center justify-between gap-2">
-                  <div className="font-bold text-[12px]">Poems ({editPoems.length})</div>
-                  {editPoems.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={handleDeleteAllPoems}
-                      className={`${btnDanger} text-[11px] text-rose-400`}
-                    >
-                      <Trash2 className="w-3 h-3 inline mr-1" />
-                      Delete All Poems ({editPoems.length})
-                    </button>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  {editPoems.map((p, idx) => (
-                    <div key={idx} className={`p-2.5 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-1.5`}>
-                      <div className="flex items-center justify-between gap-2">
-                        <input
-                          type="text"
-                          value={p.title}
-                          onChange={(e) => {
-                            const next = [...editPoems];
-                            next[idx] = { ...next[idx], title: e.target.value };
-                            setEditPoems(next);
-                          }}
-                          className={inputCls}
-                        />
-                        <button
-                          onClick={() =>
-                            askConfirm(`Delete poem "${p.title}"?`, () => {
-                              setEditPoems(editPoems.filter((_, i) => i !== idx));
-                            })
-                          }
-                          className={btnDanger}
-                        >
-                          Remove
-                        </button>
-                      </div>
-                      <textarea
-                        rows={3}
-                        value={p.lines.join('\n')}
-                        onChange={(e) => {
-                          const next = [...editPoems];
-                          next[idx] = { ...next[idx], lines: e.target.value.split('\n') };
-                          setEditPoems(next);
-                        }}
-                        className={inputCls}
-                      />
-                    </div>
-                  ))}
-                </div>
-
-                <div className={`p-2.5 rounded-[14px] border ${borderCol} space-y-2`}>
-                  <div className="text-[11px] font-bold">Add New Poem</div>
-                  <input
-                    type="text"
-                    placeholder="Poem Title"
-                    value={newPoemTitle}
-                    onChange={(e) => setNewPoemTitle(e.target.value)}
-                    className={inputCls}
-                  />
-                  <textarea
-                    rows={3}
-                    placeholder="Poem lines (one per line)..."
-                    value={newPoemLines}
-                    onChange={(e) => setNewPoemLines(e.target.value)}
-                    className={inputCls}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!newPoemTitle.trim() || !newPoemLines.trim()) return;
-                      setEditPoems([
-                        ...editPoems,
-                        { title: newPoemTitle.trim(), lines: newPoemLines.split('\n') },
-                      ]);
-                      setNewPoemTitle('');
-                      setNewPoemLines('');
-                    }}
-                    className={btnSecondary}
-                  >
-                    + Add Poem to List
-                  </button>
                 </div>
               </div>
 

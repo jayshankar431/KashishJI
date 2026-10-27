@@ -5,12 +5,8 @@ import {
   Heart,
   Calendar,
   Gamepad2,
-  Feather,
   Lock,
   ChevronRight,
-  Star,
-  Mail,
-  Wind,
   Gift,
   Camera,
   Images,
@@ -439,18 +435,6 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
       subtitle: 'Memories, candid moments & surprises',
       icon: Images,
     },
-    {
-      id: 'breathe' as NavTab,
-      title: 'Breathe With Me',
-      subtitle: 'Slow, calm breathing',
-      icon: Wind,
-    },
-    {
-      id: 'open-when' as NavTab,
-      title: 'Open When...',
-      subtitle: 'Letters for every emotion',
-      icon: Mail,
-    },
     ...(site.features?.games !== false
       ? [
           {
@@ -461,12 +445,6 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
           },
         ]
       : []),
-    {
-      id: 'poetry' as NavTab,
-      title: 'Poetry Corner',
-      subtitle: 'Handwritten lyrical poems',
-      icon: Feather,
-    },
     {
       id: 'secret-letter' as NavTab,
       title: 'The Secret Letter',
@@ -1065,33 +1043,6 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
 
       {/* Dynamic Slot: Home After Rooms */}
       <DynamicSlot slotId="home_after_rooms" onNavigate={onNavigate} isDarkMode={isDarkMode} />
-
-      {/* Sweet Daily Reminder */}
-      <section
-        style={{
-          backgroundColor: 'var(--card-subtle)',
-          borderColor: 'var(--card-border)',
-        }}
-        className="rounded-2xl p-6 border text-center relative overflow-hidden shadow-xs"
-      >
-        <Star className="w-5 h-5 text-amber-500 mx-auto mb-2 animate-sparkle" />
-        <p
-          style={{ color: 'var(--text)' }}
-          className="font-script text-2xl sm:text-3xl font-bold"
-        >
-          "You don't just exist in the world, you make it a warmer place."
-        </p>
-        <p
-          style={{ color: 'var(--text-soft)' }}
-          className="text-xs sm:text-sm mt-3.5 font-medium flex items-center justify-center gap-2"
-        >
-          <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full border border-[var(--card-border)] bg-[var(--card)] shadow-xs">
-            <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500 animate-pulse shrink-0" />
-            <span>Woven with quiet love, starlight & every heartbeat — forever for {name}</span>
-            <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-          </span>
-        </p>
-      </section>
 
       {/* Dynamic Slot: Home Bottom */}
       <DynamicSlot slotId="home_bottom" onNavigate={onNavigate} isDarkMode={isDarkMode} />

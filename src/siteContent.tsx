@@ -1,16 +1,9 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { collection, doc, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from './firebase';
 import { resolveFirestoreMediaUrl } from './androidBridge';
 import { CONFIG } from './config';
-import type { OpenWhenEnvelope } from './components/OpenWhenSection';
 import type { CustomTabDefinition, DynamicSlotsMap } from './dynamicSlots';
-
-export interface Poem {
-  title: string;
-  /** Use {name} where the recipient name should appear */
-  lines: string[];
-}
 
 export interface NameLetterMeaning {
   char: string;
@@ -112,53 +105,6 @@ export const DEFAULT_SAVED_SOUNDS: SavedSound[] = [
   },
 ];
 
-export const DEFAULT_POEMS: Poem[] = [
-  {
-    title: 'In Every Gentle Breeze',
-    lines: [
-      'The morning sun may paint the sky in gold,',
-      'And stars may write the stories yet untold,',
-      'Yet in the quiet rhythm of your grace,',
-      'The universe finds its most tender place.',
-      'A laughter that turns stormy skies to blue,',
-      'The world is simply softer because of you, {name}.',
-    ],
-  },
-  {
-    title: 'The Constellation in Your Eyes',
-    lines: [
-      'I searched the night for shooting stars above,',
-      'To ask the heavens what was meant for love,',
-      'Then caught the gentle shimmer in your glance,',
-      'And watched my hurried heart begin to dance.',
-      'No galaxy or moon could ever gleam,',
-      'With half the sweetness of your waking dream.',
-    ],
-  },
-  {
-    title: 'When You Smile',
-    lines: [
-      'A simple smile from you, and seasons turn,',
-      'The winter chills depart, the embers burn.',
-      'No grand parade, no symphony so sweet,',
-      'Can rival where your joy and kindness meet.',
-      'Stay just as radiant as you are today,',
-      'You chase every lingering cloud away.',
-    ],
-  },
-  {
-    title: 'A Quiet Promise',
-    lines: [
-      'Through all the shifting tides that life may steer,',
-      'May peace and happiness be ever near.',
-      'May every step you take feel light and free,',
-      'Surrounded by the warmth you bring to me.',
-      'A quiet wish whispered into the air:',
-      'May kindness hold you in its tender care.',
-    ],
-  },
-];
-
 export interface SavedMusicTrack {
   id: string;
   name: string;
@@ -189,8 +135,6 @@ export interface SiteContent {
   musicSessionId: number;
   savedMusicTracks: SavedMusicTrack[];
   secretLetterMusicUrl: string;
-  openWhen: OpenWhenEnvelope[];
-  poems: Poem[];
   hideDefaultGallery: boolean;
   dynamicSlots: DynamicSlotsMap;
   customTabs: CustomTabDefinition[];
@@ -241,8 +185,6 @@ export const SITE_DEFAULTS: SiteContent = {
   musicSessionId: 0,
   savedMusicTracks: [],
   secretLetterMusicUrl: '',
-  openWhen: [],
-  poems: DEFAULT_POEMS,
   hideDefaultGallery: false,
   dynamicSlots: {},
   customTabs: [],
@@ -280,7 +222,7 @@ export function mergeSite(raw: SiteOverrides): SiteContent {
     const v = raw[k];
     if (v === undefined || v === null) return;
     if (typeof v === 'string' && v.trim() === '' && k !== 'entryPassword') return;
-    if (Array.isArray(v) && v.length === 0 && k !== 'openWhen') return;
+    if (Array.isArray(v) && v.length === 0) return;
     Object.assign(out, { [k]: v });
   });
   if (raw.features) {
@@ -357,45 +299,9 @@ export const SiteContentProvider: React.FC<{ children: React.ReactNode }> = ({ c
       },
       () => {}
     );
-
-    // 3. Real-time listener on sections collection (Open When cards & custom sections)
-    const qSections = query(collection(db, 'sections'), orderBy('order', 'asc'));
-    const unsubSections = onSnapshot(
-      qSections,
-      (snap) => {
-        const envelopes: OpenWhenEnvelope[] = [];
-        snap.forEach((docSnap) => {
-          const d = docSnap.data();
-          const hasContent =
-            (d.content && String(d.content).trim().length > 0) ||
-            (d.letterText && String(d.letterText).trim().length > 0) ||
-            d.imageUrl ||
-            d.audioUrl ||
-            d.videoUrl;
-          // Empty sections or hidden sections stay hidden automatically in the app
-          if (d.visible !== false && hasContent) {
-            envelopes.push({
-              id: docSnap.id,
-              label: d.title || d.label || 'Open When...',
-              emoji: d.icon || d.emoji || '💌',
-              moodColor: d.moodColor || '#f43f5e',
-              letterText: d.content || d.letterText || '',
-              surpriseType: d.surpriseType || 'none',
-              imageUrl: d.imageUrl || '',
-              audioUrl: d.audioUrl || '',
-              videoUrl: d.videoUrl || '',
-            } as any);
-          }
-        });
-        setOverrides((prev) => ({ ...prev, openWhen: envelopes }));
-      },
-      () => {}
-    );
-
     return () => {
       unsubContent();
       unsubSettings();
-      unsubSections();
     };
   }, []);
 

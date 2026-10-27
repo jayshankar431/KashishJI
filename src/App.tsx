@@ -6,12 +6,9 @@ import { NostalgicLockScreen } from './components/NostalgicLockScreen';
 import { Navbar, NavTab } from './components/Navbar';
 import { HomeSection } from './components/HomeSection';
 import { GamesSection } from './components/GamesSection';
-import { PoetrySection } from './components/PoetrySection';
 import { SecretLetterSection } from './components/SecretLetterSection';
 import { NameGameSection } from './components/NameGameSection';
 import { CutePicSection } from './components/CutePicSection';
-import { OpenWhenSection } from './components/OpenWhenSection';
-import { BreatheSection } from './components/BreatheSection';
 import { GallerySection } from './components/GallerySection';
 import { loadProgress, saveProgress, resetProgress, UserProgressData } from './storage';
 import {
@@ -332,11 +329,8 @@ export default function App() {
     const validTabs: NavTab[] = [
       'home',
       'gallery',
-      'breathe',
-      'open-when',
       'games',
       'cute-pic',
-      'poetry',
       'secret-letter',
       'name-game',
       'theme',
@@ -538,20 +532,6 @@ export default function App() {
       hugCount: prev.hugCount + 1,
       lastActivityDate: new Date().toISOString(),
     }));
-  };
-
-  // Envelope Open Tracker: Persists opened envelope IDs
-  const handleOpenEnvelope = (id: string) => {
-    triggerHaptic(40);
-    logNativeActivity(`💌 ${site.name} opened an envelope: <b>${id}</b>`);
-    setProgress((prev) => {
-      if (prev.openedEnvelopes.includes(id)) return prev;
-      return {
-        ...prev,
-        openedEnvelopes: [...prev.openedEnvelopes, id],
-        lastActivityDate: new Date().toISOString(),
-      };
-    });
   };
 
   // Game Victory Tracker
@@ -991,21 +971,6 @@ export default function App() {
               />
             )}
 
-            {activeTab === 'breathe' && (
-              <BreatheSection name={site.name} isDarkMode={isDarkMode} />
-            )}
-
-            {activeTab === 'open-when' && (
-              <OpenWhenSection
-                name={site.name}
-                envelopes={site.openWhen}
-                isDarkMode={isDarkMode}
-                openedIds={progress.openedEnvelopes}
-                onOpenEnvelope={handleOpenEnvelope}
-                onSendHug={handleSendHug}
-              />
-            )}
-
             {activeTab === 'games' && (
               <GamesSection
                 name={site.name}
@@ -1016,13 +981,8 @@ export default function App() {
               />
             )}
 
-
             {activeTab === 'cute-pic' && (
               <CutePicSection onBack={() => handleTabSelect('home')} />
-            )}
-
-            {activeTab === 'poetry' && (
-              <PoetrySection name={site.name} isDarkMode={isDarkMode} />
             )}
 
             {activeTab === 'secret-letter' && (

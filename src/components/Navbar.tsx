@@ -14,11 +14,8 @@ import type { AppThemeId } from './ThemeSection';
 export type NavTab =
   | 'home'
   | 'gallery'
-  | 'breathe'
-  | 'open-when'
   | 'games'
   | 'cute-pic'
-  | 'poetry'
   | 'secret-letter'
   | 'name-game'
   | 'theme'

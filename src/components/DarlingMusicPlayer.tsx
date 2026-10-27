@@ -1304,6 +1304,15 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     src={currentTrack.thumbnail}
                     alt={currentTrack.title}
                     decoding="async"
+                    referrerPolicy="no-referrer"
+                    crossOrigin="anonymous"
+                    onError={(e) => {
+                      const target = e.target as HTMLImageElement;
+                      if (!target.dataset.triedFallback && currentTrack.videoId) {
+                        target.dataset.triedFallback = 'true';
+                        target.src = `https://i.ytimg.com/vi/${currentTrack.videoId}/hqdefault.jpg`;
+                      }
+                    }}
                     className="w-full h-full object-cover"
                   />
                   {isPlaying && (
@@ -1429,7 +1438,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
           <div className="flex items-center justify-between px-1">
             <span style={{ color: 'var(--text-soft)' }} className="text-[11px] font-semibold">
               {searchQuery.trim()
-                ? `YouTube Music Results (${tracks.length})`
+                ? `Found in Jay's Heart (${tracks.length})`
                 : `Last Search Results (${tracks.length})`}
             </span>
             {isSearching && (
@@ -1487,6 +1496,15 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                         alt={track.title}
                         loading="lazy"
                         decoding="async"
+                        referrerPolicy="no-referrer"
+                        crossOrigin="anonymous"
+                        onError={(e) => {
+                          const target = e.target as HTMLImageElement;
+                          if (!target.dataset.triedFallback && track.videoId) {
+                            target.dataset.triedFallback = 'true';
+                            target.src = `https://i.ytimg.com/vi/${track.videoId}/hqdefault.jpg`;
+                          }
+                        }}
                         className="w-full h-full object-cover"
                       />
                       <div className="absolute inset-0 bg-black/25 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1593,6 +1611,15 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     src={currentTrack.thumbnail}
                     alt={currentTrack.title}
                     decoding="async"
+                    referrerPolicy="no-referrer"
+                    crossOrigin="anonymous"
+                    onError={(e) => {
+                      const target = e.target as HTMLImageElement;
+                      if (!target.dataset.triedFallback && currentTrack.videoId) {
+                        target.dataset.triedFallback = 'true';
+                        target.src = `https://i.ytimg.com/vi/${currentTrack.videoId}/hqdefault.jpg`;
+                      }
+                    }}
                     className="w-full h-full object-cover"
                   />
                 </div>

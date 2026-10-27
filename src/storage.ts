@@ -8,7 +8,6 @@
 export interface UserProgressData {
   saveEnabled: boolean;
   hugCount: number;
-  openedEnvelopes: string[];
   games: {
     played: number;
     wins: number;
@@ -37,7 +36,6 @@ export interface UserProgressData {
 export const DEFAULT_PROGRESS: UserProgressData = {
   saveEnabled: true,
   hugCount: 0,
-  openedEnvelopes: [],
   games: {
     played: 0,
     wins: 0,
@@ -79,7 +77,6 @@ export const loadProgress = (): UserProgressData => {
     return {
       saveEnabled: parsed.saveEnabled ?? DEFAULT_PROGRESS.saveEnabled,
       hugCount: typeof parsed.hugCount === 'number' ? parsed.hugCount : DEFAULT_PROGRESS.hugCount,
-      openedEnvelopes: Array.isArray(parsed.openedEnvelopes) ? parsed.openedEnvelopes : [],
       games: {
         played: typeof parsed.games?.played === 'number' ? parsed.games.played : 0,
         wins: typeof parsed.games?.wins === 'number' ? parsed.games.wins : 0,

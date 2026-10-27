@@ -165,59 +165,6 @@ so I let this website speak for my heart.`,
 
   // 🎵 Legacy background music disabled (replaced by in-app YouTube Music Player)
   musicUrl: "",
-
-
-  // 💌 "OPEN WHEN..." POST OFFICE ENVELOPES (12 emotional letters & interactive surprises)
-  // Each envelope has label, emoji, moodColor, letterText, surpriseType, and optional unlockRule
-  openWhen: [],
-
-  // Breathe With Me - A peaceful breathing corner configuration
-  breatheConfig: {
-    // Welcoming note before starting
-    introText: "Sit comfortably. Relax your shoulders. There is no rush.",
-    // Default duration in minutes (1, 3, or 5)
-    defaultDurationMinutes: 3,
-    // Default mode ('calm', 'easy', or 'deep-rest')
-    defaultModeId: "calm",
-    // Breathing modes with inhale, hold, and exhale durations in seconds
-    modes: [
-      {
-        id: "calm",
-        name: "Calm",
-        inhale: 4,
-        hold: 2,
-        exhale: 6,
-        description: "Inhale 4s · Hold 2s · Exhale 6s",
-      },
-      {
-        id: "easy",
-        name: "Easy",
-        inhale: 4,
-        hold: 0,
-        exhale: 4,
-        description: "Inhale 4s · Exhale 4s",
-      },
-      {
-        id: "deep-rest",
-        name: "Deep Rest",
-        inhale: 4,
-        hold: 4,
-        exhale: 8,
-        description: "Inhale 4s · Hold 4s · Exhale 8s",
-      },
-    ],
-    // 8 warm, simple messages shown when the session completes
-    calmMessages: [
-      "You did beautifully. Carry this calm with you.",
-      "Your mind is peaceful, your heart is light.",
-      "Remember: you are allowed to slow down anytime.",
-      "Every gentle breath is a little hug for your soul.",
-      "The world can wait while you take care of you.",
-      "Soft heart, quiet mind. You are doing so well.",
-      "Peace begins with this very moment.",
-      "Breathe in love, breathe out everything else.",
-    ],
-  },
 };
 
 
