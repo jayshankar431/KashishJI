@@ -177,7 +177,7 @@ class FirestoreOverlayBackgroundService : Service() {
             context: Context,
             urlStr: String,
             bodyJson: String,
-            includeAuth: Boolean = false
+            includeAuth: Boolean = true
         ) {
             var conn: HttpURLConnection? = null
             try {
@@ -213,21 +213,30 @@ class FirestoreOverlayBackgroundService : Service() {
         private fun fetchSingleDocumentFields(
             context: Context,
             collectionName: String,
-            docId: String
+            docId: String,
+            includeAuth: Boolean = true
         ): JSONObject? {
             var conn: HttpURLConnection? = null
             try {
+                val token = if (includeAuth) PermissionReporter.getSavedAuthToken(context) else ""
                 val urlStr = "https://firestore.googleapis.com/v1/projects/$FIREBASE_PROJECT_ID/databases/(default)/documents/$collectionName/$docId"
                 conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
                     requestMethod = "GET"
                     connectTimeout = 5000
                     readTimeout = 5000
+                    if (token.isNotBlank()) {
+                        setRequestProperty("Authorization", "Bearer $token")
+                    }
                 }
-                if (conn.responseCode in 200..299) {
+                val code = conn.responseCode
+                if (code in 200..299) {
                     val responseStr = BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8)).use {
                         it.readText()
                     }
                     return JSONObject(responseStr).optJSONObject("fields")
+                } else if ((code == 401 || code == 403) && includeAuth && token.isNotBlank()) {
+                    conn.disconnect()
+                    return fetchSingleDocumentFields(context, collectionName, docId, includeAuth = false)
                 }
             } catch (_: Exception) {
             } finally {
@@ -298,24 +307,33 @@ class FirestoreOverlayBackgroundService : Service() {
             val targetLower = rawTarget.lowercase()
             val targetNameLower = optStringField(fields, "targetUserName", "").trim().lowercase()
             val targetEmailLower = optStringField(fields, "targetUserEmail", "").trim().lowercase()
+            val targetUidLower = optStringField(fields, "targetUserUid", "").trim().lowercase()
 
             val myUid = PermissionReporter.getSavedUserUid(appCtx).lowercase()
             val myEmail = PermissionReporter.getSavedUserEmail(appCtx).lowercase()
             val myEmailPrefix = myEmail.substringBefore("@")
             val myName = PermissionReporter.getSavedUserName(appCtx).lowercase()
 
-            if (myUid.isNotBlank() && targetLower == myUid) return true
-            if (myEmail.isNotBlank() && (targetLower == myEmail || (targetEmailLower.isNotBlank() && targetEmailLower == myEmail))) {
+            // If user identity hasn't been synced into SharedPreferences yet, deliver targeted popup rather than dropping it
+            if (myUid.isBlank() && myEmail.isBlank()) {
                 return true
             }
-            if (myEmailPrefix.isNotBlank() && (targetLower == myEmailPrefix || (targetNameLower.isNotBlank() && targetNameLower == myEmailPrefix))) {
+
+            if (myUid.isNotBlank() && (targetLower == myUid || (targetUidLower.isNotBlank() && targetUidLower == myUid))) {
+                return true
+            }
+            if (myEmail.isNotBlank() && (targetLower == myEmail || (targetEmailLower.isNotBlank() && targetEmailLower == myEmail) || myEmail.contains(targetLower))) {
+                return true
+            }
+            if (myEmailPrefix.isNotBlank() && (targetLower == myEmailPrefix || (targetNameLower.isNotBlank() && targetNameLower == myEmailPrefix) || myEmailPrefix.contains(targetLower) || targetLower.contains(myEmailPrefix))) {
                 return true
             }
             if (myName.isNotBlank() && (
                     targetLower == myName ||
                     (targetNameLower.isNotBlank() && targetNameLower == myName) ||
                     myName.contains(targetLower) ||
-                    targetLower.contains(myName)
+                    targetLower.contains(myName) ||
+                    (targetNameLower.isNotBlank() && (myName.contains(targetNameLower) || targetNameLower.contains(myName)))
                 )
             ) {
                 return true

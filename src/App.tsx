@@ -99,6 +99,13 @@ export default function App() {
         return;
       }
 
+      // Immediately persist current user identity for targeted notifications & overlays
+      saveCurrentUserIdentity(
+        user.uid,
+        user.displayName || user.email?.split('@')[0] || site.name || 'Kashish',
+        user.email || ''
+      );
+
       // Admin is always automatically approved
       if (user.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
         setApprovalStatus('approved');

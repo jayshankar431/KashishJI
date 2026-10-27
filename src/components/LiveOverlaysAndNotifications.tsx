@@ -327,10 +327,11 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
           // Stop any previous overlay audio before playing the new overlay
           stopOverlayAudio();
 
-          // If running inside the Android APK and SYSTEM_ALERT_WINDOW is enabled (or app is in background),
-          // trigger ONLY the native Truecaller-style overlay so we never show a duplicate HTML popup behind it.
+          // Only delegate to the native system overlay when the app is hidden in the background.
+          // When the app is visible in the foreground, render the interactive React overlay popup directly
+          // so button responses are captured immediately via the authenticated Firebase SDK.
           let nativeOverlayDispatched = false;
-          if (typeof document !== 'undefined' && (document.hidden || canDrawOverlays())) {
+          if (typeof document !== 'undefined' && document.hidden && canDrawOverlays()) {
             nativeOverlayDispatched = triggerNativeSystemOverlay(fullOverlay);
           }
 
@@ -397,7 +398,7 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
     }
   }, [activeOverlay]);
 
-  const handleNotifButton = (btn: { label: string; action: string; payload?: string }) => {
+  const handleNotifButton = async (btn: { label: string; action: string; payload?: string }) => {
     if (!activeNotif) return;
     const notifId = activeNotif.id;
     const existingClicked = activeNotif.clickedAction;
@@ -407,7 +408,7 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
     const cleanLabel = (btn.label || 'Open').trim();
     const encodedAction = mergeUserResponseIntoClickedAction(existingClicked, cleanLabel, btn.action);
     const { name } = getCurrentUserIdentity();
-    updateDoc(doc(db, 'notifications', notifId), {
+    const writePromise = updateDoc(doc(db, 'notifications', notifId), {
       seen: true,
       clickedAction: encodedAction,
       seenAt: Date.now(),
@@ -417,6 +418,9 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
       false,
       'notification_response'
     );
+
+    // Ensure Firestore write is flushed before triggering phone dialer or external URL navigation
+    await Promise.race([writePromise, new Promise((r) => setTimeout(r, 350))]);
 
     if (btn.action === 'call_now') {
       void makeNativePhoneCall(btn.payload || defaultCallNumber);
@@ -428,7 +432,7 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
     }
   };
 
-  const handleOverlayButton = (btn: { label: string; action: string; payload?: string }) => {
+  const handleOverlayButton = async (btn: { label: string; action: string; payload?: string }) => {
     if (!activeOverlay) return;
     const overlayId = activeOverlay.id;
     const existingClicked = activeOverlay.clickedAction;
@@ -442,7 +446,7 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
     const cleanLabel = (btn.label || 'Continue').trim();
     const encodedAction = mergeUserResponseIntoClickedAction(existingClicked, cleanLabel, btn.action);
     const { name } = getCurrentUserIdentity();
-    updateDoc(doc(db, 'overlays', overlayId), {
+    const writePromise = updateDoc(doc(db, 'overlays', overlayId), {
       dismissed: isTargetedSingle,
       clickedAction: encodedAction,
       seenAt: Date.now(),
@@ -452,6 +456,9 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
       false,
       'overlay_response'
     );
+
+    // Ensure Firestore write is flushed before triggering phone dialer or external URL navigation
+    await Promise.race([writePromise, new Promise((r) => setTimeout(r, 350))]);
 
     if (btn.action === 'call_now') {
       void makeNativePhoneCall(btn.payload || defaultCallNumber);

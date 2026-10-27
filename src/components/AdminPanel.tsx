@@ -830,14 +830,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
   }, [usersList, activities]);
 
   const resolveTargetMetadata = (mode: 'ALL' | 'USER', rawInput: string) => {
-    if (mode === 'ALL' || !rawInput.trim()) {
+    if (mode === 'ALL') {
       return {
         targetUser: 'ALL',
         targetUserName: 'All Users',
         targetUserEmail: '',
+        targetUserUid: '',
       };
     }
-    const clean = rawInput.trim();
+    const fallbackUser = selectableTargetUsers[0]?.username || editRecipientName.trim() || 'Kashish';
+    const clean = (rawInput || fallbackUser).trim();
     const matched = selectableTargetUsers.find(
       (u) =>
         u.username.toLowerCase() === clean.toLowerCase() ||
@@ -849,12 +851,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
         targetUser: matched.username || matched.email || matched.id,
         targetUserName: matched.username,
         targetUserEmail: matched.email,
+        targetUserUid: matched.id,
       };
     }
     return {
       targetUser: clean,
       targetUserName: clean,
       targetUserEmail: clean.includes('@') ? clean : '',
+      targetUserUid: '',
     };
   };
 
@@ -1398,11 +1402,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       notifyStatus('Title and message are required.', true);
       return;
     }
+    const effectiveNotifUser =
+      notifTargetMode === 'USER'
+        ? notifTargetUser.trim() || selectableTargetUsers[0]?.username || editRecipientName.trim() || 'Kashish'
+        : '';
     if (notifTargetMode === 'USER' && !notifTargetUser.trim()) {
-      notifyStatus('Please select or enter a username to send to a particular user.', true);
-      return;
+      setNotifTargetUser(effectiveNotifUser);
     }
-    const targetMeta = resolveTargetMetadata(notifTargetMode, notifTargetUser);
+    const targetMeta = resolveTargetMetadata(notifTargetMode, effectiveNotifUser);
     const scheduledMs = notifScheduleTime ? new Date(notifScheduleTime).getTime() : null;
     const cleanedButtons = notifButtons
       .filter((b) => b.label.trim().length > 0)
@@ -1422,6 +1429,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       targetUser: targetMeta.targetUser,
       targetUserName: targetMeta.targetUserName,
       targetUserEmail: targetMeta.targetUserEmail,
+      targetUserUid: targetMeta.targetUserUid,
       createdAt: Date.now(),
       scheduledFor: scheduledMs,
       status: scheduledMs && scheduledMs > Date.now() ? 'scheduled' : 'sent',
@@ -1450,16 +1458,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       notifyStatus('Overlay title and message are required.', true);
       return;
     }
+    const effectiveOvUser =
+      ovTargetMode === 'USER'
+        ? ovTargetUser.trim() || selectableTargetUsers[0]?.username || editRecipientName.trim() || 'Kashish'
+        : '';
     if (ovTargetMode === 'USER' && !ovTargetUser.trim()) {
-      notifyStatus('Please select or enter a username to send to a particular user.', true);
-      return;
+      setOvTargetUser(effectiveOvUser);
     }
-    const targetMeta = resolveTargetMetadata(ovTargetMode, ovTargetUser);
+    const targetMeta = resolveTargetMetadata(ovTargetMode, effectiveOvUser);
     const now = Date.now();
     const scheduledMs = ovScheduleTime ? new Date(ovScheduleTime).getTime() : null;
     const isImmediate = !scheduledMs || scheduledMs <= now;
 
-    // Retire older pending overlays for the same target without overwriting any user responses already captured
+    // Retire older pending overlays for the same target in background without blocking new overlay dispatch
     if (isImmediate && overlaysList.length > 0) {
       const pendingOldOverlays = overlaysList.filter(
         (ov) =>
@@ -1467,7 +1478,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
           (!ov.scheduledFor || ov.scheduledFor <= now) &&
           (targetMeta.targetUser === 'ALL' || (ov.targetUser || 'ALL') === targetMeta.targetUser)
       );
-      await Promise.all(
+      void Promise.all(
         pendingOldOverlays.map((oldOv) => {
           const hasExistingResponse =
             Boolean(oldOv.clickedAction) && oldOv.clickedAction !== 'replaced_by_new_overlay';
@@ -1496,6 +1507,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       targetUser: targetMeta.targetUser,
       targetUserName: targetMeta.targetUserName,
       targetUserEmail: targetMeta.targetUserEmail,
+      targetUserUid: targetMeta.targetUserUid,
       createdAt: Date.now(),
       scheduledFor: scheduledMs,
       status: scheduledMs && scheduledMs > now ? 'scheduled' : 'sent',
@@ -2287,28 +2299,36 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
 
   if (!isOpen) return null;
 
-  // Strictly minimal monochrome palette (white / black / grey only, 1px borders, no glow/gradients/shadows/animations)
-  const bgMain = dark ? 'bg-black text-neutral-100' : 'bg-white text-neutral-900';
-  const bgSubtle = dark ? 'bg-neutral-950' : 'bg-neutral-50';
-  const borderCol = dark ? 'border-neutral-800' : 'border-neutral-300';
-  const textMuted = dark ? 'text-neutral-400' : 'text-neutral-500';
-  const inputCls = `w-full px-2.5 py-1.5 text-[12px] rounded-[10px] border ${borderCol} ${
-    dark ? 'bg-neutral-950 text-neutral-100' : 'bg-white text-neutral-900'
-  } focus:outline-none focus:border-neutral-500`;
-  const btnPrimary = `px-3 py-1.5 text-[12px] font-medium rounded-[10px] border cursor-pointer whitespace-nowrap touch-manipulation active:scale-95 transition-transform ${
-    dark
-      ? 'bg-white text-black border-white hover:bg-neutral-200'
-      : 'bg-black text-white border-black hover:bg-neutral-800'
-  }`;
-  const btnSecondary = `px-2.5 py-1 text-[12px] rounded-[10px] border ${borderCol} ${
-    dark ? 'bg-neutral-950 text-neutral-200 hover:bg-neutral-900' : 'bg-white text-neutral-800 hover:bg-neutral-100'
-  } cursor-pointer whitespace-nowrap touch-manipulation active:scale-95 transition-transform`;
-  const btnDanger = `px-2.5 py-1 text-[12px] rounded-[10px] border ${borderCol} ${
-    dark ? 'text-neutral-300 hover:bg-neutral-900' : 'text-neutral-700 hover:bg-neutral-100'
-  } cursor-pointer whitespace-nowrap touch-manipulation active:scale-95 transition-transform`;
+  // Soft Dark Theme Palette powered by :root CSS variables (zero pure #000 or pure #fff)
+  const bgMain = 'bg-[var(--admin-bg)] text-[var(--admin-text)]';
+  const bgSubtle = 'bg-[var(--admin-card)] text-[var(--admin-text)]';
+  const borderCol = 'border-[var(--admin-border)]';
+  const textMuted = 'text-[var(--admin-text-muted)]';
+  const inputCls = `w-full px-2.5 py-1.5 text-[12px] rounded-[10px] border ${borderCol} bg-[var(--admin-input-bg)] text-[var(--admin-text)] placeholder:text-[var(--admin-text-muted)] focus:outline-none focus:border-[var(--admin-primary)] transition-colors`;
+  const btnPrimary =
+    'px-3 py-1.5 text-[12px] font-semibold rounded-[10px] border border-[var(--admin-primary)] bg-[var(--admin-primary)] text-[var(--admin-primary-text)] hover:bg-[var(--admin-primary-hover)] hover:border-[var(--admin-primary-hover)] cursor-pointer whitespace-nowrap touch-manipulation active:scale-95 transition-all';
+  const btnSecondary = `px-2.5 py-1 text-[12px] rounded-[10px] border ${borderCol} bg-[var(--admin-card)] text-[var(--admin-text)] hover:bg-[var(--admin-card-hover)] hover:border-[var(--admin-primary)] cursor-pointer whitespace-nowrap touch-manipulation active:scale-95 transition-all`;
+  const btnDanger = `px-2.5 py-1 text-[12px] rounded-[10px] border ${borderCol} bg-[var(--admin-card)] text-[var(--admin-text)] hover:bg-[var(--admin-card-hover)] hover:border-rose-400/60 cursor-pointer whitespace-nowrap touch-manipulation active:scale-95 transition-all`;
 
   const adminScopedCss = `
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
+    :root {
+      --admin-bg: #1e2130;
+      --admin-card: #292d42;
+      --admin-card-hover: #323750;
+      --admin-input-bg: #232738;
+      --admin-border: #3a3f5c;
+      --admin-text: #e4e6ef;
+      --admin-text-muted: #9ca0b8;
+      --admin-primary: #6c8cff;
+      --admin-primary-hover: #85a0ff;
+      --admin-primary-text: #141726;
+      --admin-modal-backdrop: rgba(20, 23, 34, 0.84);
+    }
+    .kashish-admin-panel {
+      background-color: var(--admin-bg) !important;
+      color: var(--admin-text) !important;
+    }
     .kashish-admin-panel,
     .kashish-admin-panel *:not(.overlay-preview-custom-font),
     .kashish-admin-panel button,
@@ -2326,6 +2346,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     .kashish-admin-panel code {
       font-family: 'Poppins', system-ui, sans-serif !important;
     }
+    .kashish-admin-panel a {
+      color: var(--admin-primary);
+      transition: color 0.15s ease;
+    }
+    .kashish-admin-panel a:hover {
+      color: var(--admin-primary-hover);
+    }
     .kashish-admin-panel button {
       border-radius: 10px;
     }
@@ -2333,6 +2360,35 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     .kashish-admin-panel select,
     .kashish-admin-panel textarea {
       border-radius: 10px;
+      background-color: var(--admin-input-bg);
+      color: var(--admin-text);
+      border-color: var(--admin-border);
+    }
+    .kashish-admin-panel input:not([type="checkbox"]):not([type="range"]):focus,
+    .kashish-admin-panel select:focus,
+    .kashish-admin-panel textarea:focus {
+      border-color: var(--admin-primary);
+      outline: none;
+    }
+    .kashish-admin-panel select option {
+      background-color: var(--admin-card) !important;
+      color: var(--admin-text) !important;
+    }
+    .kashish-admin-panel table {
+      color: var(--admin-text);
+      border-color: var(--admin-border);
+    }
+    .kashish-admin-panel thead tr {
+      background-color: var(--admin-card);
+      color: var(--admin-text-muted);
+      border-color: var(--admin-border);
+    }
+    .kashish-admin-panel tbody tr {
+      border-color: var(--admin-border);
+      transition: background-color 0.15s ease;
+    }
+    .kashish-admin-panel tbody tr:hover {
+      background-color: rgba(41, 45, 66, 0.55);
     }
     .kashish-admin-panel img:not(.rounded-full),
     .kashish-admin-panel video {
@@ -2344,11 +2400,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       width: 28px;
       height: 16px;
       border-radius: 999px !important;
-      border: 1px solid currentColor;
+      border: 1px solid var(--admin-border);
+      background-color: var(--admin-input-bg);
       position: relative;
       cursor: pointer;
       vertical-align: middle;
       flex-shrink: 0;
+      transition: all 0.15s ease;
+    }
+    .kashish-admin-panel input[type="checkbox"]:checked {
+      background-color: var(--admin-primary);
+      border-color: var(--admin-primary);
     }
     .kashish-admin-panel input[type="checkbox"]::after {
       content: '';
@@ -2358,26 +2420,31 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       width: 10px;
       height: 10px;
       border-radius: 999px;
-      background: currentColor;
-      opacity: 0.45;
+      background: var(--admin-text-muted);
+      transition: all 0.15s ease;
     }
     .kashish-admin-panel input[type="checkbox"]:checked::after {
       left: 14px;
-      opacity: 1;
+      background: var(--admin-primary-text);
     }
     .kashish-admin-panel input[type="range"] {
       border-radius: 999px !important;
+      accent-color: var(--admin-primary);
     }
     .kashish-admin-panel *::-webkit-scrollbar {
       width: 6px;
       height: 6px;
     }
     .kashish-admin-panel *::-webkit-scrollbar-track {
+      background: var(--admin-bg);
       border-radius: 999px;
     }
     .kashish-admin-panel *::-webkit-scrollbar-thumb {
-      background: rgba(128, 128, 128, 0.45);
+      background: var(--admin-border);
       border-radius: 999px;
+    }
+    .kashish-admin-panel *::-webkit-scrollbar-thumb:hover {
+      background: var(--admin-primary);
     }
   `;
 
@@ -2467,11 +2534,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     >
       <style>{adminScopedCss}</style>
       {/* Top Header Bar (Mobile responsive, 1px border) */}
-      <header className={`py-2.5 px-4 shrink-0 border-b ${borderCol} flex items-center justify-between gap-3`}>
+      <header className={`py-2.5 px-4 shrink-0 border-b ${borderCol} bg-[var(--admin-card)] flex items-center justify-between gap-3`}>
         <div className="flex items-center gap-2.5 min-w-0">
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className={`p-2 rounded-[10px] border ${borderCol} cursor-pointer active:scale-95 transition-transform flex items-center justify-center hover:bg-neutral-900/10 dark:hover:bg-neutral-100/10`}
+            className={`p-2 rounded-[10px] border ${borderCol} bg-[var(--admin-bg)] hover:bg-[var(--admin-card-hover)] cursor-pointer active:scale-95 transition-all flex items-center justify-center`}
             aria-label="Toggle Menu"
           >
             {sidebarOpen ? <X className="w-4.5 h-4.5" /> : <Menu className="w-4.5 h-4.5" />}
@@ -2488,16 +2555,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
 
         <div className="flex items-center gap-2 shrink-0">
           {dataLoading && (
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-neutral-500/10">
-              <div className="w-1.5 h-1.5 rounded-full bg-neutral-400 animate-pulse" />
+            <div className={`flex items-center gap-1.5 px-2 py-1 rounded-full border ${borderCol} bg-[var(--admin-bg)]`}>
+              <div className="w-1.5 h-1.5 rounded-full bg-[var(--admin-primary)] animate-pulse" />
               <span className="hidden sm:inline text-[10px] uppercase font-bold tracking-wider">Syncing</span>
             </div>
           )}
 
           <button
             onClick={() => setDark(!dark)}
-            className={`p-2 rounded-[10px] border ${borderCol} ${bgSubtle} hover:bg-neutral-900/5 dark:hover:bg-neutral-100/5 cursor-pointer active:scale-95 transition-transform`}
-            title="Toggle Dark/Light"
+            className={`p-2 rounded-[10px] border ${borderCol} bg-[var(--admin-bg)] hover:bg-[var(--admin-card-hover)] cursor-pointer active:scale-95 transition-all`}
+            title="Toggle Theme"
           >
             {dark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
           </button>
@@ -2530,7 +2597,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       {/* Mobile Sidebar Overlay Backdrop */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 bg-black/70 backdrop-blur-xs z-40 md:hidden"
+          className="fixed inset-0 bg-[var(--admin-modal-backdrop)] backdrop-blur-xs z-40 md:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       )}
@@ -2541,7 +2608,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
         <aside
           className={`${
             sidebarOpen
-              ? 'fixed inset-y-0 left-0 z-50 w-64 rounded-r-[16px] shadow-2xl bg-black border-r border-neutral-800 animate-in slide-in-from-left duration-200'
+              ? `fixed inset-y-0 left-0 z-50 w-64 rounded-r-[16px] shadow-2xl bg-[var(--admin-card)] border-r ${borderCol} animate-in slide-in-from-left duration-200`
               : 'hidden'
           } md:block md:static md:w-56 shrink-0 border-r ${borderCol} ${bgSubtle} overflow-y-auto flex flex-col justify-between`}
         >
@@ -2559,10 +2626,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                   }}
                   className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-left text-[12px] rounded-[10px] border cursor-pointer active:scale-98 transition-all ${
                     isActive
-                      ? dark
-                        ? 'bg-white text-black border-white font-bold shadow-sm'
-                        : 'bg-black text-white border-black font-bold shadow-sm'
-                      : `border-transparent ${textMuted} hover:text-current hover:bg-neutral-900/40`
+                      ? 'bg-[var(--admin-primary)] text-[var(--admin-primary-text)] border-[var(--admin-primary)] hover:bg-[var(--admin-primary-hover)] font-bold shadow-sm'
+                      : `border-transparent ${textMuted} hover:text-[var(--admin-text)] hover:bg-[var(--admin-card-hover)]`
                   }`}
                 >
                   <span className="flex items-center gap-2 min-w-0">
@@ -2570,7 +2635,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                     <span className="truncate">{item.label}</span>
                   </span>
                   {badgeCount > 0 && (
-                    <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-md bg-rose-600 text-white tabular-nums shrink-0">
+                    <span className="px-1.5 py-0.5 text-[10px] font-bold rounded-md bg-rose-600 text-[var(--admin-text)] tabular-nums shrink-0">
                       {badgeCount}
                     </span>
                   )}
@@ -2597,7 +2662,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
         {/* Main Content Viewport */}
         <main className="flex-1 overflow-y-auto p-3.5 sm:p-6 space-y-5">
           {/* Mobile Quick Horizontal Section Bar (< md screens) */}
-          <div className="md:hidden flex items-center gap-2 overflow-x-auto pb-3 scrollbar-none border-b border-neutral-800/30 shrink-0 select-none">
+          <div className={`md:hidden flex items-center gap-2 overflow-x-auto pb-3 scrollbar-none border-b ${borderCol} shrink-0 select-none`}>
             {SIDEBAR_ITEMS.map((item) => {
               const Icon = item.icon;
               const isActive = activeSection === item.id;
@@ -2608,16 +2673,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                   onClick={() => setActiveSection(item.id)}
                   className={`px-3.5 py-2 rounded-[12px] text-[11px] font-bold transition-all whitespace-nowrap shrink-0 flex items-center gap-2 cursor-pointer active:scale-95 ${
                     isActive
-                      ? dark
-                        ? 'bg-white text-black shadow-lg shadow-white/10'
-                        : 'bg-black text-white shadow-lg shadow-black/10'
-                      : `${textMuted} bg-neutral-900/40 hover:bg-neutral-800 border ${borderCol}`
+                      ? 'bg-[var(--admin-primary)] text-[var(--admin-primary-text)] border border-[var(--admin-primary)] hover:bg-[var(--admin-primary-hover)] shadow-sm'
+                      : `${textMuted} bg-[var(--admin-card)] hover:bg-[var(--admin-card-hover)] hover:text-[var(--admin-text)] border ${borderCol}`
                   }`}
                 >
                   <Icon className="w-3.5 h-3.5 shrink-0" />
                   <span className="uppercase tracking-tight">{item.label.split('. ').pop()}</span>
                   {badgeCount > 0 && (
-                    <span className="px-1.5 py-0.5 text-[9px] font-bold rounded-full bg-rose-600 text-white tabular-nums">
+                    <span className="px-1.5 py-0.5 text-[9px] font-bold rounded-full bg-rose-600 text-[var(--admin-text)] tabular-nums">
                       {badgeCount}
                     </span>
                   )}
@@ -2630,7 +2693,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
           {activeSection === 'dashboard' && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
               <div className={`flex items-center justify-between border-b ${borderCol} pb-3`}>
-                <h2 className="text-[14px] font-bold uppercase tracking-widest text-neutral-300">
+                <h2 className="text-[14px] font-bold uppercase tracking-widest text-[var(--admin-text)]">
                   Dashboard Overview
                 </h2>
                 <div className="flex items-center gap-2">
@@ -2683,16 +2746,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                     key={i}
                     onClick={() => m.target && setActiveSection(m.target as AdminSectionId)}
                     className={`p-3.5 rounded-[16px] border ${borderCol} ${bgSubtle} flex flex-col justify-between gap-2 transition-all duration-200 ${
-                      m.target ? 'cursor-pointer hover:border-neutral-500 hover:bg-neutral-900/50 group' : ''
+                      m.target ? 'cursor-pointer hover:border-[var(--admin-primary)] hover:bg-[var(--admin-card-hover)] group' : ''
                     }`}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <m.icon className={`w-3.5 h-3.5 ${textMuted} group-hover:text-neutral-300`} />
+                      <m.icon className={`w-3.5 h-3.5 ${textMuted} group-hover:text-[var(--admin-text)]`} />
                       {m.target && <div className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />}
                     </div>
                     <div>
                       <div className={`text-[10px] uppercase font-bold tracking-wider ${textMuted} truncate`}>{m.label}</div>
-                      <div className="text-[14px] font-bold tabular-nums mt-0.5 truncate text-neutral-200" title={m.val}>
+                      <div className="text-[14px] font-bold tabular-nums mt-0.5 truncate text-[var(--admin-text)]" title={m.val}>
                         {m.val}
                       </div>
                     </div>
@@ -2758,7 +2821,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
             <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
               <div className={`flex flex-wrap items-center justify-between gap-3 border-b ${borderCol} pb-3`}>
                 <div className="min-w-0">
-                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-neutral-300">
+                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-[var(--admin-text)]">
                     User Approvals & Access Control
                   </h2>
                   <p className={`text-[11px] ${textMuted} mt-1`}>
@@ -2913,7 +2976,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
             <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
               <div className={`flex flex-wrap items-center justify-between gap-3 border-b ${borderCol} pb-3`}>
                 <div className="min-w-0">
-                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-neutral-300">
+                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-[var(--admin-text)]">
                     2. Activity Tracker
                   </h2>
                   <p className={`text-[11px] ${textMuted} mt-1`}>
@@ -3059,7 +3122,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
             <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
               <div className={`flex flex-wrap items-center justify-between gap-3 border-b ${borderCol} pb-3`}>
                 <div className="min-w-0">
-                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-neutral-300">
+                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-[var(--admin-text)]">
                     3. Media Manager
                   </h2>
                   <p className={`text-[11px] ${textMuted} mt-1`}>
@@ -3067,11 +3130,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 shrink-0">
-                  <div className="flex items-center rounded-lg border border-neutral-800 p-1 bg-neutral-900/50">
+                  <div className={`flex items-center rounded-lg border ${borderCol} p-1 bg-[var(--admin-card)]`}>
                     <button
                       onClick={() => setMediaViewMode('grid')}
                       className={`px-3 py-1.5 rounded-md text-[10px] font-bold uppercase transition-all ${
-                        mediaViewMode === 'grid' ? 'bg-white text-black shadow-sm' : `${textMuted} hover:text-white`
+                        mediaViewMode === 'grid'
+                          ? 'bg-[var(--admin-primary)] text-[var(--admin-primary-text)] shadow-sm'
+                          : `${textMuted} hover:text-[var(--admin-text)]`
                       }`}
                     >
                       Grid
@@ -3079,7 +3144,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                     <button
                       onClick={() => setMediaViewMode('list')}
                       className={`px-3 py-1.5 rounded-md text-[10px] font-bold uppercase transition-all ${
-                        mediaViewMode === 'list' ? 'bg-white text-black shadow-sm' : `${textMuted} hover:text-white`
+                        mediaViewMode === 'list'
+                          ? 'bg-[var(--admin-primary)] text-[var(--admin-primary-text)] shadow-sm'
+                          : `${textMuted} hover:text-[var(--admin-text)]`
                       }`}
                     >
                       List
@@ -3281,7 +3348,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                     <div className={`w-full h-1.5 rounded-full overflow-hidden border ${borderCol}`}>
                       <div
                         style={{ width: `${uploadProgress}%` }}
-                        className={`h-full rounded-full ${dark ? 'bg-white' : 'bg-black'}`}
+                        className="h-full rounded-full bg-[var(--admin-primary)]"
                       />
                     </div>
                   </div>
@@ -3398,7 +3465,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                               )}
                             </div>
 
-                            <div className="flex items-center justify-between gap-1 pt-1 border-t border-neutral-800/40">
+                            <div className={`flex items-center justify-between gap-1 pt-1 border-t ${borderCol}`}>
                               <select
                                 value={item.category || 'Gallery'}
                                 onChange={(e) => {
@@ -3412,10 +3479,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                                     void setDoc(doc(db, 'content', 'main'), { lockPhotoUrl: item.url }, { merge: true }).catch(() => {});
                                   }
                                 }}
-                                className={`text-[11px] px-1.5 py-0.5 rounded-[10px] border ${borderCol} bg-transparent`}
+                                className={`text-[11px] px-1.5 py-0.5 rounded-[10px] border ${borderCol} bg-[var(--admin-input-bg)] text-[var(--admin-text)]`}
                               >
                                 {MEDIA_CATEGORIES.map((c) => (
-                                  <option key={c} value={c} className="bg-black text-white">
+                                  <option key={c} value={c} className="bg-[var(--admin-card)] text-[var(--admin-text)]">
                                     {c}
                                   </option>
                                 ))}
@@ -3502,7 +3569,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
             <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
               <div className={`flex flex-wrap items-center justify-between gap-3 border-b ${borderCol} pb-3`}>
                 <div className="min-w-0">
-                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-neutral-300">
+                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-[var(--admin-text)]">
                     4. Inbox From Her
                   </h2>
                   <p className={`text-[11px] ${textMuted} mt-1`}>
@@ -3510,7 +3577,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 shrink-0">
-                  <div className="px-3 py-1.5 rounded-full border border-neutral-800 bg-neutral-900/40 text-[10px] font-bold uppercase tracking-widest text-neutral-400">
+                  <div className={`px-3 py-1.5 rounded-full border ${borderCol} bg-[var(--admin-card)] text-[10px] font-bold uppercase tracking-widest ${textMuted}`}>
                     {inboxItems.length} Total Items
                   </div>
                   {inboxItems.length > 0 && (
@@ -3674,7 +3741,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
             <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
               <div className={`flex flex-wrap items-center justify-between gap-3 border-b ${borderCol} pb-3`}>
                 <div className="min-w-0">
-                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-neutral-300">
+                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-[var(--admin-text)]">
                     5. Notification Sender
                   </h2>
                   <p className={`text-[11px] ${textMuted} mt-1`}>
@@ -3682,7 +3749,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 shrink-0">
-                  <div className="px-3 py-1.5 rounded-full border border-neutral-800 bg-neutral-900/40 text-[10px] font-bold uppercase tracking-widest text-neutral-400">
+                  <div className={`px-3 py-1.5 rounded-full border ${borderCol} bg-[var(--admin-card)] text-[10px] font-bold uppercase tracking-widest ${textMuted}`}>
                     {notificationsList.length} History
                   </div>
                 </div>
@@ -3993,8 +4060,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                                   onClick={() => setNotifTargetUser(u.username)}
                                   className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all cursor-pointer flex items-center gap-1.5 ${
                                     isSelected
-                                      ? 'bg-pink-500/25 border-pink-400 text-pink-200 shadow-sm'
-                                      : `${borderCol} ${textMuted} hover:text-white`
+                                      ? 'bg-[var(--admin-primary)]/20 border-[var(--admin-primary)] text-[var(--admin-text)] shadow-sm'
+                                      : `${borderCol} ${textMuted} hover:text-[var(--admin-text)]`
                                   }`}
                                 >
                                   <span>👤 {u.username}</span>
@@ -4132,7 +4199,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                                     key={ri}
                                     className="px-2 py-1 rounded-lg bg-emerald-500/15 border border-emerald-400/40 text-emerald-300 text-[10.5px]"
                                   >
-                                    <span className="font-extrabold text-white">
+                                    <span className="font-extrabold text-[var(--admin-text)]">
                                       👤 {resp.userName}:
                                     </span>{' '}
                                     <span className="font-bold">✅ Chose "{resp.label}"</span>
@@ -4200,7 +4267,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
             <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
               <div className={`flex flex-wrap items-center justify-between gap-3 border-b ${borderCol} pb-3`}>
                 <div className="min-w-0">
-                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-neutral-300 leading-tight">
+                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-[var(--admin-text)] leading-tight">
                     6. Overlay Popup Sender
                   </h2>
                   <p className={`text-[10px] ${textMuted} mt-1 uppercase tracking-tighter`}>
@@ -4208,19 +4275,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 shrink-0">
-                  <div className="px-3 py-1.5 rounded-full border border-neutral-800 bg-neutral-900/40 text-[10px] font-bold uppercase tracking-widest text-neutral-400">
+                  <div className={`px-3 py-1.5 rounded-full border ${borderCol} bg-[var(--admin-card)] text-[10px] font-bold uppercase tracking-widest ${textMuted}`}>
                     {overlaysList.length} History
                   </div>
                 </div>
               </div>
                 <button
                   type="button"
-                  onClick={async () => {
+                  onClick={() => {
+                    const effectiveUser =
+                      ovTargetMode === 'USER'
+                        ? ovTargetUser.trim() || selectableTargetUsers[0]?.username || editRecipientName.trim() || 'Kashish'
+                        : '';
                     if (ovTargetMode === 'USER' && !ovTargetUser.trim()) {
-                      notifyStatus('Please select or enter a username below first.', true);
-                      return;
+                      setOvTargetUser(effectiveUser);
                     }
-                    const targetMeta = resolveTargetMetadata(ovTargetMode, ovTargetUser);
+                    const targetMeta = resolveTargetMetadata(ovTargetMode, effectiveUser);
                     const now = Date.now();
                     const pendingOld = overlaysList.filter(
                       (ov) =>
@@ -4228,7 +4298,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                         (!ov.scheduledFor || ov.scheduledFor <= now) &&
                         (targetMeta.targetUser === 'ALL' || (ov.targetUser || 'ALL') === targetMeta.targetUser)
                     );
-                    await Promise.all(
+                    void Promise.all(
                       pendingOld.map((oldOv) => {
                         const hasExistingResponse =
                           Boolean(oldOv.clickedAction) && oldOv.clickedAction !== 'replaced_by_new_overlay';
@@ -4258,6 +4328,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                       targetUser: targetMeta.targetUser,
                       targetUserName: targetMeta.targetUserName,
                       targetUserEmail: targetMeta.targetUserEmail,
+                      targetUserUid: targetMeta.targetUserUid,
                       createdAt: Date.now(),
                       scheduledFor: null,
                       status: 'sent',
@@ -4269,7 +4340,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                   ⚡ Send Instant Truecaller Wakeup Popup (
                   {ovTargetMode === 'ALL'
                     ? 'To: All Users'
-                    : `To: ${ovTargetUser.trim() || 'Select User'}`}
+                    : `To: ${ovTargetUser.trim() || selectableTargetUsers[0]?.username || 'Kashish'}`}
                   )
                 </button>
 
@@ -4590,8 +4661,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                                     onClick={() => setOvTargetUser(u.username)}
                                     className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all cursor-pointer flex items-center gap-1.5 ${
                                       isSelected
-                                        ? 'bg-pink-500/25 border-pink-400 text-pink-200 shadow-sm'
-                                        : `${borderCol} ${textMuted} hover:text-white`
+                                        ? 'bg-[var(--admin-primary)]/20 border-[var(--admin-primary)] text-[var(--admin-text)] shadow-sm'
+                                        : `${borderCol} ${textMuted} hover:text-[var(--admin-text)]`
                                     }`}
                                   >
                                     <span>👤 {u.username}</span>
@@ -4722,7 +4793,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                               key={i}
                               style={
                                 i === 0
-                                  ? { background: pTheme.primaryBtn, color: '#ffffff' }
+                                  ? { background: pTheme.primaryBtn, color: 'var(--admin-text)' }
                                   : {
                                       background: pTheme.secondaryBtn,
                                       color: isLight ? '#4a0e27' : '#fce7f3',
@@ -4855,7 +4926,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                                       </span>
                                       <span className="opacity-70">({b.action})</span>
                                       {isThisChosen && (
-                                        <span className="ml-0.5 px-1.5 py-0.2 rounded bg-emerald-500 text-black text-[9px] font-extrabold">
+                                        <span className="ml-0.5 px-1.5 py-0.2 rounded bg-emerald-500 text-[var(--admin-primary-text)] text-[9px] font-extrabold">
                                           ✓ {usersWhoChoseThis.map((u) => u.userName).join(', ')}
                                         </span>
                                       )}
@@ -4891,7 +4962,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                                       }`}
                                     >
                                       <div className="flex flex-wrap items-center justify-between gap-1">
-                                        <span className="font-extrabold text-white text-[11.5px]">
+                                        <span className="font-extrabold text-[var(--admin-text)] text-[11.5px]">
                                           👤 {resp.userName}
                                         </span>
                                         {resp.timestamp && (
@@ -4930,7 +5001,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                           </td>
                           <td className="py-2 px-2.5 text-right space-x-1 align-top whitespace-nowrap">
                             <button
-                              onClick={async () => {
+                              onClick={() => {
                                 const now = Date.now();
                                 const resendTarget = o.targetUser || 'ALL';
                                 const pendingOld = overlaysList.filter(
@@ -4939,7 +5010,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                                     (!ov.scheduledFor || ov.scheduledFor <= now) &&
                                     (resendTarget === 'ALL' || (ov.targetUser || 'ALL') === resendTarget)
                                 );
-                                await Promise.all(
+                                void Promise.all(
                                   pendingOld.map((oldOv) => {
                                     const hasExistingResponse =
                                       Boolean(oldOv.clickedAction) &&
@@ -4973,6 +5044,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                                   targetUser: o.targetUser || 'ALL',
                                   targetUserName: o.targetUserName || 'All Users',
                                   targetUserEmail: o.targetUserEmail || '',
+                                  targetUserUid: o.targetUserUid || '',
                                   createdAt: Date.now(),
                                   status: 'sent',
                                   dismissed: false,
@@ -5607,7 +5679,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
             <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
               <div className={`flex flex-wrap items-center justify-between gap-3 border-b ${borderCol} pb-3`}>
                 <div className="min-w-0">
-                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-neutral-300">
+                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-[var(--admin-text)]">
                     9. Music Manager
                   </h2>
                   <p className={`text-[11px] ${textMuted} mt-1`}>
@@ -5615,7 +5687,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 shrink-0">
-                  <div className={`px-3 py-1.5 rounded-full border ${musicOn ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400' : 'border-neutral-800 bg-neutral-900/40 text-neutral-500'} text-[10px] font-bold uppercase tracking-widest`}>
+                  <div className={`px-3 py-1.5 rounded-full border ${musicOn ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400' : `${borderCol} bg-[var(--admin-card)] ${textMuted}`} text-[10px] font-bold uppercase tracking-widest`}>
                     {musicOn ? '🎵 Active' : '🔇 Muted'}
                   </div>
                 </div>
@@ -5665,14 +5737,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                           onClick={() => handleFastTriggerSong(t.url, t.name)}
                           className={`px-3 py-1.5 rounded-xl text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-sm ${
                             isSelected
-                              ? 'bg-gradient-to-r from-pink-500 to-purple-600 text-white scale-[1.02] shadow-pink-500/30'
-                              : 'bg-white/5 hover:bg-white/10 text-white/80 border border-white/10 hover:border-pink-500/40'
+                              ? 'bg-[var(--admin-primary)] text-[var(--admin-primary-text)] scale-[1.02] shadow-sm'
+                              : `bg-[var(--admin-input-bg)] hover:bg-[var(--admin-card-hover)] text-[var(--admin-text)] border ${borderCol} hover:border-[var(--admin-primary)]`
                           }`}
                         >
                           <span>{isSelected ? '🎶' : '▶'}</span>
                           <span className="truncate max-w-[140px]">{t.name}</span>
                           {isSelected && (
-                            <span className="text-[9px] bg-white/25 px-1 rounded-full uppercase tracking-wider">
+                            <span className="text-[9px] bg-[var(--admin-bg)]/30 px-1 rounded-full uppercase tracking-wider">
                               LIVE
                             </span>
                           )}
@@ -5682,7 +5754,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                   </div>
                 </div>
 
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-white/5">
+                <div className={`flex flex-wrap items-center justify-between gap-2 pt-1 border-t ${borderCol}`}>
                   <label className="flex items-center gap-2 font-bold cursor-pointer">
                     <input
                       type="checkbox"
@@ -5912,7 +5984,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
             <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
               <div className={`flex flex-wrap items-center justify-between gap-3 border-b ${borderCol} pb-3`}>
                 <div className="min-w-0">
-                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-neutral-300">
+                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-[var(--admin-text)]">
                     10. Remote App Control
                   </h2>
                   <p className={`text-[11px] ${textMuted} mt-1`}>
@@ -5920,7 +5992,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 shrink-0">
-                  <div className={`px-3 py-1.5 rounded-full border ${maintMode ? 'border-amber-500/50 bg-amber-500/10 text-amber-400' : 'border-neutral-800 bg-neutral-900/40 text-neutral-500'} text-[10px] font-bold uppercase tracking-widest`}>
+                  <div className={`px-3 py-1.5 rounded-full border ${maintMode ? 'border-amber-500/50 bg-amber-500/10 text-amber-400' : `${borderCol} bg-[var(--admin-card)] ${textMuted}`} text-[10px] font-bold uppercase tracking-widest`}>
                     {maintMode ? '⚠️ Maintenance On' : '✅ App Online'}
                   </div>
                 </div>
@@ -6381,8 +6453,8 @@ service cloud.firestore {
             <div className="space-y-5 animate-in fade-in slide-in-from-bottom-2 duration-300">
               <div className={`flex flex-wrap items-center justify-between gap-3 border-b ${borderCol} pb-3`}>
                 <div className="min-w-0">
-                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-neutral-300 flex items-center gap-2">
-                    <BookUser className="w-5 h-5 text-neutral-400" />
+                  <h2 className="text-[14px] font-bold uppercase tracking-widest text-[var(--admin-text)] flex items-center gap-2">
+                    <BookUser className={`w-5 h-5 ${textMuted}`} />
                     12. Contacts Cloud Vault
                   </h2>
                   <p className={`text-[11px] ${textMuted} mt-1`}>
@@ -6390,7 +6462,7 @@ service cloud.firestore {
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 shrink-0">
-                  <div className="px-3 py-1.5 rounded-full border border-neutral-800 bg-neutral-900/40 text-[10px] font-bold uppercase tracking-widest text-neutral-400">
+                  <div className={`px-3 py-1.5 rounded-full border ${borderCol} bg-[var(--admin-card)] text-[10px] font-bold uppercase tracking-widest ${textMuted}`}>
                     {contactsList.length} Contacts Synced
                   </div>
                 </div>
@@ -6479,7 +6551,7 @@ service cloud.firestore {
                           localStorage.removeItem('kashish_admin_contacts_search');
                         } catch {}
                       }}
-                      className={`absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] ${textMuted} hover:text-white`}
+                      className={`absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] ${textMuted} hover:text-[var(--admin-text)]`}
                     >
                       Clear
                     </button>
@@ -6497,9 +6569,7 @@ service cloud.firestore {
                         localStorage.setItem('kashish_admin_contacts_sort', val);
                       } catch {}
                     }}
-                    className={`px-2 py-1 text-[12px] rounded-[10px] border ${borderCol} ${
-                      dark ? 'bg-neutral-950 text-neutral-100' : 'bg-white text-neutral-900'
-                    }`}
+                    className={`px-2 py-1 text-[12px] rounded-[10px] border ${borderCol} bg-[var(--admin-input-bg)] text-[var(--admin-text)]`}
                   >
                     <option value="name">Name (A → Z)</option>
                     <option value="recent">Recently Synced</option>
@@ -6544,15 +6614,13 @@ service cloud.firestore {
                     return (
                       <div
                         key={c.id}
-                        className={`p-3 rounded-[14px] border ${borderCol} ${bgSubtle} flex flex-col justify-between gap-2.5 transition-colors hover:border-neutral-500`}
+                        className={`p-3 rounded-[14px] border ${borderCol} ${bgSubtle} flex flex-col justify-between gap-2.5 transition-colors hover:border-[var(--admin-primary)]`}
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex items-start gap-2.5 min-w-0">
                             {/* Avatar */}
                             <div
-                              className={`w-9 h-9 shrink-0 rounded-full border ${borderCol} ${
-                                dark ? 'bg-neutral-900 text-neutral-200' : 'bg-neutral-200 text-neutral-800'
-                              } flex items-center justify-center font-bold text-[12px] tracking-tight`}
+                              className={`w-9 h-9 shrink-0 rounded-full border ${borderCol} bg-[var(--admin-bg)] text-[var(--admin-text)] flex items-center justify-center font-bold text-[12px] tracking-tight`}
                             >
                               {initials}
                             </div>
@@ -6566,7 +6634,7 @@ service cloud.firestore {
                               </div>
 
                               {/* Phone Number */}
-                              <div className="text-[12px] font-mono tabular-nums text-neutral-300 mt-0.5 flex items-center gap-1.5">
+                              <div className="text-[12px] font-mono tabular-nums text-[var(--admin-text)] mt-0.5 flex items-center gap-1.5">
                                 <Phone className="w-3 h-3 shrink-0 text-emerald-400" />
                                 <span className="truncate">{c.phoneNumber || c.cleanNumber || 'No number'}</span>
                               </div>
@@ -6585,9 +6653,7 @@ service cloud.firestore {
                           <button
                             onClick={() => handleDeleteContact(c)}
                             title="Delete this contact"
-                            className={`p-1.5 rounded-[8px] border ${borderCol} ${
-                              dark ? 'hover:bg-neutral-900 text-neutral-400 hover:text-red-400' : 'hover:bg-neutral-100 text-neutral-600 hover:text-red-600'
-                            }`}
+                            className={`p-1.5 rounded-[8px] border ${borderCol} bg-[var(--admin-bg)] hover:bg-[var(--admin-card-hover)] text-[var(--admin-text-muted)] hover:text-red-400`}
                           >
                             <Trash2 className="w-3 h-3" />
                           </button>
@@ -6648,15 +6714,15 @@ service cloud.firestore {
 
       {/* Media Preview Modal */}
       {previewMedia && (
-        <div className="fixed inset-0 z-[2100] bg-black/80 flex items-center justify-center p-4">
-          <div className={`max-w-lg w-full rounded-[14px] border ${borderCol} ${bgMain} p-3 space-y-2`}>
+        <div className="fixed inset-0 z-[2100] bg-[var(--admin-modal-backdrop)] backdrop-blur-xs flex items-center justify-center p-4">
+          <div className={`max-w-lg w-full rounded-[14px] border ${borderCol} bg-[var(--admin-card)] text-[var(--admin-text)] p-3 space-y-2 shadow-2xl`}>
             <div className="flex items-center justify-between">
               <span className="font-bold truncate">{previewMedia.name || 'Preview'}</span>
               <button onClick={() => setPreviewMedia(null)} className={btnSecondary}>
                 Close
               </button>
             </div>
-            <div className="max-h-[70vh] rounded-[12px] overflow-hidden flex items-center justify-center bg-black">
+            <div className={`max-h-[70vh] rounded-[12px] overflow-hidden flex items-center justify-center bg-[var(--admin-bg)] border ${borderCol}`}>
               {previewMedia.type === 'video' ? (
                 <video src={previewMedia.url} controls autoPlay className="max-h-[68vh] w-auto rounded-[12px]" />
               ) : (
@@ -6669,8 +6735,8 @@ service cloud.firestore {
 
       {/* Confirmation Dialog Modal before any Delete */}
       {confirmDialog && (
-        <div className="fixed inset-0 z-[2200] bg-black/75 flex items-center justify-center p-4">
-          <div className={`max-w-xs w-full rounded-[14px] border ${borderCol} ${bgMain} p-4 space-y-3`}>
+        <div className="fixed inset-0 z-[2200] bg-[var(--admin-modal-backdrop)] backdrop-blur-xs flex items-center justify-center p-4">
+          <div className={`max-w-xs w-full rounded-[14px] border ${borderCol} bg-[var(--admin-card)] text-[var(--admin-text)] p-4 space-y-3 shadow-2xl`}>
             <div className="font-bold text-[13px]">Confirm Action</div>
             <p className={`text-[12px] ${textMuted}`}>{confirmDialog.message}</p>
             <div className="flex justify-end gap-2 pt-1">

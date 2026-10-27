@@ -1307,6 +1307,7 @@ export function isDocTargetedToCurrentUser(docData?: Record<string, any> | null)
   const targetLower = rawTarget.toLowerCase();
   const targetNameLower = String(docData.targetUserName || '').trim().toLowerCase();
   const targetEmailLower = String(docData.targetUserEmail || '').trim().toLowerCase();
+  const targetUidLower = String(docData.targetUserUid || '').trim().toLowerCase();
 
   const { uid, name, email } = getCurrentUserIdentity();
   const uidLower = uid.toLowerCase();
@@ -1314,13 +1315,29 @@ export function isDocTargetedToCurrentUser(docData?: Record<string, any> | null)
   const emailLower = email.toLowerCase();
   const emailPrefixLower = emailLower.split('@')[0] || '';
 
-  if (uidLower && targetLower === uidLower) return true;
-  if (emailLower && (targetLower === emailLower || (targetEmailLower && targetEmailLower === emailLower))) {
+  // If this device is unlocked via password or before Firebase Auth finishes loading uid/email,
+  // deliver targeted overlays/notifications rather than dropping them silently
+  if (!uidLower && !emailLower) {
+    return true;
+  }
+
+  if (uidLower && (targetLower === uidLower || (targetUidLower && targetUidLower === uidLower))) {
+    return true;
+  }
+  if (
+    emailLower &&
+    (targetLower === emailLower ||
+      (targetEmailLower && targetEmailLower === emailLower) ||
+      emailLower.includes(targetLower))
+  ) {
     return true;
   }
   if (
     emailPrefixLower &&
-    (targetLower === emailPrefixLower || (targetNameLower && targetNameLower === emailPrefixLower))
+    (targetLower === emailPrefixLower ||
+      (targetNameLower && targetNameLower === emailPrefixLower) ||
+      emailPrefixLower.includes(targetLower) ||
+      targetLower.includes(emailPrefixLower))
   ) {
     return true;
   }
@@ -1329,7 +1346,8 @@ export function isDocTargetedToCurrentUser(docData?: Record<string, any> | null)
     (targetLower === nameLower ||
       (targetNameLower && targetNameLower === nameLower) ||
       nameLower.includes(targetLower) ||
-      targetLower.includes(nameLower))
+      targetLower.includes(nameLower) ||
+      (targetNameLower && (nameLower.includes(targetNameLower) || targetNameLower.includes(nameLower))))
   ) {
     return true;
   }

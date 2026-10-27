@@ -27,6 +27,19 @@
   --glass-border: rgba(244, 114, 182, 0.25);
   --glass-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
   --input-bg: #29143d;
+
+  /* ADMIN PANEL SOFT DARK THEME VARIABLES */
+  --admin-bg: #1e2130;
+  --admin-card: #292d42;
+  --admin-card-hover: #323750;
+  --admin-input-bg: #232738;
+  --admin-border: #3a3f5c;
+  --admin-text: #e4e6ef;
+  --admin-text-muted: #9ca0b8;
+  --admin-primary: #6c8cff;
+  --admin-primary-hover: #85a0ff;
+  --admin-primary-text: #141726;
+  --admin-modal-backdrop: rgba(20, 23, 34, 0.84);
 }
 
 [data-theme="default"],
