@@ -648,11 +648,17 @@ export async function searchYouTubeSongs(
         }));
       };
 
+      const isStaticHost =
+        typeof window !== 'undefined' &&
+        (window.location.hostname.endsWith('.web.app') ||
+          window.location.hostname.endsWith('.firebaseapp.com'));
+      const fallbackDelayMs = isStaticHost ? 0 : 150;
+
       const delayedPipedFallback = (baseUrl: string) =>
         new Promise<YouTubeTrack[]>((resolve, reject) => {
           const timer = globalThis.setTimeout(() => {
             searchViaPipedMusicSongsOnly(baseUrl, query, raceController.signal).then(resolve, reject);
-          }, 900);
+          }, fallbackDelayMs);
           raceController.signal.addEventListener(
             'abort',
             () => {
@@ -665,7 +671,9 @@ export async function searchYouTubeSongs(
 
       const catalogProviders: Promise<YouTubeTrack[]>[] = [
         nativeBridgeSearch(),
-        searchViaBackendYTMusicApi(query, Boolean(options?.bypassCache), raceController.signal),
+        ...(isStaticHost
+          ? []
+          : [searchViaBackendYTMusicApi(query, Boolean(options?.bypassCache), raceController.signal)]),
         delayedPipedFallback('https://pipedapi.ducks.party'),
         delayedPipedFallback('https://api.piped.private.coffee'),
       ];
@@ -742,11 +750,17 @@ export async function searchYouTubeVideos(
 
   const videoSearchPromise = (async () => {
     try {
+      const isStaticHost =
+        typeof window !== 'undefined' &&
+        (window.location.hostname.endsWith('.web.app') ||
+          window.location.hostname.endsWith('.firebaseapp.com'));
+      const fallbackDelayMs = isStaticHost ? 0 : 150;
+
       const delayedPipedVideoFallback = (baseUrl: string) =>
         new Promise<YouTubeTrack[]>((resolve, reject) => {
           const timer = globalThis.setTimeout(() => {
             searchViaPipedVideos(baseUrl, query, raceController.signal).then(resolve, reject);
-          }, 900);
+          }, fallbackDelayMs);
           raceController.signal.addEventListener(
             'abort',
             () => {
@@ -758,7 +772,9 @@ export async function searchYouTubeVideos(
         });
 
       const videoProviders: Promise<YouTubeTrack[]>[] = [
-        searchVideosViaBackendApi(query, Boolean(options?.bypassCache), raceController.signal),
+        ...(isStaticHost
+          ? []
+          : [searchVideosViaBackendApi(query, Boolean(options?.bypassCache), raceController.signal)]),
         delayedPipedVideoFallback('https://pipedapi.ducks.party'),
         delayedPipedVideoFallback('https://api.piped.private.coffee'),
       ];
@@ -808,8 +824,9 @@ export async function refreshSearchInBackground(
 }
 
 /**
- * Finds an embeddable YouTube Music song or video alternative if the primary track has
- * third-party embedding disabled by the uploader (YouTube Error 101 / 150).
+ * Finds an embeddable YouTube video or song alternative if the primary track has
+ * third-party embedding disabled by the uploader (YouTube Error 101 / 150 / 152).
+ * Prioritizes standard YouTube videos first because Topic Art Tracks frequently block embeds.
  */
 export async function findEmbeddableAlternative(
   track: YouTubeTrack,
@@ -821,14 +838,15 @@ export async function findEmbeddableAlternative(
       .replace(/\[official.*?\]/gi, '')
       .replace(/official video|full video|music video/gi, '')
       .trim();
-    const altQuery = `${cleanTitle} ${track.artist}`;
-    const [songsRes, videosRes] = await Promise.allSettled([
-      searchYouTubeSongs(altQuery),
+    const cleanArtist = track.artist.replace(/ - Topic$/i, '').trim();
+    const altQuery = `${cleanTitle} ${cleanArtist}`.trim();
+    const [videosRes, songsRes] = await Promise.allSettled([
       searchYouTubeVideos(altQuery),
+      searchYouTubeSongs(altQuery),
     ]);
     const candidates: YouTubeTrack[] = [];
-    if (songsRes.status === 'fulfilled') candidates.push(...songsRes.value);
     if (videosRes.status === 'fulfilled') candidates.push(...videosRes.value);
+    if (songsRes.status === 'fulfilled') candidates.push(...songsRes.value);
 
     for (const candidate of candidates) {
       if (!triedVideoIds.has(candidate.videoId)) {

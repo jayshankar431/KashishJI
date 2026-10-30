@@ -198,8 +198,8 @@ function getTopLevelNativeAudioElement(): HTMLAudioElement | null {
     const audio = document.createElement('audio');
     audio.id = 'kashish-native-music-audio';
     audio.preload = 'auto';
-    audio.crossOrigin = 'anonymous';
     audio.setAttribute('playsinline', 'true');
+    audio.setAttribute('referrerpolicy', 'no-referrer');
     audio.style.display = 'none';
     document.body.appendChild(audio);
     sharedNativeAudio = audio;
@@ -422,6 +422,8 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
   const tapToReadyRecordedRef = useRef<number | null>(null);
   const firstAudioReachedRef = useRef<boolean>(false);
   const activeTelemetryEntryRef = useRef<PlaybackTelemetryEntry | null>(null);
+  const lastPlayInitiatedAtRef = useRef<number>(0);
+  const nativeNotifiedPlayingKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     currentTrackRef.current = currentTrack;
@@ -567,19 +569,22 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       }
     }
 
-    const track = currentTrackRef.current;
-    if (track) {
-      try {
-        const thumbUrl = normalizeSquareThumbnail(track.thumbnail, track.videoId);
-        window.AndroidApp?.updateMusicNotificationWithPosition?.(
-          track.title,
-          track.artist,
-          thumbUrl,
-          userWantPlayingRef.current,
-          Math.max(0, Math.floor(safeSec)),
-          Math.max(0, Math.floor(effectiveDur))
-        );
-      } catch {}
+    if (! userWantPlayingRef.current) {
+      const track = currentTrackRef.current;
+      if (track) {
+        try {
+          const thumbUrl = normalizeSquareThumbnail(track.thumbnail, track.videoId);
+          window.AndroidApp?.updateMusicNotificationWithPosition?.(
+            track.title,
+            track.artist,
+            thumbUrl,
+            false,
+            Math.max(0, Math.floor(safeSec)),
+            Math.max(0, Math.floor(effectiveDur))
+          );
+          window.AndroidApp?.abandonAudioFocus?.();
+        } catch {}
+      }
     }
   }, []);
 
@@ -588,12 +593,14 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
   const applyMediaMetadata = useCallback(
     (track: YouTubeTrack | null, playing: boolean) => {
       if (!track) {
+        nativeNotifiedPlayingKeyRef.current = null;
         try {
           if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
             navigator.mediaSession.metadata = null;
             navigator.mediaSession.playbackState = 'none';
           }
           window.AndroidApp?.dismissMusicNotification?.();
+          window.AndroidApp?.abandonAudioFocus?.();
         } catch {}
         return;
       }
@@ -625,23 +632,56 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
         } catch {}
       }
 
+      // IMPORTANT FOR APK:
+      // In older APK builds, `CallAndOverlayHelper.updateMusicNotification(..., isPlaying = true)`
+      // calls `AudioManager.requestAudioFocus()`, which steals Android AudioFocus away from
+      // Chromium WebView if called repeatedly while WebView is already playing!
+      // Therefore:
+      // 1) Only post the native `playing = true` notification once per track start/resume
+      //    (before WebView playback begins), and IMMEDIATELY call `abandonAudioFocus()` on the
+      //    next synchronous line so Chromium WebView's AudioFocusDelegate owns AudioFocus 100%.
+      // 2) Always post `playing = false` on pause (which never requests AudioFocus).
       try {
-        if (typeof window.AndroidApp?.updateMusicNotificationWithPosition === 'function') {
-          window.AndroidApp.updateMusicNotificationWithPosition(
-            track.title,
-            track.artist,
-            thumbUrl,
-            playing,
-            Math.max(0, Math.floor(currentTime || 0)),
-            Math.max(0, Math.floor(effectiveDur || 0))
-          );
-        } else {
-          window.AndroidApp?.updateMusicNotification?.(
-            track.title,
-            track.artist,
-            thumbUrl,
-            playing
-          );
+        if (!playing) {
+          nativeNotifiedPlayingKeyRef.current = null;
+          if (typeof window.AndroidApp?.updateMusicNotificationWithPosition === 'function') {
+            window.AndroidApp.updateMusicNotificationWithPosition(
+              track.title,
+              track.artist,
+              thumbUrl,
+              false,
+              Math.max(0, Math.floor(currentTime || 0)),
+              Math.max(0, Math.floor(effectiveDur || 0))
+            );
+          } else {
+            window.AndroidApp?.updateMusicNotification?.(
+              track.title,
+              track.artist,
+              thumbUrl,
+              false
+            );
+          }
+          window.AndroidApp?.abandonAudioFocus?.();
+        } else if (nativeNotifiedPlayingKeyRef.current !== track.videoId) {
+          nativeNotifiedPlayingKeyRef.current = track.videoId;
+          if (typeof window.AndroidApp?.updateMusicNotificationWithPosition === 'function') {
+            window.AndroidApp.updateMusicNotificationWithPosition(
+              track.title,
+              track.artist,
+              thumbUrl,
+              true,
+              Math.max(0, Math.floor(currentTime || 0)),
+              Math.max(0, Math.floor(effectiveDur || 0))
+            );
+          } else {
+            window.AndroidApp?.updateMusicNotification?.(
+              track.title,
+              track.artist,
+              thumbUrl,
+              true
+            );
+          }
+          window.AndroidApp?.abandonAudioFocus?.();
         }
       } catch {}
     },
@@ -656,6 +696,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
   // Pause helper (used by UI, Media Session, and voice note recording event)
   const pausePlayback = useCallback(() => {
     userWantPlayingRef.current = false;
+    nativeNotifiedPlayingKeyRef.current = null;
     setIsPlaying(false);
     setIsBuffering(false);
 
@@ -876,27 +917,43 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
             if (playbackBackendRef.current !== 'yt') return;
             const errCode = event?.data;
             const failedTrack = currentTrackRef.current;
-            // Error 101 / 150 = Uploader does not allow embedded playback outside YouTube
-            if (
-              failedTrack &&
-              (errCode === 101 ||
-                errCode === 150 ||
-                errCode === 2 ||
-                errCode === 5 ||
-                errCode === 100)
-            ) {
+            if (failedTrack && errCode !== undefined) {
+              if ( loadedVideoIdInPlayerRef.current) {
+                triedEmbedIdsRef.current.add(loadedVideoIdInPlayerRef.current);
+              }
               triedEmbedIdsRef.current.add(failedTrack.videoId);
-              setStatusNotice('Switching to embeddable YouTube Music version...');
+              setStatusNotice('Switching to playable version...');
               setIsBuffering(true);
+
+              // 1. Check already-fetched in-memory video results first (0ms instant switch!)
+              const inMemoryVideos = videoTracksRef.current.filter(
+                (v) => v.videoId && !triedEmbedIdsRef.current.has(v.videoId)
+              );
+              if (inMemoryVideos.length > 0 && playerRef.current && isPlayerReadyRef.current) {
+                const candidate = inMemoryVideos[0];
+                triedEmbedIdsRef.current.add(candidate.videoId);
+                loadedVideoIdInPlayerRef.current = candidate.videoId;
+                lastPlayInitiatedAtRef.current = performance.now();
+                try {
+                  playerRef.current.loadVideoById({
+                    videoId: candidate.videoId,
+                    suggestedQuality: showVideoViewportRef.current ? 'default' : 'small',
+                  });
+                  playerRef.current.playVideo();
+                  setStatusNotice(null);
+                  return;
+                } catch {}
+              }
+
+              // 2. Network search for embeddable video/song alternative
               const altTrack = await findEmbeddableAlternative(
                 failedTrack,
                 triedEmbedIdsRef.current
               );
               if (altTrack && playerRef.current && isPlayerReadyRef.current) {
                 triedEmbedIdsRef.current.add(altTrack.videoId);
-                setCurrentTrack(altTrack);
-                saveUserLastPlayedTrack(userIdRef.current, altTrack);
                 loadedVideoIdInPlayerRef.current = altTrack.videoId;
+                lastPlayInitiatedAtRef.current = performance.now();
                 try {
                   playerRef.current.loadVideoById({
                     videoId: altTrack.videoId,
@@ -910,7 +967,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
             }
             setIsBuffering(false);
             setIsPlaying(false);
-            setStatusNotice('This track restricts embedded playback. Try another result from the list.');
+            setStatusNotice('This track restricts embedded playback. Try another result from the Videos tab.');
           },
         },
       };
@@ -976,6 +1033,31 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       } else {
         pendingTrackRef.current = track;
         ensureYouTubePlayer();
+      }
+
+      // If an older APK's Java updateMusicNotification briefly stole Android AudioFocus at t=0ms,
+      // re-assert WebView playback at 90ms and 320ms after Java AudioFocus was abandoned.
+      for (const delayMs of [90, 320]) {
+        window.setTimeout(() => {
+          if (!userWantPlayingRef.current || currentTrackRef.current?.videoId !== track.videoId) {
+            return;
+          }
+          try {
+            window.AndroidApp?.abandonAudioFocus?.();
+          } catch {}
+          const c = getTopLevelAudioCarrier();
+          if (c && c.paused) {
+            c.play().catch(() => {});
+          }
+          if (playerRef.current && isPlayerReadyRef.current) {
+            try {
+              const st = playerRef.current.getPlayerState?.();
+              if (st !== 1 && st !== 3) {
+                playerRef.current.playVideo?.();
+              }
+            } catch {}
+          }
+        }, delayMs);
       }
     },
     [ensureYouTubePlayer]
@@ -1071,6 +1153,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
   const handleSelectTrack = useCallback(
     (track: YouTubeTrack) => {
       const tapStartPerf = performance.now();
+      lastPlayInitiatedAtRef.current = tapStartPerf;
       triggerHaptic(25);
       userWantPlayingRef.current = true;
 
@@ -1090,14 +1173,12 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
             pausePlayback();
             return;
           }
+          nativeNotifiedPlayingKeyRef.current = null;
+          applyMediaMetadata(track, true);
           const carrier = getTopLevelAudioCarrier();
           if (carrier && carrier.paused) {
             carrier.play().catch(() => {});
           }
-          try {
-            window.AndroidApp?.requestAudioFocus?.();
-          } catch {}
-          applyMediaMetadata(track, true);
           setIsBuffering(true);
           playerRef.current.playVideo();
           return;
@@ -1129,9 +1210,8 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       triedEmbedIdsRef.current.clear();
       triedEmbedIdsRef.current.add(track.videoId);
 
-      try {
-        window.AndroidApp?.requestAudioFocus?.();
-      } catch {}
+      // Post native notification + immediately abandon competing Java AudioFocus BEFORE starting WebView media
+      nativeNotifiedPlayingKeyRef.current = null;
       applyMediaMetadata(track, true);
 
       // Start playback synchronously inside the user's click/tap gesture so browser autoplay policies
@@ -1149,10 +1229,9 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
   const resumePlayback = useCallback(() => {
     const cur = currentTrackRef.current;
     if (!cur) return;
+    lastPlayInitiatedAtRef.current = performance.now();
     userWantPlayingRef.current = true;
-    try {
-      window.AndroidApp?.requestAudioFocus?.();
-    } catch {}
+    nativeNotifiedPlayingKeyRef.current = null;
     applyMediaMetadata(cur, true);
 
     const carrier = getTopLevelAudioCarrier();
@@ -1319,6 +1398,10 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       if (action === 'play') {
         resumePlayback();
       } else if (action === 'pause') {
+        // Ignore spurious AUDIOFOCUS_LOSS pause callbacks emitted by older APK builds right after playback starts
+        if (performance.now() - lastPlayInitiatedAtRef.current < 1500) {
+          return;
+        }
         pausePlayback();
       } else if (action === 'toggle') {
         if (userWantPlayingRef.current) {
@@ -2386,7 +2469,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
         className={
           showVideoViewport && currentTrack
             ? 'fixed bottom-20 right-4 z-[90] w-64 sm:w-72 aspect-video rounded-2xl overflow-hidden border shadow-2xl transition-all duration-200'
-            : 'fixed -bottom-[220px] -right-[220px] w-[200px] h-[200px] opacity-[0.01] pointer-events-none overflow-hidden z-0'
+            : 'fixed bottom-2 right-2 w-[200px] h-[200px] opacity-[0.01] pointer-events-none overflow-hidden z-0'
         }
       >
         <div id="kashish-yt-iframe-wrapper" className="w-full h-full" />

@@ -677,40 +677,10 @@ object CallAndOverlayHelper {
     private var cachedAlbumArtBitmap: Bitmap? = null
     private val mediaArtExecutor = Executors.newSingleThreadExecutor()
 
-    private val audioFocusChangeListener = android.media.AudioManager.OnAudioFocusChangeListener { focusChange ->
-        when (focusChange) {
-            android.media.AudioManager.AUDIOFOCUS_LOSS,
-            android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                MainActivity.dispatchMediaAction("pause")
-            }
-        }
-    }
-
     fun requestAudioFocus(context: Context) {
-        try {
-            val am = context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager ?: return
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val attrs = android.media.AudioAttributes.Builder()
-                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
-                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .build()
-                val req = (audioFocusRequestObj as? android.media.AudioFocusRequest)
-                    ?: android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN)
-                        .setAudioAttributes(attrs)
-                        .setAcceptsDelayedFocusGain(true)
-                        .setOnAudioFocusChangeListener(audioFocusChangeListener)
-                        .build()
-                        .also { audioFocusRequestObj = it }
-                am.requestAudioFocus(req)
-            } else {
-                @Suppress("DEPRECATION")
-                am.requestAudioFocus(
-                    audioFocusChangeListener,
-                    android.media.AudioManager.STREAM_MUSIC,
-                    android.media.AudioManager.AUDIOFOCUS_GAIN
-                )
-            }
-        } catch (_: Exception) {}
+        // Chromium WebView's internal AudioFocusDelegate manages Android AudioFocus automatically
+        // whenever HTML5 <audio> or YouTube <video> plays. Requesting a separate AudioFocusRequest
+        // here would steal AudioFocus away from WebView and pause WebView playback.
     }
 
     fun abandonAudioFocus(context: Context) {
@@ -721,9 +691,6 @@ object CallAndOverlayHelper {
                 if (req != null) {
                     am.abandonAudioFocusRequest(req)
                 }
-            } else {
-                @Suppress("DEPRECATION")
-                am.abandonAudioFocus(audioFocusChangeListener)
             }
         } catch (_: Exception) {}
     }
