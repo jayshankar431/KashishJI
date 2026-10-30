@@ -391,8 +391,8 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
   const [isMiniExpanded, setIsMiniExpanded] = useState<boolean>(false);
 
-  // Active playback backend: 'native' (HTML5 <audio> direct stream) or 'yt' (YouTube IFrame Player)
-  const playbackBackendRef = useRef<'native' | 'yt'>('native');
+  // Active playback backend: 'yt' (YouTube IFrame Player with top-level MediaSession audio carrier)
+  const playbackBackendRef = useRef<'native' | 'yt'>('yt');
   const loadedNativeVideoIdRef = useRef<string | null>(null);
 
   // Official YouTube IFrame Player API singleton refs
@@ -726,28 +726,34 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       }
 
       isInitializingPlayerRef.current = true;
+      const shouldAutoplayInitial = Boolean(
+        pendingTrackRef.current && userWantPlayingRef.current
+      );
       const initialVideoId =
-        pendingTrackRef.current?.videoId || currentTrackRef.current?.videoId || undefined;
+        pendingTrackRef.current?.videoId ||
+        currentTrackRef.current?.videoId ||
+        tracksRef.current[0]?.videoId ||
+        'Umqb9KENgmk';
+
+      const playerVars: Record<string, any> = {
+        autoplay: shouldAutoplayInitial ? 1 : 0,
+        controls: 1,
+        playsinline: 1,
+        rel: 0,
+        modestbranding: 1,
+        fs: 0,
+        iv_load_policy: 3,
+        enablejsapi: 1,
+      };
+      if (typeof window !== 'undefined' && window.location.origin.startsWith('http')) {
+        playerVars.origin = window.location.origin;
+      }
 
       const playerConfig: Record<string, any> = {
-        height: '100%',
-        width: '100%',
-        playerVars: {
-          autoplay:
-            pendingTrackRef.current &&
-            userWantPlayingRef.current &&
-            playbackBackendRef.current === 'yt'
-              ? 1
-              : 0,
-          controls: 1,
-          playsinline: 1,
-          rel: 0,
-          modestbranding: 1,
-          fs: 0,
-          iv_load_policy: 3,
-          enablejsapi: 1,
-          origin: window.location.origin,
-        },
+        height: '200',
+        width: '200',
+        videoId: initialVideoId,
+        playerVars,
         events: {
           onReady: (event: any) => {
             isPlayerReadyRef.current = true;
@@ -759,15 +765,20 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
             }
 
             try {
+              const iframeEl = event?.target?.getIframe?.() as HTMLIFrameElement | undefined;
+              if (iframeEl) {
+                iframeEl.style.width = '100%';
+                iframeEl.style.height = '100%';
+                iframeEl.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture');
+              }
+            } catch {}
+
+            try {
               event.target.setVolume(volumeRef.current);
               if (isMutedRef.current) {
                 event.target.mute();
               }
-              if (
-                pendingTrackRef.current &&
-                userWantPlayingRef.current &&
-                playbackBackendRef.current === 'yt'
-              ) {
+              if (pendingTrackRef.current && userWantPlayingRef.current) {
                 const trackToPlay = pendingTrackRef.current;
                 pendingTrackRef.current = null;
                 if (tapTimestampRef.current !== null && tapToReadyRecordedRef.current === null) {
@@ -790,11 +801,16 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   videoId: currentTrackRef.current.videoId,
                   suggestedQuality: 'small',
                 });
+              } else if (!userWantPlayingRef.current) {
+                loadedVideoIdInPlayerRef.current = initialVideoId;
+                event.target.cueVideoById({
+                  videoId: initialVideoId,
+                  suggestedQuality: 'small',
+                });
               }
             } catch {}
           },
           onStateChange: (event: any) => {
-            if (playbackBackendRef.current !== 'yt') return;
             const state = event.data;
             // YT.PlayerState: PLAYING = 1, PAUSED = 2, BUFFERING = 3, ENDED = 0, CUED = 5
             if (state === 1) {
@@ -818,15 +834,27 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                 applyMediaMetadata(currentTrackRef.current, true);
               }
             } else if (state === 2) {
+              // If the user still wants music playing and the video viewport is hidden (or app is minimized),
+              // YouTube's iframe auto-paused on background transition — resume immediately!
               if (
-                typeof document !== 'undefined' &&
-                (document.visibilityState === 'hidden' || document.hidden) &&
-                userWantPlayingRef.current
+                userWantPlayingRef.current &&
+                (!showVideoViewportRef.current ||
+                  (typeof document !== 'undefined' &&
+                    (document.visibilityState === 'hidden' ||
+                      document.hidden ||
+                      !document.hasFocus())))
               ) {
                 try {
                   event.target?.playVideo?.();
                 } catch {}
                 return;
+              }
+              userWantPlayingRef.current = false;
+              const carrier = getTopLevelAudioCarrier();
+              if (carrier && !carrier.paused) {
+                try {
+                  carrier.pause();
+                } catch {}
               }
               setIsPlaying(false);
               setIsBuffering(false);
@@ -887,11 +915,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
         },
       };
 
-      if (initialVideoId) {
-        playerConfig.videoId = initialVideoId;
-        loadedVideoIdInPlayerRef.current = initialVideoId;
-      }
-
+      loadedVideoIdInPlayerRef.current = initialVideoId;
       playerRef.current = new window.YT.Player('kashish-yt-iframe-target', playerConfig);
     };
 
@@ -1053,58 +1077,31 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       // Persist as the current user's last actually PLAYED song (never confused with last searched)
       saveUserLastPlayedTrack(userIdRef.current, track);
 
-      const useVideoPlayer = showVideoViewportRef.current;
-      const nativeAudio = getTopLevelNativeAudioElement();
-
-      // If tapping the exact song that is already loaded in the active backend, toggle play/pause immediately
-      if (currentTrackRef.current?.videoId === track.videoId) {
-        if (
-          !useVideoPlayer &&
-          playbackBackendRef.current === 'native' &&
-          loadedNativeVideoIdRef.current === track.videoId &&
-          nativeAudio &&
-          nativeAudio.src
-        ) {
-          if (!nativeAudio.paused) {
+      // If tapping the exact song that is already loaded in the player, toggle play/pause immediately
+      if (
+        currentTrackRef.current?.videoId === track.videoId &&
+        loadedVideoIdInPlayerRef.current === track.videoId &&
+        playerRef.current &&
+        isPlayerReadyRef.current
+      ) {
+        try {
+          const state = playerRef.current.getPlayerState?.();
+          if (state === 1) {
             pausePlayback();
             return;
+          }
+          const carrier = getTopLevelAudioCarrier();
+          if (carrier && carrier.paused) {
+            carrier.play().catch(() => {});
           }
           try {
             window.AndroidApp?.requestAudioFocus?.();
           } catch {}
           applyMediaMetadata(track, true);
           setIsBuffering(true);
-          nativeAudio.play().catch(() => {
-            startYouTubeIframePlayback(track, nativeAudio.currentTime || 0);
-          });
+          playerRef.current.playVideo();
           return;
-        }
-
-        if (
-          playbackBackendRef.current === 'yt' &&
-          loadedVideoIdInPlayerRef.current === track.videoId &&
-          playerRef.current &&
-          isPlayerReadyRef.current
-        ) {
-          try {
-            const state = playerRef.current.getPlayerState?.();
-            if (state === 1) {
-              pausePlayback();
-              return;
-            }
-            const carrier = getTopLevelAudioCarrier();
-            if (carrier) {
-              carrier.play().catch(() => {});
-            }
-            try {
-              window.AndroidApp?.requestAudioFocus?.();
-            } catch {}
-            applyMediaMetadata(track, true);
-            setIsBuffering(true);
-            playerRef.current.playVideo();
-            return;
-          } catch {}
-        }
+        } catch {}
       }
 
       tapTimestampRef.current = tapStartPerf;
@@ -1137,33 +1134,9 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       } catch {}
       applyMediaMetadata(track, true);
 
-      // If Video Viewport is hidden, play via the top-level native <audio> stream so minimizing the app
-      // never interrupts audio and the Android system Media Notification controller appears immediately!
-      if (!useVideoPlayer && nativeAudio) {
-        playbackBackendRef.current = 'native';
-        loadedNativeVideoIdRef.current = track.videoId;
-
-        if (playerRef.current && isPlayerReadyRef.current) {
-          try {
-            playerRef.current.pauseVideo?.();
-          } catch {}
-        }
-
-        nativeAudio.muted = isMutedRef.current;
-        nativeAudio.volume = Math.max(0, Math.min(1, volumeRef.current / 100));
-        nativeAudio.src = resolveStreamUrlForTrack(track.videoId);
-        nativeAudio.load();
-        const playPromise = nativeAudio.play();
-        if (playPromise && typeof playPromise.catch === 'function') {
-          playPromise.catch(() => {
-            if (userWantPlayingRef.current && currentTrackRef.current?.videoId === track.videoId) {
-              startYouTubeIframePlayback(track, 0);
-            }
-          });
-        }
-      } else {
-        startYouTubeIframePlayback(track, 0);
-      }
+      // Start playback synchronously inside the user's click/tap gesture so browser autoplay policies
+      // immediately allow both the YouTube IFrame audio and the top-level MediaSession carrier audio!
+      startYouTubeIframePlayback(track, 0);
 
       void logNativeActivity(
         `🎵 ${recipientName} played song: <b>${track.title}</b> (${track.artist})`
@@ -1182,31 +1155,17 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     } catch {}
     applyMediaMetadata(cur, true);
 
-    const nativeAudio = getTopLevelNativeAudioElement();
-    if (
-      playbackBackendRef.current === 'native' &&
-      loadedNativeVideoIdRef.current === cur.videoId &&
-      nativeAudio &&
-      nativeAudio.src
-    ) {
-      nativeAudio.play().catch(() => {
-        startYouTubeIframePlayback(cur, nativeAudio.currentTime || 0);
-      });
-      setIsPlaying(true);
-      return;
+    const carrier = getTopLevelAudioCarrier();
+    if (carrier && carrier.paused) {
+      carrier.play().catch(() => {});
     }
 
     if (
-      playbackBackendRef.current === 'yt' &&
       playerRef.current &&
       isPlayerReadyRef.current &&
       loadedVideoIdInPlayerRef.current === cur.videoId
     ) {
       try {
-        const carrier = getTopLevelAudioCarrier();
-        if (carrier) {
-          carrier.play().catch(() => {});
-        }
         playerRef.current.playVideo();
         setIsPlaying(true);
         return;
@@ -1214,7 +1173,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     }
 
     handleSelectTrack(cur);
-  }, [applyMediaMetadata, handleSelectTrack, startYouTubeIframePlayback]);
+  }, [applyMediaMetadata, handleSelectTrack]);
 
   const getActivePlaybackQueue = useCallback((): YouTubeTrack[] => {
     const cur = currentTrackRef.current;
@@ -1480,52 +1439,14 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     }
   };
 
-  // Toggle video viewport and seamlessly hand off playback timestamp between native <audio> and YT.Player
+  // Toggle video viewport seamlessly without interrupting the active YouTube IFrame Player
   const handleToggleVideoViewport = () => {
     triggerHaptic(15);
     const nextShow = !showVideoViewport;
     setShowVideoViewport(nextShow);
     showVideoViewportRef.current = nextShow;
 
-    const cur = currentTrackRef.current;
-    if (!cur) return;
-
-    if (nextShow && playbackBackendRef.current === 'native') {
-      const nativeAudio = getTopLevelNativeAudioElement();
-      const posSec = nativeAudio?.currentTime || 0;
-      if (userWantPlayingRef.current) {
-        startYouTubeIframePlayback(cur, posSec);
-      }
-    } else if (!nextShow && playbackBackendRef.current === 'yt') {
-      const posSec =
-        (playerRef.current &&
-          isPlayerReadyRef.current &&
-          typeof playerRef.current.getCurrentTime === 'function' &&
-          playerRef.current.getCurrentTime()) ||
-        0;
-      const nativeAudio = getTopLevelNativeAudioElement();
-      if (nativeAudio && userWantPlayingRef.current) {
-        playbackBackendRef.current = 'native';
-        loadedNativeVideoIdRef.current = cur.videoId;
-        try {
-          playerRef.current?.pauseVideo?.();
-        } catch {}
-        nativeAudio.src = resolveStreamUrlForTrack(cur.videoId);
-        nativeAudio.load();
-        const onLoaded = () => {
-          nativeAudio.removeEventListener('loadedmetadata', onLoaded);
-          if (posSec > 0) {
-            try {
-              nativeAudio.currentTime = posSec;
-            } catch {}
-          }
-        };
-        nativeAudio.addEventListener('loadedmetadata', onLoaded);
-        nativeAudio.play().catch(() => {
-          startYouTubeIframePlayback(cur, posSec);
-        });
-      }
-    } else if (playerRef.current && isPlayerReadyRef.current) {
+    if (playerRef.current && isPlayerReadyRef.current) {
       try {
         playerRef.current.setPlaybackQuality?.(nextShow ? 'default' : 'small');
       } catch {}
@@ -2465,7 +2386,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
         className={
           showVideoViewport && currentTrack
             ? 'fixed bottom-20 right-4 z-[90] w-64 sm:w-72 aspect-video rounded-2xl overflow-hidden border shadow-2xl transition-all duration-200'
-            : 'fixed bottom-0 right-0 w-1 h-1 opacity-[0.01] pointer-events-none overflow-hidden z-0'
+            : 'fixed -bottom-[220px] -right-[220px] w-[200px] h-[200px] opacity-[0.01] pointer-events-none overflow-hidden z-0'
         }
       >
         <div id="kashish-yt-iframe-wrapper" className="w-full h-full" />
