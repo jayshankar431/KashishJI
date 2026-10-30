@@ -3,13 +3,17 @@ package com.kashish.world
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
+import android.view.View
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -22,11 +26,55 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import java.io.File
 import java.io.IOException
+import java.lang.ref.WeakReference
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/**
+ * Custom WebView that keeps HTML5 / YouTube iframe audio playing smoothly when the user
+ * switches apps or locks the phone screen by preventing Chromium from receiving GONE/INVISIBLE
+ * window visibility signals while the app is running.
+ */
+class KeepAliveWebView(context: Context) : WebView(context) {
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        if (visibility != View.VISIBLE) {
+            super.onWindowVisibilityChanged(View.VISIBLE)
+        } else {
+            super.onWindowVisibilityChanged(visibility)
+        }
+    }
+
+    override fun onVisibilityChanged(changedView: View, visibility: Int) {
+        if (visibility != View.VISIBLE) {
+            super.onVisibilityChanged(changedView, View.VISIBLE)
+        } else {
+            super.onVisibilityChanged(changedView, visibility)
+        }
+    }
+}
+
 class MainActivity : AppCompatActivity() {
+
+    companion object {
+        @Volatile
+        private var activeWebViewRef: WeakReference<WebView>? = null
+        private val mainHandler = Handler(Looper.getMainLooper())
+
+        fun dispatchMediaAction(action: String) {
+            mainHandler.post {
+                val wv = activeWebViewRef?.get() ?: return@post
+                try {
+                    wv.onResume()
+                    wv.resumeTimers()
+                    wv.evaluateJavascript(
+                        "window.dispatchEvent(new CustomEvent('kashish-native-media-action', { detail: '$action' }));",
+                        null
+                    )
+                } catch (_: Exception) {}
+            }
+        }
+    }
 
     private lateinit var webView: WebView
     private var filePickerCallback: ValueCallback<Array<Uri>>? = null
@@ -70,14 +118,26 @@ class MainActivity : AppCompatActivity() {
         SoundCacheManager.ensureDefaultChannels(this)
         FirestoreOverlayBackgroundService.startServiceSafely(this)
 
-        // Setup WebView
-        webView = WebView(this)
+        // Setup KeepAliveWebView so music continues playing in background & lock screen
+        webView = KeepAliveWebView(this)
+        activeWebViewRef = WeakReference(webView)
         setContentView(webView)
 
         configureWebView()
 
         // Load the app URL
         webView.loadUrl(PermissionReporter.getWebBaseUrl(this))
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Keep WebView timers and media session active if music is playing in background
+        if (CallAndOverlayHelper.isMusicSessionActive) {
+            try {
+                webView.onResume()
+                webView.resumeTimers()
+            } catch (_: Exception) {}
+        }
     }
 
     override fun onNewIntent(intent: Intent) {

@@ -362,5 +362,72 @@ class AndroidAppInterface(private val context: Context) {
             context.startActivity(intent)
         } catch (_: Exception) {}
     }
+
+    @JavascriptInterface
+    fun updateMusicNotification(title: String, artist: String, thumbnailUrl: String, isPlaying: Boolean) {
+        CallAndOverlayHelper.updateMusicNotification(
+            context = context,
+            title = title,
+            artist = artist,
+            thumbnailUrl = thumbnailUrl,
+            isPlaying = isPlaying
+        )
+    }
+
+    @JavascriptInterface
+    fun dismissMusicNotification() {
+        CallAndOverlayHelper.dismissMusicNotification(context)
+    }
+
+    @JavascriptInterface
+    fun fetchCloudinaryFolder(cloudName: String, apiKey: String, apiSecret: String, folder: String): String {
+        val cleanCloud = cloudName.trim()
+        val cleanKey = apiKey.trim()
+        val cleanSecret = apiSecret.trim()
+        val cleanFolder = folder.trim().trim('/').ifEmpty { "memories_of_kashish" }
+        if (cleanCloud.isEmpty() || cleanKey.isEmpty() || cleanSecret.isEmpty()) {
+            return "{}"
+        }
+        var conn: java.net.HttpURLConnection? = null
+        return try {
+            val authToken = android.util.Base64.encodeToString(
+                "$cleanKey:$cleanSecret".toByteArray(Charsets.UTF_8),
+                android.util.Base64.NO_WRAP
+            )
+            val url = java.net.URL("https://api.cloudinary.com/v1_1/$cleanCloud/resources/search")
+            conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 8000
+                readTimeout = 8000
+                doOutput = true
+                setRequestProperty("Authorization", "Basic $authToken")
+                setRequestProperty("Content-Type", "application/json")
+            }
+            val payload = JSONObject().apply {
+                put(
+                    "expression",
+                    "folder=\"$cleanFolder\" OR folder=\"$cleanFolder/*\" OR asset_folder=\"$cleanFolder\" OR asset_folder=\"$cleanFolder/*\" OR public_id:$cleanFolder/* OR tags=\"$cleanFolder\""
+                )
+                put("max_results", 100)
+            }
+            java.io.OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { writer ->
+                writer.write(payload.toString())
+                writer.flush()
+            }
+            if (conn.responseCode in 200..299) {
+                java.io.BufferedReader(java.io.InputStreamReader(conn.inputStream, Charsets.UTF_8)).use {
+                    it.readText()
+                }
+            } else {
+                "{}"
+            }
+        } catch (_: Exception) {
+            "{}"
+        } finally {
+            try {
+                conn?.disconnect()
+            } catch (_: Exception) {}
+        }
+    }
 }
 

@@ -14,9 +14,10 @@ import {
   Calendar,
   Share2,
   Eye,
-  Filter
+  Filter,
+  RefreshCw
 } from 'lucide-react';
-import { PrivateStorageImage } from './PrivateStorageMedia';
+import { PrivateStorageImage, ZoomablePhotoViewer } from './PrivateStorageMedia';
 import { 
   triggerHaptic, 
   showNativeToast, 
@@ -27,6 +28,10 @@ import {
   requestNativePermissions,
   uploadMediaToCloudinary,
 } from '../androidBridge';
+import {
+  CloudinarySyncManager,
+  DEFAULT_CLOUDINARY_GALLERY_FOLDER,
+} from '../utils/CloudinarySyncManager';
 import { collection, doc, onSnapshot, query, orderBy, limit, updateDoc, increment } from 'firebase/firestore';
 import { db } from '../firebase';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -99,6 +104,18 @@ export const DEFAULT_CURATED_MEMORIES: GalleryPhoto[] = [
 export const GallerySection: React.FC<GallerySectionProps> = ({ name, isDarkMode }) => {
   const site = useSite();
   const hideDefaults = site.hideDefaultGallery;
+  const targetFolder =
+    site.cloudinaryGalleryFolder && site.cloudinaryGalleryFolder !== 'memories_of_kashish'
+      ? site.cloudinaryGalleryFolder
+      : DEFAULT_CLOUDINARY_GALLERY_FOLDER;
+
+  const [firestorePhotos, setFirestorePhotos] = useState<GalleryPhoto[]>([]);
+  const [cloudinaryFolderPhotos, setCloudinaryFolderPhotos] = useState<GalleryPhoto[]>(() =>
+    CloudinarySyncManager.getCachedPhotos(DEFAULT_CLOUDINARY_GALLERY_FOLDER)
+  );
+  const [isLoadingFolder, setIsLoadingFolder] = useState<boolean>(true);
+  const [isSyncingFolder, setIsSyncingFolder] = useState<boolean>(false);
+  const [loadedImageIds, setLoadedImageIds] = useState<Record<string, boolean>>({});
   const [photos, setPhotos] = useState<GalleryPhoto[]>(() => {
     try {
       const cached = localStorage.getItem('kashish_cached_gallery');
@@ -134,9 +151,9 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ name, isDarkMode
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
-  // Subscribe to real-time Firestore media collection + merge curated defaults
+  // Subscribe to real-time Firestore media collection
   useEffect(() => {
-    const q = query(collection(db, 'media'), orderBy('createdAt', 'desc'), limit(80));
+    const q = query(collection(db, 'media'), orderBy('createdAt', 'desc'), limit(120));
     const unsub = onSnapshot(
       q,
       (snap) => {
@@ -149,6 +166,7 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ name, isDarkMode
               id: docSnap.id,
               url: d.url || '',
               storagePath: d.storagePath || '',
+              cloudinaryPublicId: d.cloudinaryPublicId || '',
               resourceType: d.type === 'video' ? 'video' : 'image',
               caption: d.name || d.caption || 'Memory',
               timestamp: d.createdAt || Date.now(),
@@ -160,15 +178,93 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ name, isDarkMode
             });
           }
         });
-        const baseDefaults = hideDefaults ? [] : DEFAULT_CURATED_MEMORIES;
-        setPhotos([...remoteItems, ...baseDefaults]);
+        setFirestorePhotos(remoteItems);
       },
       () => {
-        setPhotos(hideDefaults ? [] : DEFAULT_CURATED_MEMORIES);
+        setFirestorePhotos([]);
       }
     );
     return () => unsub();
-  }, [hideDefaults]);
+  }, []);
+
+  // Fetch & sync photos from the 'kashish-memories' folder via CloudinarySyncManager
+  const handleManualFolderSync = async (showFeedback = false) => {
+    setIsSyncingFolder(true);
+    try {
+      const res = await CloudinarySyncManager.fetchPhotosFromFolder(targetFolder);
+      if (res.items.length > 0) {
+        setCloudinaryFolderPhotos(res.items);
+      }
+      if (showFeedback) {
+        showNativeToast(
+          res.items.length > 0
+            ? `Synced ${res.items.length} memories from ${targetFolder} 💖`
+            : `Checked ${targetFolder} folder ✨`
+        );
+      }
+    } catch {
+      // Ignore transient network errors
+    } finally {
+      setIsLoadingFolder(false);
+      setIsSyncingFolder(false);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoadingFolder(true);
+    const pullFolder = async () => {
+      setIsSyncingFolder(true);
+      try {
+        const res = await CloudinarySyncManager.fetchPhotosFromFolder(targetFolder);
+        if (!cancelled && res.items.length > 0) {
+          setCloudinaryFolderPhotos(res.items);
+        }
+      } catch {
+        // Ignore network errors
+      } finally {
+        if (!cancelled) {
+          setIsLoadingFolder(false);
+          setIsSyncingFolder(false);
+        }
+      }
+    };
+    void pullFolder();
+    const interval = window.setInterval(() => {
+      void pullFolder();
+    }, 25000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [targetFolder]);
+
+  // Merge Firestore photos + Direct Cloudinary Folder photos + Curated defaults without duplicates
+  useEffect(() => {
+    const seenKeys = new Set<string>();
+    const merged: GalleryPhoto[] = [];
+
+    const addUnique = (item: GalleryPhoto) => {
+      const pid =
+        item.cloudinaryPublicId ||
+        (item.storagePath?.startsWith('cloudinary:')
+          ? item.storagePath.replace(/^cloudinary:/, '')
+          : '');
+      const key = pid || item.url;
+      if (!key || seenKeys.has(key)) return;
+      seenKeys.add(key);
+      if (item.url) seenKeys.add(item.url);
+      merged.push(item);
+    };
+
+    firestorePhotos.forEach(addUnique);
+    cloudinaryFolderPhotos.forEach(addUnique);
+    if (!hideDefaults) {
+      DEFAULT_CURATED_MEMORIES.forEach(addUnique);
+    }
+
+    setPhotos(merged);
+  }, [firestorePhotos, cloudinaryFolderPhotos, hideDefaults]);
 
   // Save liked photos to localStorage
   useEffect(() => {
@@ -504,15 +600,58 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ name, isDarkMode
           </button>
         </div>
 
-        <span className="text-[11px] font-semibold text-[var(--text-soft)] hidden sm:inline">
-          Tap any photo to view full size
-        </span>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => {
+              triggerHaptic(25);
+              void handleManualFolderSync(true);
+            }}
+            disabled={isSyncingFolder}
+            title={`Sync photos from Cloudinary folder "${targetFolder}"`}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold bg-[var(--card-subtle)] text-[var(--text-soft)] border border-[var(--card-border)] hover:text-[var(--text)] transition-all cursor-pointer disabled:opacity-60"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-[var(--accent)] ${isSyncingFolder ? 'animate-spin' : ''}`} />
+            <span>{isSyncingFolder ? 'Syncing...' : 'Sync Memories'}</span>
+          </button>
+          <span className="text-[11px] font-semibold text-[var(--text-soft)] hidden md:inline">
+            Tap any photo to view full size
+          </span>
+        </div>
       </div>
 
-      {/* Photos Masonry / Grid */}
+      {/* Initial Loading Skeleton Grid (1:1 Aspect Ratio) */}
+      {isLoadingFolder && filteredPhotos.length === 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4" aria-busy="true">
+          {Array.from({ length: 8 }).map((_, idx) => (
+            <div
+              key={`skeleton-${idx}`}
+              style={{
+                backgroundColor: 'var(--card)',
+                borderColor: 'var(--card-border)',
+              }}
+              className="rounded-2xl overflow-hidden border"
+            >
+              <div className="aspect-square w-full bg-rose-500/10 animate-pulse flex flex-col items-center justify-center gap-2 p-4">
+                <Loader2 className="w-6 h-6 text-[var(--accent)] animate-spin opacity-60" />
+                <span className="text-[10px] font-semibold text-[var(--text-soft)] opacity-75">
+                  Loading memory...
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Photos 1:1 Square Grid Layout */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
         {filteredPhotos.map((photo) => {
           const isLiked = !!userLikedPhotos[photo.id];
+          const isImgLoaded = !!loadedImageIds[photo.id];
+          const displaySquareUrl = isVideoMedia(photo)
+            ? photo.url
+            : CloudinarySyncManager.getSquareImageUrl(photo.url, 800);
+
           return (
             <motion.div
               key={photo.id}
@@ -535,25 +674,40 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ name, isDarkMode
               }}
               className="group relative rounded-2xl overflow-hidden border cursor-pointer select-none transition-transform active:scale-[0.98]"
             >
-              {/* Image/Video Container with 3:4 or 1:1 Aspect Ratio */}
-              <div className="aspect-[3/4] w-full overflow-hidden bg-zinc-900/10 dark:bg-black/40 relative">
+              {/* Image/Video Container with 1:1 Square Aspect Ratio */}
+              <div className="aspect-square w-full overflow-hidden bg-zinc-900/10 dark:bg-black/40 relative">
+                {!isImgLoaded && !isVideoMedia(photo) && (
+                  <div className="absolute inset-0 bg-rose-500/10 animate-pulse flex items-center justify-center pointer-events-none">
+                    <Loader2 className="w-5 h-5 text-[var(--accent)] animate-spin opacity-50" />
+                  </div>
+                )}
+
                 {isVideoMedia(photo) ? (
                   <video
                     src={photo.url || photo.storagePath}
                     muted
                     playsInline
                     loop
+                    onLoadedData={() =>
+                      setLoadedImageIds((prev) => ({ ...prev, [photo.id]: true }))
+                    }
                     onMouseOver={(e) => e.currentTarget.play().catch(() => {})}
                     onMouseOut={(e) => e.currentTarget.pause()}
-                    className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                    className="w-full h-full object-cover aspect-square transition-transform duration-500 group-hover:scale-105"
                   />
                 ) : (
                   <PrivateStorageImage
                     storagePath={photo.storagePath}
-                    fallbackUrl={photo.url}
+                    fallbackUrl={displaySquareUrl}
                     alt={photo.caption}
                     loading="lazy"
-                    className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                    onLoad={() =>
+                      setLoadedImageIds((prev) => ({ ...prev, [photo.id]: true }))
+                    }
+                    onError={() =>
+                      setLoadedImageIds((prev) => ({ ...prev, [photo.id]: true }))
+                    }
+                    className="w-full h-full object-cover aspect-square transition-transform duration-500 group-hover:scale-105"
                   />
                 )}
 
@@ -600,7 +754,7 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ name, isDarkMode
       </div>
 
       {/* Empty State */}
-      {filteredPhotos.length === 0 && (
+      {!isLoadingFolder && filteredPhotos.length === 0 && (
         <div className="py-16 text-center space-y-3">
           <div className="w-16 h-16 rounded-full bg-rose-500/10 text-rose-500 flex items-center justify-center mx-auto">
             <Images className="w-8 h-8" />
@@ -814,11 +968,10 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ name, isDarkMode
                       className="max-h-full max-w-full rounded-2xl object-contain shadow-2xl border border-white/10"
                     />
                   ) : (
-                    <PrivateStorageImage
+                    <ZoomablePhotoViewer
                       storagePath={selectedPhoto.storagePath}
                       fallbackUrl={selectedPhoto.url}
                       alt={selectedPhoto.caption}
-                      className="max-h-full max-w-full rounded-2xl object-contain shadow-2xl border border-white/10"
                     />
                   )}
                 </div>
@@ -837,7 +990,7 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ name, isDarkMode
                       <span>{selectedPhoto.likes} loves</span>
                     </span>
                     <span>•</span>
-                    <span>Tap outside to close</span>
+                    <span>Pinch or double-tap to zoom • Tap outside to close</span>
                   </div>
                 </div>
               </div>

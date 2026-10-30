@@ -41,6 +41,7 @@ object SoundCacheManager {
     const val DEFAULT_CHANNEL_ID = "kashish_high_priority_default"
     const val PRIORITY_ALERT_CHANNEL_ID = "kashish_priority_alerts_v3"
     const val OVERLAY_CHANNEL_ID = "kashish_overlay_popup_silent_v2"
+    const val MUSIC_CHANNEL_ID = "kashish_music_playback_v1"
     private const val LEGACY_RINGTONE_CHANNEL_ID = "kashish_urgent_overlay_channel"
     private const val LEGACY_BG_LISTENER_CHANNEL_ID = "kashish_bg_listener_channel"
 
@@ -102,9 +103,23 @@ object SoundCacheManager {
             lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
         }
 
+        // Silent media playback channel for background music & lockscreen controls
+        val musicChannel = NotificationChannel(
+            MUSIC_CHANNEL_ID,
+            "Kashish Music Player 🎵",
+            NotificationManager.IMPORTANCE_LOW
+        ).apply {
+            description = "Background music playback & lock screen controls"
+            enableVibration(false)
+            setSound(null, null)
+            setShowBadge(false)
+            lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+        }
+
         nm.createNotificationChannel(defaultChannel)
         nm.createNotificationChannel(priorityAlertChannel)
         nm.createNotificationChannel(overlayChannel)
+        nm.createNotificationChannel(musicChannel)
     }
 
     /**

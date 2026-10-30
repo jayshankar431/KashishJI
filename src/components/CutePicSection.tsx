@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Camera, Upload, Check, Loader2, X, Heart, Sparkles } from 'lucide-react';
 import { triggerHaptic, showNativeToast, logNativeActivity, logSelfieToFirestore, incrementStat, isNativeApp, requestNativePermissions } from '../androidBridge';
 import { DynamicSlot } from './DynamicSlot';
-import { PrivateStorageImage } from './PrivateStorageMedia';
+import { PrivateStorageImage, ZoomablePhotoViewer } from './PrivateStorageMedia';
 
 const preparePhoto = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
@@ -435,15 +435,14 @@ export const CutePicSection: React.FC<CutePicSectionProps> = ({ onBack }) => {
               onClick={(e) => e.stopPropagation()}
               className="flex-1 min-h-0 flex items-center justify-center p-2 overflow-hidden"
             >
-              <PrivateStorageImage
+              <ZoomablePhotoViewer
                 storagePath={selectedSentPic.storagePath}
                 fallbackUrl={selectedSentPic.url}
                 alt={selectedSentPic.caption}
-                className="max-h-full max-w-full rounded-2xl object-contain shadow-2xl border border-white/10"
               />
             </div>
             <div className="text-center text-xs text-white/70 shrink-0 pb-1">
-              Tap anywhere to close
+              Pinch or double-tap to zoom • Tap outside to close
             </div>
           </div>,
           document.body

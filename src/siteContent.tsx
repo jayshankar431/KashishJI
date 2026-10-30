@@ -145,6 +145,7 @@ export interface SiteContent {
   cloudinaryUploadPreset: string;
   cloudinaryApiKey: string;
   cloudinaryApiSecret: string;
+  cloudinaryGalleryFolder: string;
   features: AppFeaturesConfig;
   maintenanceMode: boolean;
   maintenanceMessage: string;
@@ -195,6 +196,7 @@ export const SITE_DEFAULTS: SiteContent = {
   cloudinaryUploadPreset: 'Unsigned Upload Preset Name',
   cloudinaryApiKey: '',
   cloudinaryApiSecret: '',
+  cloudinaryGalleryFolder: 'kashish-memories',
   features: {
     games: true,
     galleryUpload: true,

@@ -26,6 +26,7 @@ import { DynamicSlotId, DynamicSlotItem, VALID_BLOCK_TYPES } from '../dynamicSlo
 import { triggerHaptic, showNativeToast, makeNativePhoneCall } from '../androidBridge';
 import { NavTab } from './Navbar';
 import { romanticAudio } from '../audio';
+import { ZoomablePhotoViewer } from './PrivateStorageMedia';
 
 interface DynamicSlotProps {
   slotId: DynamicSlotId | string;
@@ -618,14 +619,13 @@ export const DynamicSlot: React.FC<DynamicSlotProps> = ({
               onClick={(e) => e.stopPropagation()}
               className="flex-1 min-h-0 flex items-center justify-center p-2 overflow-hidden"
             >
-              <img
-                src={lightboxImage.url}
+              <ZoomablePhotoViewer
+                fallbackUrl={lightboxImage.url}
                 alt={lightboxImage.title || 'Memory'}
-                className="max-h-full max-w-full rounded-2xl object-contain shadow-2xl border border-white/10"
               />
             </div>
             <div className="text-center text-xs text-white/70 shrink-0 pb-1">
-              Tap anywhere to close
+              Pinch or double-tap to zoom • Tap outside to close
             </div>
           </div>,
           document.body

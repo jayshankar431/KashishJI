@@ -27,6 +27,7 @@ import {
   resolveFirestoreMediaUrl,
   deleteFirestoreMediaChunks,
   testCloudinaryConnection,
+  syncCloudinaryFolderToGallery,
   fetchLatestReleaseApkInfo,
   LatestReleaseApkInfo,
   isVersionOlder,
@@ -444,7 +445,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
   );
   const [apiKeyInput, setApiKeyInput] = useState<string>(site.cloudinaryApiKey || '');
   const [apiSecretInput, setApiSecretInput] = useState<string>(site.cloudinaryApiSecret || '');
+  const [galleryFolderInput, setGalleryFolderInput] = useState<string>(
+    site.cloudinaryGalleryFolder || 'kashish-memories'
+  );
   const [testingCloudinary, setTestingCloudinary] = useState<boolean>(false);
+  const [syncingCloudinaryFolder, setSyncingCloudinaryFolder] = useState<boolean>(false);
   const [cloudinaryStatusMsg, setCloudinaryStatusMsg] = useState<string>('');
   const [showCloudinaryBox, setShowCloudinaryBox] = useState<boolean>(false);
 
@@ -655,6 +660,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
         if (d.cloudinaryUploadPreset !== undefined) setUploadPresetInput(d.cloudinaryUploadPreset);
         if (d.cloudinaryApiKey !== undefined) setApiKeyInput(d.cloudinaryApiKey);
         if (d.cloudinaryApiSecret !== undefined) setApiSecretInput(d.cloudinaryApiSecret);
+        if (d.cloudinaryGalleryFolder !== undefined) setGalleryFolderInput(d.cloudinaryGalleryFolder);
         if (Array.isArray(d.savedSounds) && d.savedSounds.length > 0) {
           const defaultUrls = new Set(DEFAULT_SAVED_SOUNDS.map((s) => s.url));
           setCustomSounds(d.savedSounds.filter((s: any) => s.url && !defaultUrls.has(s.url)));
@@ -1913,12 +1919,48 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     );
   };
 
+  const handleSyncCloudinaryFolderNow = async () => {
+    const cName = cloudNameInput.trim() || 'dsfcu9y1h';
+    const cKey = apiKeyInput.trim();
+    const cSecret = apiSecretInput.trim();
+    const cFolder = galleryFolderInput.trim().replace(/^\/+|\/+$/g, '') || 'kashish-memories';
+
+    setSyncingCloudinaryFolder(true);
+    setCloudinaryStatusMsg(`Syncing photos from Cloudinary folder "${cFolder}"...`);
+    try {
+      const syncRes = await syncCloudinaryFolderToGallery(cFolder, {
+        cloudName: cName,
+        apiKey: cKey,
+        apiSecret: cSecret,
+        galleryFolder: cFolder,
+      });
+      if (syncRes.items.length > 0) {
+        const msg = `✓ Found ${syncRes.items.length} photo(s)/video(s) in Cloudinary folder "${cFolder}" (${syncRes.syncedToFirestore} new added to Memories of Kashish)!`;
+        setCloudinaryStatusMsg(msg);
+        notifyStatus(msg);
+      } else {
+        const tip =
+          !cKey || !cSecret
+            ? `No items returned yet. Make sure API Key & API Secret are filled above and you created folder "${cFolder}" in Cloudinary Media Library.`
+            : `Folder "${cFolder}" is currently empty on Cloudinary (${cName}). Upload photos to folder "${cFolder}" in Cloudinary and they will appear automatically!`;
+        setCloudinaryStatusMsg(tip);
+        notifyStatus(tip, !cKey || !cSecret);
+      }
+    } catch (err: any) {
+      setCloudinaryStatusMsg(`Folder sync error: ${err?.message || 'Failed'}`);
+      notifyStatus(`Folder sync error: ${err?.message || 'Failed'}`, true);
+    } finally {
+      setSyncingCloudinaryFolder(false);
+    }
+  };
+
   const handleSaveAndTestCloudinary = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const cName = cloudNameInput.trim() || 'dsfcu9y1h';
     const cPreset = uploadPresetInput.trim();
     const cKey = apiKeyInput.trim();
     const cSecret = apiSecretInput.trim();
+    const cFolder = galleryFolderInput.trim().replace(/^\/+|\/+$/g, '') || 'kashish-memories';
     setTestingCloudinary(true);
     setCloudinaryStatusMsg('Saving to Firestore...');
 
@@ -1930,12 +1972,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
           cloudinaryUploadPreset: cPreset,
           cloudinaryApiKey: cKey,
           cloudinaryApiSecret: cSecret,
+          cloudinaryGalleryFolder: cFolder,
           updatedAt: Date.now(),
         },
         { merge: true }
       );
 
-      // Immediately sync localStorage so uploads & deletes in this tab use it right away
+      // Immediately sync localStorage so uploads, deletes & folder sync in this tab use it right away
       try {
         const raw = window.localStorage.getItem('kashish_site_overrides');
         const parsed = raw ? JSON.parse(raw) : {};
@@ -1943,14 +1986,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
         parsed.cloudinaryUploadPreset = cPreset;
         parsed.cloudinaryApiKey = cKey;
         parsed.cloudinaryApiSecret = cSecret;
+        parsed.cloudinaryGalleryFolder = cFolder;
         window.localStorage.setItem('kashish_site_overrides', JSON.stringify(parsed));
       } catch {
         // ignore
       }
 
+      // Also sync the Cloudinary folder right away if API Key & Secret are provided
+      let folderSyncNote = '';
+      if (cKey && cSecret) {
+        const syncRes = await syncCloudinaryFolderToGallery(cFolder, {
+          cloudName: cName,
+          apiKey: cKey,
+          apiSecret: cSecret,
+          galleryFolder: cFolder,
+        });
+        folderSyncNote = ` · Synced ${syncRes.items.length} item(s) from folder "${cFolder}".`;
+      }
+
       if (!cPreset) {
-        setCloudinaryStatusMsg('Saved! (Upload Preset empty -> using Firestore Free Fallback mode).');
-        notifyStatus('Cloudinary settings saved (Firestore fallback mode).');
+        setCloudinaryStatusMsg(
+          `Saved! Folder "${cFolder}" configured${folderSyncNote} (Upload Preset empty -> app uploads use Firestore Free Fallback mode).`
+        );
+        notifyStatus(`Cloudinary settings saved!${folderSyncNote}`);
         setTestingCloudinary(false);
         return;
       }
@@ -1960,17 +2018,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       if (testRes.ok) {
         const deleteNote =
           cKey && cSecret
-            ? 'Auto-Delete from Cloudinary is also ACTIVE!'
-            : 'Tip: Add API Key & Secret below if you also want Delete to remove files from Cloudinary.';
+            ? `Auto-Sync Folder ("${cFolder}") & Auto-Delete from Cloudinary are ACTIVE!${folderSyncNote}`
+            : 'Tip: Add API Key & Secret to enable automatic Cloudinary Folder Sync & Auto-Delete.';
         setCloudinaryStatusMsg(
-          `✓ Connected! All Photos, HD Videos, Voice Notes & Songs upload to Cloudinary (${cName}). ${deleteNote}`
+          `✓ Connected! (${cName}) — ${deleteNote}`
         );
-        notifyStatus('Cloudinary Connected & Verified!');
+        notifyStatus('Cloudinary Connected & Folder Synced!');
       } else {
         setCloudinaryStatusMsg(
-          `Saved, but test failed: ${testRes.error}. Make sure preset "${cPreset}" has Signing Mode = Unsigned.`
+          `Saved${folderSyncNote}, but upload preset test failed: ${testRes.error}. Make sure preset "${cPreset}" has Signing Mode = Unsigned.`
         );
-        notifyStatus(`Cloudinary test error: ${testRes.error}`, true);
+        notifyStatus(`Cloudinary saved${folderSyncNote}`, false);
       }
     } catch (err: any) {
       setCloudinaryStatusMsg(`Error: ${err.message}`);
@@ -2860,100 +2918,125 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
               {/* Upload Bar (Cloudinary 25GB Free Storage + Firestore Fallback + Direct URL) */}
               <div className={`p-3 rounded-[14px] border ${borderCol} ${bgSubtle} space-y-3`}>
                 {/* Storage Engine Status & Quick Cloudinary Setup Toggle */}
-                <div className={`flex flex-wrap items-center justify-between gap-2 pb-2 border-b ${borderCol}`}>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${borderCol}`}>
-                      {isCloudinaryReady
-                        ? `CLOUDINARY ACTIVE (${cloudNameInput.trim()})`
-                        : 'FIRESTORE FREE MODE (ADD CLOUDINARY PRESET FOR HD VIDEOS)'}
-                    </span>
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] border ${borderCol}`}>
-                      {isCloudinaryDeleteReady
-                        ? 'AUTO-DELETE FROM CLOUDINARY: ON'
-                        : 'AUTO-DELETE FROM CLOUDINARY: ADD API KEY/SECRET'}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowCloudinaryBox(!showCloudinaryBox)}
-                    className={btnSecondary}
-                  >
-                    {showCloudinaryBox ? 'Hide Cloudinary Setup' : '⚡ Cloudinary & Auto-Delete Setup'}
-                  </button>
-                </div>
+                    <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b ${borderCol}">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${borderCol}`}>
+                          {isCloudinaryReady
+                            ? `CLOUDINARY ACTIVE (${cloudNameInput.trim()})`
+                            : 'FIRESTORE FREE MODE (ADD CLOUDINARY PRESET FOR HD VIDEOS)'}
+                        </span>
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] border ${borderCol}`}>
+                          {isCloudinaryDeleteReady
+                            ? 'AUTO-SYNC & DELETE: ON'
+                            : 'AUTO-SYNC & DELETE: ADD API KEY/SECRET'}
+                        </span>
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] border ${borderCol}`}>
+                          FOLDER: <b>{galleryFolderInput.trim() || 'kashish-memories'}</b>
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleSyncCloudinaryFolderNow}
+                          disabled={syncingCloudinaryFolder}
+                          className={btnSecondary}
+                        >
+                          {syncingCloudinaryFolder ? 'Syncing Folder...' : '🔄 Sync Cloudinary Folder'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowCloudinaryBox(!showCloudinaryBox)}
+                          className={btnSecondary}
+                        >
+                          {showCloudinaryBox ? 'Hide Cloudinary Setup' : '⚡ Cloudinary & Folder Setup'}
+                        </button>
+                      </div>
+                    </div>
 
-                {/* Collapsible Cloudinary Config Box right inside Media Manager */}
-                {(showCloudinaryBox || !isCloudinaryReady) && (
-                  <form
-                    onSubmit={handleSaveAndTestCloudinary}
-                    className={`p-2.5 rounded-[14px] border ${borderCol} ${bgMain} space-y-2`}
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-1">
-                      <span className="font-bold text-[11px]">
-                        Cloudinary Free Storage + Permanent Auto-Delete Setup
-                      </span>
-                      <span className={`text-[10px] ${textMuted}`}>
-                        For Auto-Delete from Cloudinary: Copy <b>API Key</b> & <b>API Secret</b> from Cloudinary Dashboard → Settings → API Keys
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2 items-end">
-                      <div>
-                        <label className={`block text-[10px] ${textMuted} mb-0.5`}>
-                          Cloud Name
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="dsfcu9y1h"
-                          value={cloudNameInput}
-                          onChange={(e) => setCloudNameInput(e.target.value)}
-                          className={inputCls}
-                        />
-                      </div>
-                      <div>
-                        <label className={`block text-[10px] ${textMuted} mb-0.5`}>
-                          Unsigned Upload Preset
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="Unsigned Upload Preset Name"
-                          value={uploadPresetInput}
-                          onChange={(e) => setUploadPresetInput(e.target.value)}
-                          className={inputCls}
-                        />
-                      </div>
-                      <div>
-                        <label className={`block text-[10px] ${textMuted} mb-0.5`}>
-                          API Key (For Cloudinary Delete)
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="e.g. 123456789012345"
-                          value={apiKeyInput}
-                          onChange={(e) => setApiKeyInput(e.target.value)}
-                          className={inputCls}
-                        />
-                      </div>
-                      <div>
-                        <label className={`block text-[10px] ${textMuted} mb-0.5`}>
-                          API Secret (For Cloudinary Delete)
-                        </label>
-                        <input
-                          type="password"
-                          placeholder="Your Cloudinary API Secret"
-                          value={apiSecretInput}
-                          onChange={(e) => setApiSecretInput(e.target.value)}
-                          className={inputCls}
-                        />
-                      </div>
-                      <button type="submit" disabled={testingCloudinary} className={btnPrimary}>
-                        {testingCloudinary ? 'Testing & Saving...' : 'Save & Test'}
-                      </button>
-                    </div>
-                    {cloudinaryStatusMsg && (
-                      <div className={`text-[11px] pt-1 ${textMuted}`}>{cloudinaryStatusMsg}</div>
+                    {/* Collapsible Cloudinary Config Box right inside Media Manager */}
+                    {(showCloudinaryBox || !isCloudinaryReady) && (
+                      <form
+                        onSubmit={handleSaveAndTestCloudinary}
+                        className={`p-2.5 rounded-[14px] border ${borderCol} ${bgMain} space-y-2`}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-1">
+                          <span className="font-bold text-[11px]">
+                            Cloudinary Free Storage + Memories of Kashish Folder Auto-Sync Setup
+                          </span>
+                          <span className={`text-[10px] ${textMuted}`}>
+                            Upload directly to folder <b>{galleryFolderInput.trim() || 'kashish-memories'}</b> on Cloudinary to auto-show in Memories of Kashish (Requires <b>API Key</b> & <b>API Secret</b>)
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2 items-end">
+                          <div>
+                            <label className={`block text-[10px] ${textMuted} mb-0.5`}>
+                              Cloud Name
+                            </label>
+                            <input
+                              type="text"
+                              placeholder="dsfcu9y1h"
+                              value={cloudNameInput}
+                              onChange={(e) => setCloudNameInput(e.target.value)}
+                              className={inputCls}
+                            />
+                          </div>
+                          <div>
+                            <label className={`block text-[10px] ${textMuted} mb-0.5`}>
+                              Unsigned Upload Preset
+                            </label>
+                            <input
+                              type="text"
+                              placeholder="Unsigned Upload Preset Name"
+                              value={uploadPresetInput}
+                              onChange={(e) => setUploadPresetInput(e.target.value)}
+                              className={inputCls}
+                            />
+                          </div>
+                          <div>
+                            <label className={`block text-[10px] ${textMuted} mb-0.5`}>
+                              Gallery Folder Name
+                            </label>
+                            <input
+                              type="text"
+                              placeholder="kashish-memories"
+                              value={galleryFolderInput}
+                              onChange={(e) => setGalleryFolderInput(e.target.value)}
+                              className={inputCls}
+                            />
+                          </div>
+                          <div>
+                            <label className={`block text-[10px] ${textMuted} mb-0.5`}>
+                              API Key (For Folder Sync & Delete)
+                            </label>
+                            <input
+                              type="text"
+                              placeholder="e.g. 123456789012345"
+                              value={apiKeyInput}
+                              onChange={(e) => setApiKeyInput(e.target.value)}
+                              className={inputCls}
+                            />
+                          </div>
+                          <div>
+                            <label className={`block text-[10px] ${textMuted} mb-0.5`}>
+                              API Secret (For Folder Sync & Delete)
+                            </label>
+                            <input
+                              type="password"
+                              placeholder="Your Cloudinary API Secret"
+                              value={apiSecretInput}
+                              onChange={(e) => setApiSecretInput(e.target.value)}
+                              className={inputCls}
+                            />
+                          </div>
+                          <button type="submit" disabled={testingCloudinary} className={btnPrimary}>
+                            {testingCloudinary ? 'Testing & Saving...' : 'Save & Sync'}
+                          </button>
+                        </div>
+                        {cloudinaryStatusMsg && (
+                          <div className={`text-[11px] pt-1 ${textMuted}`}>{cloudinaryStatusMsg}</div>
+                        )}
+                      </form>
                     )}
-                  </form>
-                )}
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
                   <div>

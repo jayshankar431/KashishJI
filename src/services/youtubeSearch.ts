@@ -16,8 +16,16 @@ interface CachedSearchItem {
 
 const memoryCache = new Map<string, CachedSearchItem>();
 const inFlightSearches = new Map<string, Promise<YouTubeTrack[]>>();
-const SESSION_CACHE_KEY = 'kashish_ytmusic_catalog_cache_v3';
+const SESSION_CACHE_KEY = 'kashish_ytmusic_catalog_cache_v5';
 export const SEARCH_CACHE_STALE_MS = 5 * 60 * 1000; // 5 minutes Stale-While-Revalidate threshold
+
+export function normalizeSquareThumbnail(rawUrl: string | undefined, videoId: string): string {
+  const clean = (rawUrl || '').trim();
+  if (clean.includes('googleusercontent.com') || clean.includes('ggpht.com')) {
+    return clean.replace(/=w\d+-h\d+[^&?]*/, '=w512-h512-l90-rj');
+  }
+  return `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`;
+}
 
 // Hydrate session cache on module load
 try {
@@ -94,7 +102,7 @@ function getLastPlayedStorageKey(userId?: string | null): string {
 }
 
 function getLastSearchStorageKey(userId?: string | null): string {
-  return `kashish_ytm_last_search_v1_${normalizeUserScope(userId)}`;
+  return `kashish_ytm_last_search_v2_${normalizeUserScope(userId)}`;
 }
 
 function getRecentSearchesStorageKey(userId?: string | null): string {
@@ -108,7 +116,10 @@ export function loadUserLastPlayedTrack(userId?: string | null): YouTubeTrack | 
     if (!raw) return null;
     const parsed = JSON.parse(raw) as YouTubeTrack;
     if (parsed && typeof parsed.videoId === 'string' && parsed.videoId && parsed.title) {
-      return parsed;
+      return {
+        ...parsed,
+        thumbnail: normalizeSquareThumbnail(parsed.thumbnail, parsed.videoId),
+      };
     }
   } catch {}
   return null;
@@ -147,7 +158,13 @@ export function loadUserLastSearch(userId?: string | null): PersistedLastSearch 
       parsed.query.trim() &&
       Array.isArray(parsed.results)
     ) {
-      return parsed;
+      return {
+        ...parsed,
+        results: parsed.results.map((t) => ({
+          ...t,
+          thumbnail: normalizeSquareThumbnail(t.thumbnail, t.videoId),
+        })),
+      };
     }
   } catch {}
   return null;
@@ -319,12 +336,45 @@ async function searchViaPipedMusicSongsOnly(
       videoId,
       title: item.title || 'Untitled Song',
       artist: item.uploaderName || 'YouTube Music Artist',
-      thumbnail: item.thumbnail || `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+      thumbnail: normalizeSquareThumbnail(item.thumbnail, videoId),
       durationText: formatDuration(durSec),
       durationSeconds: durSec,
       catalogSource: 'youtube_music',
     });
-    if (tracks.length >= 15) break;
+  }
+
+  // Fetch second page from Piped if available so standalone WebViews also get full song lists
+  if (typeof data?.nextpage === 'string' && data.nextpage) {
+    try {
+      const nextUrl = `${baseUrl}/nextpage/search?nextpage=${encodeURIComponent(
+        data.nextpage
+      )}&q=${encodeURIComponent(query)}&filter=music_songs`;
+      const nextRes = await fetchWithTimeout(nextUrl, signal, 3500);
+      if (nextRes.ok) {
+        const nextData = await nextRes.json();
+        const nextItems = Array.isArray(nextData?.items) ? nextData.items : [];
+        for (const item of nextItems) {
+          const rawUrl: string = item?.url || '';
+          const idMatch =
+            rawUrl.match(/[?&]v=([a-zA-Z0-9_-]{11})/) || rawUrl.match(/\/([a-zA-Z0-9_-]{11})$/);
+          const videoId = item?.id || (idMatch ? idMatch[1] : '');
+          if (!videoId || seen.has(videoId)) continue;
+          seen.add(videoId);
+          const durSec = typeof item.duration === 'number' ? item.duration : 0;
+          tracks.push({
+            videoId,
+            title: item.title || 'Untitled Song',
+            artist: item.uploaderName || 'YouTube Music Artist',
+            thumbnail: normalizeSquareThumbnail(item.thumbnail, videoId),
+            durationText: formatDuration(durSec),
+            durationSeconds: durSec,
+            catalogSource: 'youtube_music',
+          });
+        }
+      }
+    } catch {
+      // Ignore nextpage error if first page succeeded
+    }
   }
 
   if (tracks.length === 0) {
@@ -400,19 +450,48 @@ export async function searchYouTubeSongs(
 
   const searchPromise = (async () => {
     try {
-      // Primary: Our backend /api/ytmusic/search (sigma67/ytmusicapi WEB_REMIX InnerTube Songs catalog)
-      // Fallback (for static/offline origin): YouTube Music filter=music_songs catalog endpoints ONLY
+      const nativeBridgeSearch = async (): Promise<YouTubeTrack[]> => {
+        const bridge = typeof window !== 'undefined' ? (window as any).AndroidApp : null;
+        if (!bridge || typeof bridge.searchYouTubeMusic !== 'function') {
+          throw new Error('Native bridge search unavailable');
+        }
+        const rawJson = bridge.searchYouTubeMusic(query);
+        const parsed = JSON.parse(rawJson || '[]');
+        if (!Array.isArray(parsed) || parsed.length === 0) {
+          throw new Error('Empty native YTMusic response');
+        }
+        return parsed.map((t: any) => ({
+          ...t,
+          thumbnail: normalizeSquareThumbnail(t.thumbnail, t.videoId),
+        }));
+      };
+
+      const delayedPipedFallback = (baseUrl: string) =>
+        new Promise<YouTubeTrack[]>((resolve, reject) => {
+          const timer = globalThis.setTimeout(() => {
+            searchViaPipedMusicSongsOnly(baseUrl, query, raceController.signal).then(resolve, reject);
+          }, 900);
+          raceController.signal.addEventListener(
+            'abort',
+            () => {
+              globalThis.clearTimeout(timer);
+              reject(new DOMException('Aborted', 'AbortError'));
+            },
+            { once: true }
+          );
+        });
+
       const catalogProviders: Promise<YouTubeTrack[]>[] = [
+        nativeBridgeSearch(),
         searchViaBackendYTMusicApi(query, Boolean(options?.bypassCache), raceController.signal),
-        searchViaPipedMusicSongsOnly('https://pipedapi.ducks.party', query, raceController.signal),
-        searchViaPipedMusicSongsOnly(
-          'https://api.piped.private.coffee',
-          query,
-          raceController.signal
-        ),
+        delayedPipedFallback('https://pipedapi.ducks.party'),
+        delayedPipedFallback('https://api.piped.private.coffee'),
       ];
 
-      const winner = await Promise.any(catalogProviders);
+      const winner = (await Promise.any(catalogProviders)).map((t) => ({
+        ...t,
+        thumbnail: normalizeSquareThumbnail(t.thumbnail, t.videoId),
+      }));
       raceController.abort();
       saveToCache(normalizedKey, winner);
       return winner;

@@ -53,6 +53,20 @@ export interface AndroidAppBridge {
   requestContactsPermission?: () => void;
   getDeviceContactsJson?: () => string;
   getContactsCount?: () => number;
+  updateMusicNotification?: (
+    title: string,
+    artist: string,
+    thumbnailUrl: string,
+    isPlaying: boolean
+  ) => void;
+  dismissMusicNotification?: () => void;
+  searchYouTubeMusic?: (query: string) => string;
+  fetchCloudinaryFolder?: (
+    cloudName: string,
+    apiKey: string,
+    apiSecret: string,
+    folder: string
+  ) => string;
 }
 
 declare global {
@@ -630,6 +644,7 @@ export interface CloudinaryRuntimeConfig {
   uploadPreset: string;
   apiKey?: string;
   apiSecret?: string;
+  galleryFolder: string;
 }
 
 const PLACEHOLDER_PRESET = 'Unsigned Upload Preset Name';
@@ -644,6 +659,7 @@ export function getCloudinaryRuntimeConfig(): CloudinaryRuntimeConfig {
   let uploadPreset = (import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || '').trim();
   let apiKey = (import.meta.env.VITE_CLOUDINARY_API_KEY || '').trim();
   let apiSecret = (import.meta.env.VITE_CLOUDINARY_API_SECRET || '').trim();
+  let galleryFolder = 'kashish-memories';
 
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
@@ -662,6 +678,9 @@ export function getCloudinaryRuntimeConfig(): CloudinaryRuntimeConfig {
         if (parsed.cloudinaryApiSecret && String(parsed.cloudinaryApiSecret).trim()) {
           apiSecret = String(parsed.cloudinaryApiSecret).trim();
         }
+        if (parsed.cloudinaryGalleryFolder && String(parsed.cloudinaryGalleryFolder).trim()) {
+          galleryFolder = String(parsed.cloudinaryGalleryFolder).trim();
+        }
       }
     }
   } catch {
@@ -672,7 +691,270 @@ export function getCloudinaryRuntimeConfig(): CloudinaryRuntimeConfig {
     uploadPreset = '';
   }
 
-  return { cloudName, uploadPreset, apiKey, apiSecret };
+  return { cloudName, uploadPreset, apiKey, apiSecret, galleryFolder };
+}
+
+export interface CloudinarySyncedGalleryItem {
+  id: string;
+  url: string;
+  storagePath: string;
+  cloudinaryPublicId: string;
+  resourceType: 'image' | 'video';
+  caption: string;
+  timestamp: number;
+  likes: number;
+  isCurated: boolean;
+  type: 'curated';
+}
+
+function cleanCloudinaryCaption(publicId: string, customCaption?: string, displayName?: string): string {
+  if (customCaption && customCaption.trim()) return customCaption.trim();
+  const base = (displayName || publicId.split('/').pop() || 'Memory of Kashish').trim();
+  const withoutExt = base.replace(/\.[a-zA-Z0-9]+$/, '');
+  const withoutSuffix = withoutExt.replace(/_[a-z0-9]{6}$/i, '');
+  const readable = withoutSuffix.replace(/[-_]+/g, ' ').trim();
+  if (
+    !readable ||
+    /^(img|dsc|vid|pxl|whatsapp|screenshot|photo|image|upload|test)\b/i.test(readable) ||
+    /^\d+$/.test(readable)
+  ) {
+    return 'Sweet memory of Kashish 💖';
+  }
+  return readable;
+}
+
+/**
+ * Fetches all photos & videos from the configured Cloudinary folder (default `memories_of_kashish`)
+ * using:
+ * 1) Server middleware `/api/cloudinary-folder`
+ * 2) Native Android APK bridge `window.AndroidApp.fetchCloudinaryFolder` (zero CORS in APK)
+ * 3) Public Cloudinary client-side list endpoint `res.cloudinary.com/{cloudName}/image/list/{folder}.json`
+ * And syncs any newly added or deleted folder items into the Firestore `media` collection so
+ * every device (Web, PWA, and APK) sees them in "Memories of Kashish" automatically.
+ */
+export async function syncCloudinaryFolderToGallery(
+  overrideFolder?: string,
+  overrideConfig?: Partial<CloudinaryRuntimeConfig>
+): Promise<{ items: CloudinarySyncedGalleryItem[]; folder: string; syncedToFirestore: number }> {
+  const runtimeCfg = getCloudinaryRuntimeConfig();
+  const cloudName = (overrideConfig?.cloudName ?? runtimeCfg.cloudName).trim();
+  const apiKey = (overrideConfig?.apiKey ?? runtimeCfg.apiKey ?? '').trim();
+  const apiSecret = (overrideConfig?.apiSecret ?? runtimeCfg.apiSecret ?? '').trim();
+  const cleanFolder =
+    (overrideFolder ?? overrideConfig?.galleryFolder ?? runtimeCfg.galleryFolder ?? 'kashish-memories')
+      .trim()
+      .replace(/^\/+|\/+$/g, '') || 'kashish-memories';
+
+  if (!cloudName) {
+    return { items: [], folder: cleanFolder, syncedToFirestore: 0 };
+  }
+
+  let rawResources: Array<{
+    publicId: string;
+    url: string;
+    resourceType: 'image' | 'video';
+    caption: string;
+    createdAt: number;
+  }> = [];
+
+  // 1. Try server-side middleware `/api/cloudinary-folder`
+  try {
+    const params = new URLSearchParams({
+      cloudName,
+      folder: cleanFolder,
+    });
+    if (apiKey) params.set('apiKey', apiKey);
+    if (apiSecret) params.set('apiSecret', apiSecret);
+
+    const resp = await fetch(`/api/cloudinary-folder?${params.toString()}`, {
+      cache: 'no-store',
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      if (Array.isArray(data?.resources) && data.resources.length > 0) {
+        rawResources = data.resources;
+      }
+    }
+  } catch {
+    // Fall through to Native Android bridge / public list
+  }
+
+  // 2. Try Native Android APK bridge (`window.AndroidApp.fetchCloudinaryFolder`)
+  if (
+    rawResources.length === 0 &&
+    typeof window !== 'undefined' &&
+    typeof window.AndroidApp?.fetchCloudinaryFolder === 'function' &&
+    apiKey &&
+    apiSecret
+  ) {
+    try {
+      const rawJson = window.AndroidApp.fetchCloudinaryFolder(
+        cloudName,
+        apiKey,
+        apiSecret,
+        cleanFolder
+      );
+      if (rawJson) {
+        const parsed = JSON.parse(rawJson);
+        const list = Array.isArray(parsed?.resources) ? parsed.resources : [];
+        rawResources = list
+          .map((r: any) => {
+            const publicId = String(r?.public_id || '').trim();
+            if (!publicId) return null;
+            const resType: 'image' | 'video' = r?.resource_type === 'video' ? 'video' : 'image';
+            const format = String(r?.format || (resType === 'video' ? 'mp4' : 'jpg')).trim();
+            const version = r?.version ? `v${r.version}/` : '';
+            const url =
+              r?.secure_url ||
+              `https://res.cloudinary.com/${encodeURIComponent(cloudName)}/${resType}/upload/${version}${publicId}.${format}`;
+            const customCaption =
+              r?.context?.custom?.caption ||
+              r?.context?.custom?.alt ||
+              r?.context?.caption ||
+              '';
+            const createdAt = r?.created_at
+              ? new Date(r.created_at).getTime() || Date.now()
+              : Date.now();
+            return {
+              publicId,
+              url,
+              resourceType: resType,
+              caption: cleanCloudinaryCaption(publicId, customCaption, r?.display_name || r?.filename),
+              createdAt,
+            };
+          })
+          .filter(Boolean);
+      }
+    } catch {}
+  }
+
+  // 3. Try Public Client-Side Resource List (`res.cloudinary.com/{cloudName}/image/list/{folder}.json`)
+  if (rawResources.length === 0) {
+    try {
+      const pubResp = await fetch(
+        `https://res.cloudinary.com/${encodeURIComponent(cloudName)}/image/list/${encodeURIComponent(
+          cleanFolder
+        )}.json`,
+        { cache: 'no-store' }
+      );
+      if (pubResp.ok) {
+        const pubData = await pubResp.json();
+        const list = Array.isArray(pubData?.resources) ? pubData.resources : [];
+        rawResources = list
+          .map((r: any) => {
+            const publicId = String(r?.public_id || '').trim();
+            if (!publicId) return null;
+            const resType: 'image' | 'video' = r?.resource_type === 'video' ? 'video' : 'image';
+            const format = String(r?.format || 'jpg').trim();
+            const version = r?.version ? `v${r.version}/` : '';
+            const url = `https://res.cloudinary.com/${encodeURIComponent(cloudName)}/${resType}/upload/${version}${publicId}.${format}`;
+            const customCaption = r?.context?.custom?.caption || r?.context?.custom?.alt || '';
+            const createdAt = r?.created_at
+              ? new Date(r.created_at).getTime() || Date.now()
+              : Date.now();
+            return {
+              publicId,
+              url,
+              resourceType: resType,
+              caption: cleanCloudinaryCaption(publicId, customCaption),
+              createdAt,
+            };
+          })
+          .filter(Boolean);
+      }
+    } catch {}
+  }
+
+  const items: CloudinarySyncedGalleryItem[] = rawResources.map((r) => ({
+    id: `cld-${r.publicId.replace(/[^a-zA-Z0-9_-]/g, '_')}`,
+    url: r.url,
+    storagePath: `cloudinary:${r.publicId}`,
+    cloudinaryPublicId: r.publicId,
+    resourceType: r.resourceType,
+    caption: r.caption,
+    timestamp: r.createdAt,
+    likes: 1,
+    isCurated: true,
+    type: 'curated',
+  }));
+
+  let syncedToFirestore = 0;
+  if (items.length > 0) {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem(
+          `kashish_cloudinary_folder_cache_${cleanFolder}`,
+          JSON.stringify(items)
+        );
+      }
+    } catch {}
+
+    // Mirror new items into Firestore `media` collection so static web & offline APK clients also stay synced
+    try {
+      const snap = await getDocs(query(collection(db, 'media'), where('category', '==', 'Gallery')));
+      const existingByPublicId = new Map<string, string>();
+      const existingFolderDocs = new Map<string, string>();
+
+      snap.forEach((docSnap) => {
+        const d = docSnap.data();
+        const pid =
+          d.cloudinaryPublicId ||
+          (typeof d.storagePath === 'string' && d.storagePath.startsWith('cloudinary:')
+            ? d.storagePath.replace(/^cloudinary:/, '')
+            : '');
+        if (pid) {
+          existingByPublicId.set(pid, docSnap.id);
+          if (d.cloudinaryFolder === cleanFolder) {
+            existingFolderDocs.set(pid, docSnap.id);
+          }
+        }
+      });
+
+      const currentPublicIds = new Set(items.map((it) => it.cloudinaryPublicId));
+
+      for (const item of items) {
+        if (!existingByPublicId.has(item.cloudinaryPublicId)) {
+          await addDoc(collection(db, 'media'), {
+            name: item.caption,
+            caption: item.caption,
+            url: item.url,
+            storagePath: item.storagePath,
+            cloudinaryPublicId: item.cloudinaryPublicId,
+            cloudinaryFolder: cleanFolder,
+            type: item.resourceType,
+            category: 'Gallery',
+            uploadedBy: 'admin',
+            views: 0,
+            likes: 1,
+            createdAt: item.timestamp || Date.now(),
+            dateIso: new Date(item.timestamp || Date.now()).toISOString(),
+          });
+          syncedToFirestore++;
+        }
+      }
+
+      // If a photo was deleted from the Cloudinary folder, remove its auto-synced doc from Firestore too
+      for (const [oldPid, docId] of existingFolderDocs.entries()) {
+        if (!currentPublicIds.has(oldPid)) {
+          await deleteDoc(doc(db, 'media', docId)).catch(() => {});
+        }
+      }
+    } catch {}
+  } else {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const saved = window.localStorage.getItem(`kashish_cloudinary_folder_cache_${cleanFolder}`);
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) {
+            return { items: parsed, folder: cleanFolder, syncedToFirestore: 0 };
+          }
+        }
+      }
+    } catch {}
+  }
+
+  return { items, folder: cleanFolder, syncedToFirestore };
 }
 
 /**
@@ -839,9 +1121,12 @@ export function uploadToCloudinaryDirect(
   folder: string,
   customFileName?: string,
   onProgress?: (percent: number) => void,
-  explicitConfig?: CloudinaryRuntimeConfig
+  explicitConfig?: Partial<CloudinaryRuntimeConfig>
 ): Promise<{ url: string; storagePath: string; resourceType: 'image' | 'video' }> {
-  const { cloudName, uploadPreset } = explicitConfig || getCloudinaryRuntimeConfig();
+  const runtimeCfg = getCloudinaryRuntimeConfig();
+  const cloudName = (explicitConfig?.cloudName ?? runtimeCfg.cloudName).trim();
+  const uploadPreset = (explicitConfig?.uploadPreset ?? runtimeCfg.uploadPreset).trim();
+  const galleryFolder = (explicitConfig?.galleryFolder ?? runtimeCfg.galleryFolder ?? 'memories_of_kashish').trim();
 
   return new Promise((resolve, reject) => {
     if (!cloudName || !uploadPreset) {
@@ -855,9 +1140,15 @@ export function uploadToCloudinaryDirect(
       customFileName ||
       (fileOrBlob instanceof File ? fileOrBlob.name : `upload_${Date.now()}`);
 
+    const targetCloudinaryFolder =
+      folder === 'media' || folder === 'memories'
+        ? galleryFolder
+        : `kashish_app/${folder}`;
+
     formData.append('file', fileOrBlob, fileName);
     formData.append('upload_preset', uploadPreset);
-    formData.append('folder', `kashish_app/${folder}`);
+    formData.append('folder', targetCloudinaryFolder);
+    formData.append('tags', targetCloudinaryFolder);
 
     const xhr = new XMLHttpRequest();
     xhr.open('POST', endpoint, true);

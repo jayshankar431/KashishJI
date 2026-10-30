@@ -31,6 +31,7 @@ import {
   loadUserRecentSearches,
   saveUserRecentSearch,
   removeUserRecentSearch,
+  normalizeSquareThumbnail,
 } from '../services/youtubeSearch';
 import { triggerHaptic, showNativeToast, logNativeActivity } from '../androidBridge';
 import type { NavTab } from './Navbar';
@@ -77,7 +78,7 @@ function ensureMetricsStore() {
   return window.__kashishMusicMetrics;
 }
 
-function updateMediaSessionPosition(positionSec: number, durationSec: number) {
+function updateMediaSessionPosition(positionSec: number, durationSec: number, playbackRate = 1) {
   if (
     typeof navigator === 'undefined' ||
     !('mediaSession' in navigator) ||
@@ -90,11 +91,92 @@ function updateMediaSessionPosition(positionSec: number, durationSec: number) {
   try {
     navigator.mediaSession.setPositionState({
       duration: durationSec,
-      playbackRate: 1,
+      playbackRate: playbackRate > 0 ? playbackRate : 1,
       position: safePos,
     });
   } catch {
     // Ignore unsupported browser errors
+  }
+}
+
+function buildMediaArtworkList(rawThumbnail: string | undefined, videoId: string): MediaImage[] {
+  const primary = normalizeSquareThumbnail(rawThumbnail, videoId);
+  const sizes = [96, 128, 192, 256, 384, 512];
+
+  if (
+    primary.includes('googleusercontent.com') ||
+    primary.includes('ggpht.com')
+  ) {
+    return sizes.map((sz) => ({
+      src: primary.replace(/=w\d+-h\d+[^&?]*/i, `=w${sz}-h${sz}-l90-rj`),
+      sizes: `${sz}x${sz}`,
+      type: 'image/jpeg',
+    }));
+  }
+
+  return sizes.map((sz) => ({
+    src: primary,
+    sizes: `${sz}x${sz}`,
+    type: 'image/jpeg',
+  }));
+}
+
+/**
+ * Generates a 30-second looping sub-audible PCM WAV Blob URL in the top-level document.
+ * Browsers (Chrome on Android, Android WebView, Edge, Safari) require a top-level <audio>
+ * element with non-zero audible energy to promote `navigator.mediaSession` metadata and
+ * transport controls (play, pause, previoustrack, nexttrack, seekto) to the Android system
+ * media notification shade and lock screen.
+ */
+let sharedCarrierAudio: HTMLAudioElement | null = null;
+function getTopLevelAudioCarrier(): HTMLAudioElement | null {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return null;
+  if (sharedCarrierAudio) return sharedCarrierAudio;
+  try {
+    const sampleRate = 8000;
+    const durationSeconds = 30;
+    const numSamples = sampleRate * durationSeconds;
+    const buffer = new ArrayBuffer(44 + numSamples * 2);
+    const view = new DataView(buffer);
+    const writeStr = (offset: number, str: string) => {
+      for (let i = 0; i < str.length; i++) {
+        view.setUint8(offset + i, str.charCodeAt(i));
+      }
+    };
+    writeStr(0, 'RIFF');
+    view.setUint32(4, 36 + numSamples * 2, true);
+    writeStr(8, 'WAVE');
+    writeStr(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); // PCM
+    view.setUint16(22, 1, true); // Mono
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeStr(36, 'data');
+    view.setUint32(40, numSamples * 2, true);
+    // Low-frequency 15 Hz sub-audible wave with small amplitude so Android Chrome's
+    // AudioPowerMonitor registers an active audio stream while remaining inaudible to ears
+    const twoPiF = (2 * Math.PI * 15) / sampleRate;
+    for (let i = 0; i < numSamples; i++) {
+      const sample = Math.round(Math.sin(i * twoPiF) * 28);
+      view.setInt16(44 + i * 2, sample, true);
+    }
+    const blob = new Blob([buffer], { type: 'audio/wav' });
+    const url = URL.createObjectURL(blob);
+    const audio = document.createElement('audio');
+    audio.src = url;
+    audio.loop = true;
+    audio.preload = 'auto';
+    audio.volume = 0.02;
+    audio.setAttribute('playsinline', 'true');
+    audio.style.display = 'none';
+    document.body.appendChild(audio);
+    sharedCarrierAudio = audio;
+    return audio;
+  } catch {
+    return null;
   }
 }
 
@@ -362,65 +444,82 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     return { currentTime: 0, duration: 0 };
   }, []);
 
-  // Seek handler for YouTube IFrame Player API
+  // Seek handler for YouTube IFrame Player API + MediaSession position sync
   const handleSeekTo = useCallback((seconds: number) => {
     const safeSec = Math.max(0, seconds);
     const p = playerRef.current;
     if (p && isPlayerReadyRef.current && typeof p.seekTo === 'function') {
       try {
         p.seekTo(safeSec, true);
+        const dur =
+          (typeof p.getDuration === 'function' ? p.getDuration() : 0) ||
+          currentTrackRef.current?.durationSeconds ||
+          0;
+        if (dur > 0) {
+          updateMediaSessionPosition(safeSec, dur);
+        }
       } catch {}
     }
   }, []);
 
-  // Update Media Session metadata whenever currentTrack changes
-  useEffect(() => {
-    if (
-      typeof navigator === 'undefined' ||
-      !('mediaSession' in navigator) ||
-      typeof window === 'undefined' ||
-      typeof (window as any).MediaMetadata === 'undefined'
-    ) {
-      return;
-    }
+  const bindMediaSessionHandlersRef = useRef<() => void>(() => {});
 
-    if (!currentTrack) {
-      try {
-        navigator.mediaSession.metadata = null;
-        navigator.mediaSession.playbackState = 'none';
-      } catch {}
-      return;
-    }
-
-    const thumbUrl =
-      currentTrack.thumbnail || `https://i.ytimg.com/vi/${currentTrack.videoId}/mqdefault.jpg`;
-
-    try {
-      navigator.mediaSession.metadata = new window.MediaMetadata({
-        title: currentTrack.title,
-        artist: currentTrack.artist,
-        album: currentTrack.album || `KASHISH · Music Player 4 ${recipientName}`,
-        artwork: [
-          { src: thumbUrl, sizes: '226x226', type: 'image/jpeg' },
-          { src: thumbUrl, sizes: '512x512', type: 'image/jpeg' },
-        ],
-      });
-    } catch {
-      // Ignore MediaMetadata errors on older browsers
-    }
-  }, [currentTrack, recipientName]);
-
-  // Keep Media Session playbackState synchronized with player state
-  useEffect(() => {
-    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
-    try {
-      if (!currentTrack) {
-        navigator.mediaSession.playbackState = 'none';
-      } else {
-        navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+  const applyMediaMetadata = useCallback(
+    (track: YouTubeTrack | null, playing: boolean) => {
+      if (!track) {
+        try {
+          if (typeof navigator !== 'undefined' && 'mediaSession' in navigator) {
+            navigator.mediaSession.metadata = null;
+            navigator.mediaSession.playbackState = 'none';
+          }
+          window.AndroidApp?.dismissMusicNotification?.();
+        } catch {}
+        return;
       }
-    } catch {}
-  }, [isPlaying, currentTrack]);
+
+      const thumbUrl = normalizeSquareThumbnail(track.thumbnail, track.videoId);
+      const artworkList = buildMediaArtworkList(track.thumbnail, track.videoId);
+
+      if (
+        typeof navigator !== 'undefined' &&
+        'mediaSession' in navigator &&
+        typeof window !== 'undefined' &&
+        typeof (window as any).MediaMetadata !== 'undefined'
+      ) {
+        try {
+          navigator.mediaSession.metadata = new window.MediaMetadata({
+            title: track.title,
+            artist: track.artist,
+            album: track.album || `Kashish's World · Melodies for ${recipientName}`,
+            artwork: artworkList,
+          });
+          navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
+          bindMediaSessionHandlersRef.current();
+
+          const { currentTime, duration } = getPlaybackMetrics();
+          const effectiveDur = duration > 0 ? duration : track.durationSeconds || 0;
+          if (effectiveDur > 0) {
+            updateMediaSessionPosition(currentTime, effectiveDur);
+          }
+        } catch {}
+      }
+
+      try {
+        window.AndroidApp?.updateMusicNotification?.(
+          track.title,
+          track.artist,
+          thumbUrl,
+          playing
+        );
+      } catch {}
+    },
+    [getPlaybackMetrics, recipientName]
+  );
+
+  // Update Media Session & Native Android notification whenever currentTrack or isPlaying changes
+  useEffect(() => {
+    applyMediaMetadata(currentTrack, isPlaying);
+  }, [currentTrack, isPlaying, applyMediaMetadata]);
 
   // Pause helper (used by UI, Media Session, and voice note recording event)
   const pausePlayback = useCallback(() => {
@@ -428,12 +527,23 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     setIsPlaying(false);
     setIsBuffering(false);
 
+    const carrier = getTopLevelAudioCarrier();
+    if (carrier) {
+      try {
+        carrier.pause();
+      } catch {}
+    }
+
     if (playerRef.current && isPlayerReadyRef.current) {
       try {
         playerRef.current.pauseVideo?.();
       } catch {}
     }
-  }, []);
+
+    if (currentTrackRef.current) {
+      applyMediaMetadata(currentTrackRef.current, false);
+    }
+  }, [applyMediaMetadata]);
 
   // Listen for voice-recording start or external audio blocks so music pauses cleanly
   useEffect(() => {
@@ -536,21 +646,39 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   }
                 }
               }
+              const carrier = getTopLevelAudioCarrier();
+              if (carrier && carrier.paused) {
+                carrier.play().catch(() => {});
+              }
               setIsPlaying(true);
               setIsBuffering(false);
               setStatusNotice(null);
+              if (currentTrackRef.current) {
+                applyMediaMetadata(currentTrackRef.current, true);
+              }
             } else if (state === 2) {
               if (
                 typeof document !== 'undefined' &&
-                document.visibilityState === 'hidden' &&
+                (document.visibilityState === 'hidden' || document.hidden) &&
                 userWantPlayingRef.current
               ) {
                 try {
                   event.target?.playVideo?.();
                 } catch {}
+                window.setTimeout(() => {
+                  if (userWantPlayingRef.current) {
+                    try {
+                      event.target?.playVideo?.();
+                    } catch {}
+                  }
+                }, 120);
+                return;
               }
               setIsPlaying(false);
               setIsBuffering(false);
+              if (currentTrackRef.current) {
+                applyMediaMetadata(currentTrackRef.current, false);
+              }
             } else if (state === 3) {
               setIsBuffering(true);
               if (firstAudioReachedRef.current && activeTelemetryEntryRef.current) {
@@ -631,7 +759,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       tag.async = true;
       document.head.appendChild(tag);
     }
-  }, []);
+  }, [applyMediaMetadata]);
 
   // Pre-warm singleton YouTube IFrame Player immediately on mount
   useEffect(() => {
@@ -677,6 +805,11 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
           activeTelemetryEntryRef.current = telemetryEntry;
           ensureMetricsStore()?.playbacks.push(telemetryEntry);
 
+          const carrier = getTopLevelAudioCarrier();
+          if (carrier) {
+            carrier.play().catch(() => {});
+          }
+          applyMediaMetadata(track, true);
           setIsBuffering(true);
           playerRef.current.playVideo();
           return;
@@ -708,6 +841,15 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       triedEmbedIdsRef.current.clear();
       triedEmbedIdsRef.current.add(track.videoId);
 
+      const carrier = getTopLevelAudioCarrier();
+      if (carrier) {
+        carrier.play().catch(() => {});
+      }
+      applyMediaMetadata(track, true);
+      try {
+        window.AndroidApp?.requestAudioFocus?.();
+      } catch {}
+
       // Start playback synchronously inside the user tap gesture on the singleton YT.Player
       if (playerRef.current && isPlayerReadyRef.current) {
         const readyMs = Math.round(performance.now() - tapStartPerf);
@@ -732,7 +874,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
         `🎵 ${recipientName} played song: <b>${track.title}</b> (${track.artist})`
       );
     },
-    [ensureYouTubePlayer, pausePlayback, recipientName, showVideoViewport]
+    [applyMediaMetadata, ensureYouTubePlayer, pausePlayback, recipientName, showVideoViewport]
   );
 
   // Resume helper (used by UI and Media Session)
@@ -740,6 +882,11 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     const cur = currentTrackRef.current;
     if (!cur) return;
     userWantPlayingRef.current = true;
+    const carrier = getTopLevelAudioCarrier();
+    if (carrier) {
+      carrier.play().catch(() => {});
+    }
+    applyMediaMetadata(cur, true);
     if (
       playerRef.current &&
       isPlayerReadyRef.current &&
@@ -752,7 +899,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       } catch {}
     }
     handleSelectTrack(cur);
-  }, [handleSelectTrack]);
+  }, [applyMediaMetadata, handleSelectTrack]);
 
   const playNextTrack = useCallback(() => {
     const list = tracksRef.current;
@@ -791,8 +938,8 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     playNextTrackRef.current = playNextTrack;
   }, [playNextTrack]);
 
-  // Register Media Session action handlers for OS Notification & Lock-Screen Controls
-  useEffect(() => {
+  // Register Media Session action handlers for Android System Media Notification Shade & Lock-Screen
+  const bindMediaSessionHandlers = useCallback(() => {
     if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
 
     const handlers: Array<[MediaSessionAction, MediaSessionActionHandler]> = [
@@ -861,20 +1008,51 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
         // Unsupported action in this browser
       }
     }
-
-    return () => {
-      for (const [action] of handlers) {
-        try {
-          navigator.mediaSession.setActionHandler(action, null);
-        } catch {}
-      }
-    };
   }, [getPlaybackMetrics, handleSeekTo, pausePlayback, playNextTrack, playPrevTrack, resumePlayback]);
 
-  // Keep playback state synchronized across page visibility changes
+  useEffect(() => {
+    bindMediaSessionHandlersRef.current = bindMediaSessionHandlers;
+    bindMediaSessionHandlers();
+  }, [bindMediaSessionHandlers]);
+
+  // Listen for Native Android Notification / Lock-Screen media control events
+  useEffect(() => {
+    const onNativeMediaAction = (e: Event) => {
+      const action = (e as CustomEvent<string>).detail || '';
+      if (action === 'play') {
+        resumePlayback();
+      } else if (action === 'pause') {
+        pausePlayback();
+      } else if (action === 'toggle') {
+        if (userWantPlayingRef.current) {
+          pausePlayback();
+        } else {
+          resumePlayback();
+        }
+      } else if (action === 'next') {
+        playNextTrack();
+      } else if (action === 'prev') {
+        playPrevTrack();
+      } else if (action.startsWith('seek:')) {
+        const sec = Number(action.slice(5));
+        if (Number.isFinite(sec)) {
+          handleSeekTo(sec);
+        }
+      }
+    };
+    window.addEventListener('kashish-native-media-action', onNativeMediaAction);
+    return () => window.removeEventListener('kashish-native-media-action', onNativeMediaAction);
+  }, [handleSeekTo, pausePlayback, playNextTrack, playPrevTrack, resumePlayback]);
+
+  // Keep playback state synchronized across page visibility changes & prevent background suspension
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (!userWantPlayingRef.current || !currentTrackRef.current) return;
+
+      const carrier = getTopLevelAudioCarrier();
+      if (carrier && carrier.paused) {
+        carrier.play().catch(() => {});
+      }
 
       if (document.visibilityState === 'hidden') {
         if (playerRef.current && isPlayerReadyRef.current) {
@@ -1299,21 +1477,20 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
             <div className="flex items-center justify-between gap-2.5">
               {/* Song Thumbnail & Info */}
               <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                <div className="relative w-11 h-11 rounded-lg overflow-hidden shrink-0 border border-white/10 bg-black/20">
+                <div className="relative w-11 h-11 aspect-square rounded-lg overflow-hidden shrink-0 border border-white/10 bg-black/20">
                   <img
-                    src={currentTrack.thumbnail}
+                    src={normalizeSquareThumbnail(currentTrack.thumbnail, currentTrack.videoId)}
                     alt={currentTrack.title}
                     decoding="async"
                     referrerPolicy="no-referrer"
-                    crossOrigin="anonymous"
                     onError={(e) => {
                       const target = e.target as HTMLImageElement;
                       if (!target.dataset.triedFallback && currentTrack.videoId) {
                         target.dataset.triedFallback = 'true';
-                        target.src = `https://i.ytimg.com/vi/${currentTrack.videoId}/hqdefault.jpg`;
+                        target.src = `https://i.ytimg.com/vi/${currentTrack.videoId}/mqdefault.jpg`;
                       }
                     }}
-                    className="w-full h-full object-cover"
+                    className="w-full h-full aspect-square object-cover object-center block"
                   />
                   {isPlaying && (
                     <div className="absolute inset-0 bg-black/35 flex items-center justify-center gap-0.5">
@@ -1476,7 +1653,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
               </button>
             </div>
           ) : tracks.length > 0 ? (
-            <div className="max-h-56 overflow-y-auto space-y-1 pr-0.5 custom-scrollbar">
+            <div className="max-h-80 sm:max-h-96 overflow-y-auto space-y-1 pr-0.5 custom-scrollbar">
               {tracks.map((track) => {
                 const isSelected = currentTrack?.videoId === track.videoId;
                 return (
@@ -1490,22 +1667,21 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     }}
                     className="w-full text-left p-2 rounded-xl border flex items-center gap-2.5 hover:bg-black/10 active:scale-[0.99] transition-all cursor-pointer group"
                   >
-                    <div className="relative w-10 h-10 rounded-lg overflow-hidden shrink-0 bg-black/20">
+                    <div className="relative w-10 h-10 aspect-square rounded-lg overflow-hidden shrink-0 bg-black/20">
                       <img
-                        src={track.thumbnail}
+                        src={normalizeSquareThumbnail(track.thumbnail, track.videoId)}
                         alt={track.title}
                         loading="lazy"
                         decoding="async"
                         referrerPolicy="no-referrer"
-                        crossOrigin="anonymous"
                         onError={(e) => {
                           const target = e.target as HTMLImageElement;
                           if (!target.dataset.triedFallback && track.videoId) {
                             target.dataset.triedFallback = 'true';
-                            target.src = `https://i.ytimg.com/vi/${track.videoId}/hqdefault.jpg`;
+                            target.src = `https://i.ytimg.com/vi/${track.videoId}/mqdefault.jpg`;
                           }
                         }}
-                        className="w-full h-full object-cover"
+                        className="w-full h-full aspect-square object-cover object-center block"
                       />
                       <div className="absolute inset-0 bg-black/25 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                         <Play className="w-3.5 h-3.5 text-white fill-white" />
@@ -1606,21 +1782,20 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                 onClick={() => setIsMiniExpanded((prev) => !prev)}
                 className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer"
               >
-                <div className="relative w-10 h-10 rounded-xl overflow-hidden shrink-0 border border-white/10">
+                <div className="relative w-10 h-10 aspect-square rounded-xl overflow-hidden shrink-0 border border-white/10">
                   <img
-                    src={currentTrack.thumbnail}
+                    src={normalizeSquareThumbnail(currentTrack.thumbnail, currentTrack.videoId)}
                     alt={currentTrack.title}
                     decoding="async"
                     referrerPolicy="no-referrer"
-                    crossOrigin="anonymous"
                     onError={(e) => {
                       const target = e.target as HTMLImageElement;
                       if (!target.dataset.triedFallback && currentTrack.videoId) {
                         target.dataset.triedFallback = 'true';
-                        target.src = `https://i.ytimg.com/vi/${currentTrack.videoId}/hqdefault.jpg`;
+                        target.src = `https://i.ytimg.com/vi/${currentTrack.videoId}/mqdefault.jpg`;
                       }
                     }}
-                    className="w-full h-full object-cover"
+                    className="w-full h-full aspect-square object-cover object-center block"
                   />
                 </div>
                 <div className="min-w-0 flex-1">
