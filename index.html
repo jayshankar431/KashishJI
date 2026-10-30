@@ -77,6 +77,18 @@
           e.preventDefault();
           window.deferredPwaPrompt = e;
         });
+
+        window.addEventListener(
+          'error',
+          function (e) {
+            if (e && e.message === 'Script error.' && !e.filename && !e.lineno) {
+              e.stopImmediatePropagation();
+              e.preventDefault();
+              return false;
+            }
+          },
+          true
+        );
       })();
     </script>
     

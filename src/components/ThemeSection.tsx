@@ -4,7 +4,7 @@ import { Palette, Sparkles, Check, Moon, Sun, Layers, X, Heart } from 'lucide-re
 import { romanticAudio } from '../audio';
 import { triggerHaptic, logNativeActivity } from '../androidBridge';
 
-export type AppThemeId = 'default' | 'glass' | 'light';
+export type AppThemeId = 'default' | 'glass' | 'light' | 'pastel';
 export type ThemeOriginSource =
   | React.MouseEvent<HTMLElement>
   | HTMLElement
@@ -18,6 +18,7 @@ export function getSavedTheme(): AppThemeId {
       const saved = window.localStorage.getItem('kashishTheme');
       if (saved === 'glass') return 'glass';
       if (saved === 'light') return 'light';
+      if (saved === 'pastel') return 'pastel';
       if (saved === 'default' || saved === 'dark') return 'default';
     }
   } catch {
@@ -30,13 +31,14 @@ export function applyThemeToDocument(theme: AppThemeId): void {
   if (typeof document !== 'undefined') {
     const root = document.documentElement;
     root.setAttribute('data-theme', theme);
-    root.style.colorScheme = theme === 'light' ? 'light' : 'dark';
+    root.style.colorScheme = theme === 'light' || theme === 'pastel' ? 'light' : 'dark';
     const metaThemeColor = document.querySelector('meta[name="theme-color"]');
     if (metaThemeColor) {
       const colorMap: Record<AppThemeId, string> = {
         default: '#140c1e',
         glass: '#070312',
         light: '#fff5f8',
+        pastel: '#F8F5FF',
       };
       metaThemeColor.setAttribute('content', colorMap[theme] || '#140c1e');
     }
@@ -287,6 +289,19 @@ export const ThemeSection: React.FC<ThemeSectionProps> = ({
       previewText: '#3a1226',
       previewSubtext: '#6b3a52',
       previewAccent: '#d6336c',
+    },
+    {
+      id: 'pastel',
+      title: 'Pastel Lavender',
+      badge: 'Modern Feminine ✨',
+      subtitle: 'Soft Pink (#E9A8D0), Blush Lavender (#B9A7E8) & Pure White Cards (#FFFFFF) with Deep Purple (#7956B3) typography.',
+      icon: Heart,
+      previewBg: 'linear-gradient(145deg, #F8F5FF 0%, #F5D5E8 55%, #E9A8D0 100%)',
+      previewCardBg: '#FFFFFF',
+      previewCardBorder: '#B9A7E8',
+      previewText: '#2c1a4d',
+      previewSubtext: '#7956B3',
+      previewAccent: '#7956B3',
     },
   ];
 

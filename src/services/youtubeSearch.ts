@@ -24,12 +24,20 @@ const SESSION_CACHE_KEY = 'kashish_ytmusic_catalog_cache_v5';
 const SESSION_VIDEO_CACHE_KEY = 'kashish_ytvideo_catalog_cache_v1';
 export const SEARCH_CACHE_STALE_MS = 5 * 60 * 1000; // 5 minutes Stale-While-Revalidate threshold
 
+export function getHighResThumbnailUrl(videoId: string): string {
+  if (!videoId) return '';
+  return `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`;
+}
+
 export function normalizeSquareThumbnail(rawUrl: string | undefined, videoId: string): string {
   const clean = (rawUrl || '').trim();
   if (clean.includes('googleusercontent.com') || clean.includes('ggpht.com')) {
     return clean.replace(/=w\d+-h\d+[^&?]*/, '=w512-h512-l90-rj');
   }
-  return `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`;
+  if (videoId) {
+    return `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`;
+  }
+  return clean;
 }
 
 // Hydrate session cache on module load
@@ -151,7 +159,7 @@ function normalizeUserScope(userId?: string | null): string {
 }
 
 function getLastPlayedStorageKey(userId?: string | null): string {
-  return `kashish_ytm_last_played_v1_${normalizeUserScope(userId)}`;
+  return `kashish_ytm_last_played_v2_${normalizeUserScope(userId)}`;
 }
 
 function getLastSearchStorageKey(userId?: string | null): string {
@@ -189,8 +197,51 @@ export function saveUserLastPlayedTrack(
       window.localStorage.removeItem(key);
     } else {
       window.localStorage.setItem(key, JSON.stringify(track));
+      saveUserRecentPlayedTrack(userId, track);
     }
   } catch {}
+}
+
+function getRecentPlayedStorageKey(userId?: string | null): string {
+  return `kashish_ytm_recent_played_v2_${normalizeUserScope(userId)}`;
+}
+
+export function loadUserRecentPlayedTracks(userId?: string | null): YouTubeTrack[] {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return [];
+    const raw = window.localStorage.getItem(getRecentPlayedStorageKey(userId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed
+        .filter((t): t is YouTubeTrack => t && typeof t.videoId === 'string' && t.videoId && t.title)
+        .map((t) => ({
+          ...t,
+          thumbnail: normalizeSquareThumbnail(t.thumbnail, t.videoId),
+        }));
+    }
+  } catch {}
+  return [];
+}
+
+export function saveUserRecentPlayedTrack(
+  userId?: string | null,
+  track?: YouTubeTrack | null
+): YouTubeTrack[] {
+  if (!track || !track.videoId) return loadUserRecentPlayedTracks(userId);
+  const current = loadUserRecentPlayedTracks(userId);
+  const deduplicated = [
+    track,
+    ...current.filter((item) => item.videoId !== track.videoId),
+  ].slice(0, 15);
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return deduplicated;
+    window.localStorage.setItem(
+      getRecentPlayedStorageKey(userId),
+      JSON.stringify(deduplicated)
+    );
+  } catch {}
+  return deduplicated;
 }
 
 export interface PersistedLastSearch {
@@ -412,7 +463,7 @@ async function searchVideosViaBackendApi(
   return videos.map((v) => ({
     ...v,
     mediaType: 'video',
-    thumbnail: `https://i.ytimg.com/vi/${v.videoId}/mqdefault.jpg`,
+    thumbnail: getHighResThumbnailUrl(v.videoId),
   }));
 }
 
@@ -545,7 +596,7 @@ async function searchViaPipedVideos(
       videoId,
       title: item.title || 'Untitled Video',
       artist: item.uploaderName?.replace(/ - Topic$/i, '') || 'YouTube Video',
-      thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+      thumbnail: getHighResThumbnailUrl(videoId),
       durationText: formatDuration(durSec),
       durationSeconds: durSec,
       viewsText: views,
@@ -578,7 +629,7 @@ async function resolveDirectVideoId(
     videoId,
     title: info?.title || `Track ${videoId}`,
     artist: info?.author_name?.replace(/ - Topic$/i, '') || 'YouTube Artist',
-    thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+    thumbnail: getHighResThumbnailUrl(videoId),
     durationText: 'Direct',
     mediaType,
     catalogSource: mediaType === 'video' ? 'youtube_video' : 'youtube_music',
@@ -782,7 +833,7 @@ export async function searchYouTubeVideos(
       const winner = (await Promise.any(videoProviders)).map((t) => ({
         ...t,
         mediaType: 'video' as const,
-        thumbnail: `https://i.ytimg.com/vi/${t.videoId}/mqdefault.jpg`,
+        thumbnail: getHighResThumbnailUrl(t.videoId),
       }));
       raceController.abort();
       saveToVideoCache(normalizedKey, winner);
@@ -848,9 +899,39 @@ export async function findEmbeddableAlternative(
     if (videosRes.status === 'fulfilled') candidates.push(...videosRes.value);
     if (songsRes.status === 'fulfilled') candidates.push(...songsRes.value);
 
+    const normalizeWords = (str: string) =>
+      str
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter((w) => w.length >= 2);
+
+    const targetWords = normalizeWords(cleanTitle);
+
+    // 1. Prefer candidates whose title contains the key words of the requested track
     for (const candidate of candidates) {
-      if (!triedVideoIds.has(candidate.videoId)) {
+      if (triedVideoIds.has(candidate.videoId)) continue;
+      const candTitleLower = candidate.title.toLowerCase();
+      if (
+        targetWords.length === 0 ||
+        targetWords.every((w) => candTitleLower.includes(w)) ||
+        (targetWords.length >= 2 &&
+          targetWords.slice(0, 2).every((w) => candTitleLower.includes(w)))
+      ) {
         return candidate;
+      }
+    }
+
+    // 2. Fallback to any candidate sharing at least the primary title word
+    if (targetWords.length > 0) {
+      const primaryWord = targetWords[0];
+      for (const candidate of candidates) {
+        if (
+          !triedVideoIds.has(candidate.videoId) &&
+          candidate.title.toLowerCase().includes(primaryWord)
+        ) {
+          return candidate;
+        }
       }
     }
   } catch {
@@ -858,3 +939,182 @@ export async function findEmbeddableAlternative(
   }
   return null;
 }
+
+const POPULAR_MUSIC_SUGGESTIONS: string[] = [
+  'Tum Hi Ho Arijit Singh',
+  'Kesariya Brahmastra',
+  'Apna Bana Le Arijit Singh',
+  'Pehle Bhi Main Vishal Mishra',
+  'Satranga Animal',
+  'O Maahi Dunki',
+  'Chaleya Jawan',
+  'Heeriye Jasleen Royal',
+  'Raataan Lambiyan Shershaah',
+  'Agar Tum Saath Ho',
+  'Tere Hawaale Arijit Singh',
+  'Sajni Laapataa Ladies',
+  'Arijit Singh Romantic Hits',
+  'Atif Aslam Best Songs',
+  'Shreya Ghoshal Melodies',
+  'KK Best Hindi Songs',
+  'Zara Sa Jannat',
+  'Tujh Mein Rab Dikhta Hai',
+  'Kabira Yeh Jawaani Hai Deewani',
+  'Ve Kamleya Rocky Aur Rani',
+  'Phir Aur Kya Chahiye',
+  'Husn Anuv Jain',
+  'Diljit Dosanjh Hits',
+  'Kishore Kumar Evergreen Songs',
+  '90s Bollywood Romantic Songs',
+  'Hindi Lo-Fi Chill Songs',
+];
+
+const suggestionMemoryCache = new Map<string, string[]>();
+
+/**
+ * Returns instant 0ms search suggestions combining recent user searches,
+ * cached track titles/artists, and popular music queries.
+ */
+export function getInstantSuggestions(
+  rawQuery: string,
+  recentSearches: string[] = [],
+  limit = 6
+): string[] {
+  const q = rawQuery.trim().toLowerCase();
+  const seen = new Set<string>();
+  const results: string[] = [];
+
+  const pushUnique = (text: string) => {
+    const clean = text.trim();
+    if (!clean) return;
+    const key = clean.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    results.push(clean);
+  };
+
+  if (!q) {
+    for (const r of recentSearches) {
+      pushUnique(r);
+      if (results.length >= limit) return results;
+    }
+    for (const p of POPULAR_MUSIC_SUGGESTIONS) {
+      pushUnique(p);
+      if (results.length >= limit) return results;
+    }
+    return results;
+  }
+
+  // 1. Prefix matches in recent searches
+  for (const r of recentSearches) {
+    if (r.toLowerCase().includes(q)) {
+      pushUnique(r);
+      if (results.length >= limit) return results;
+    }
+  }
+
+  // 2. Cached suggestions from previous network autocomplete
+  const cachedNet = suggestionMemoryCache.get(q);
+  if (cachedNet) {
+    for (const item of cachedNet) {
+      pushUnique(item);
+      if (results.length >= limit) return results;
+    }
+  }
+
+  // 3. Popular music suggestions matching prefix first, then substring
+  for (const p of POPULAR_MUSIC_SUGGESTIONS) {
+    if (p.toLowerCase().startsWith(q)) {
+      pushUnique(p);
+      if (results.length >= limit) return results;
+    }
+  }
+  for (const p of POPULAR_MUSIC_SUGGESTIONS) {
+    if (p.toLowerCase().includes(q)) {
+      pushUnique(p);
+      if (results.length >= limit) return results;
+    }
+  }
+
+  // 4. Cached song/video titles from session memory
+  for (const [, entry] of memoryCache.entries()) {
+    for (const t of entry.tracks) {
+      if (t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q)) {
+        pushUnique(`${t.title} - ${t.artist}`);
+        if (results.length >= limit) return results;
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Fetches live YouTube search autocomplete suggestions combined with instant local matches
+ * using pure fetch (never injecting cross-origin <script> tags).
+ */
+export async function fetchYouTubeSuggestions(
+  rawQuery: string,
+  recentSearches: string[] = [],
+  signal?: AbortSignal,
+  limit = 6
+): Promise<string[]> {
+  const query = rawQuery.trim();
+  const instant = getInstantSuggestions(query, recentSearches, limit);
+  if (!query) return instant;
+
+  const key = query.toLowerCase();
+  const cached = suggestionMemoryCache.get(key);
+  if (cached && cached.length > 0) {
+    return getInstantSuggestions(query, recentSearches, limit);
+  }
+
+  const fetchPipedSuggestions = async (baseUrl: string): Promise<string[]> => {
+    const res = await fetchWithTimeout(
+      `${baseUrl}/suggestions?query=${encodeURIComponent(query)}`,
+      signal,
+      2000
+    );
+    if (!res.ok) throw new Error('Piped suggestions failed');
+    const data = await res.json();
+    if (!Array.isArray(data) || data.length === 0) throw new Error('Empty suggestions');
+    return data.map((s: any) => String(s || '').trim()).filter(Boolean);
+  };
+
+  try {
+    const liveList = await Promise.any([
+      fetchPipedSuggestions('https://pipedapi.ducks.party'),
+      fetchPipedSuggestions('https://api.piped.private.coffee'),
+    ]);
+
+    if (signal?.aborted) return instant;
+
+    suggestionMemoryCache.set(key, liveList);
+    const merged: string[] = [];
+    const seen = new Set<string>();
+    const add = (val: string) => {
+      const clean = val.trim();
+      if (!clean) return;
+      const k = clean.toLowerCase();
+      if (seen.has(k)) return;
+      seen.add(k);
+      merged.push(clean);
+    };
+
+    for (const r of recentSearches) {
+      if (r.toLowerCase().includes(key)) add(r);
+    }
+    for (const s of liveList) {
+      add(s);
+      if (merged.length >= limit) break;
+    }
+    for (const i of instant) {
+      if (merged.length >= limit) break;
+      add(i);
+    }
+    return merged.slice(0, limit);
+  } catch {
+    return instant;
+  }
+}
+

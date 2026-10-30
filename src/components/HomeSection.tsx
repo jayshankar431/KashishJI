@@ -35,6 +35,7 @@ interface HomeSectionProps {
   hugCount?: number;
   onSendHug?: () => void;
   onOpenHiddenStats?: () => void;
+  viewMode?: 'home' | 'rooms' | 'full';
 }
 
 export const HomeSection: React.FC<HomeSectionProps> = ({
@@ -46,6 +47,7 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
   isDarkMode,
   hugCount = 0,
   onSendHug,
+  viewMode = 'home',
 }) => {
   const site = useSite();
   // Birthday countdown & Surprise unlock calculation
@@ -465,8 +467,13 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
     },
   ];
 
+  const showHomeTop = viewMode === 'home' || viewMode === 'full';
+  const showRoomsSection = viewMode === 'rooms' || viewMode === 'full';
+
   return (
-    <div className="space-y-6 animate-fade-in pb-12">
+    <div className="space-y-6 animate-fade-in pb-28">
+      {showHomeTop && (
+        <>
       {/* Hero Welcome Banner */}
       <section
         style={{
@@ -907,32 +914,50 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
 
       {/* Dynamic Slot: Home Before Rooms */}
       <DynamicSlot slotId="home_before_rooms" onNavigate={onNavigate} isDarkMode={isDarkMode} />
+        </>
+      )}
 
+      {showRoomsSection && (
+        <>
       {/* Sections Grid */}
       <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Heart className="w-4 h-4 fill-[var(--accent)] text-[var(--accent)]" />
-            <h2
-              style={{
-                color: 'var(--text)',
-                fontFamily: "'Century Gothic', 'Gothic A1', sans-serif",
-              }}
-              className="font-gothic text-xl sm:text-2xl font-bold tracking-wide"
+        <div
+          style={{
+            backgroundColor: 'var(--card)',
+            borderColor: 'var(--card-border)',
+            boxShadow: '0 6px 24px var(--shadow-color)',
+          }}
+          className="rounded-3xl p-5 sm:p-6 border flex items-center justify-between gap-3"
+        >
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Heart className="w-4 h-4 fill-[var(--accent)] text-[var(--accent)]" />
+              <h2
+                style={{
+                  color: 'var(--text)',
+                  fontFamily: "'Century Gothic', 'Gothic A1', sans-serif",
+                }}
+                className="font-gothic text-xl sm:text-2xl font-bold tracking-wide"
+              >
+                Explore Your World
+              </h2>
+            </div>
+            <p
+              style={{ color: 'var(--text-soft)' }}
+              className="text-xs font-medium"
             >
-              Explore Your World
-            </h2>
+              Special rooms, memories, letters & games crafted for {name}
+            </p>
           </div>
           <span
-            style={{ color: 'var(--text-soft)' }}
-            className="text-xs font-semibold"
+            style={{ color: 'var(--accent)' }}
+            className="text-xs font-semibold shrink-0"
           >
-            Tap any room
+            {cards.length + (site.customTabs || []).filter((ct) => ct && ct.visible !== false).length} Rooms
           </span>
         </div>
 
-        {/* Music Player 4 You Darling (Inline Portal Slot at the top of Room section) */}
-        <div id="darling-player-slot" className="w-full" />
+        {viewMode === 'full' && <div id="darling-player-slot" className="w-full" />}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
           {cards.map((card) => {
@@ -1046,6 +1071,8 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
 
       {/* Dynamic Slot: Home Bottom */}
       <DynamicSlot slotId="home_bottom" onNavigate={onNavigate} isDarkMode={isDarkMode} />
+        </>
+      )}
 
       {/* Birthday Surprise Interactive Spinner & Amazon Gift Card Modal */}
       <BirthdaySurpriseSpinner

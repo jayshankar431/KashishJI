@@ -145,33 +145,9 @@ export const BirthdaySurpriseSpinner: React.FC<BirthdaySurpriseSpinnerProps> = (
     return () => unsub();
   }, []);
 
-  // Lightweight sound effect using a single shared AudioContext
+  // Silent no-op: click/tick sounds disabled
   const playWheelTick = () => {
-    try {
-      const AudioCtx =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      if (!AudioCtx) return;
-      if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') {
-        audioCtxRef.current = new AudioCtx();
-      }
-      const ctx = audioCtxRef.current;
-      if (ctx.state === 'suspended') {
-        void ctx.resume();
-      }
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(640, ctx.currentTime);
-      gain.gain.setValueAtTime(0.035, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.02);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.022);
-    } catch {
-      // Audio fallback silent
-    }
+    // Intentionally silent
   };
 
   // Reset testing state

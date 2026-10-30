@@ -13,6 +13,8 @@ import type { AppThemeId } from './ThemeSection';
 
 export type NavTab =
   | 'home'
+  | 'melodies'
+  | 'rooms'
   | 'gallery'
   | 'games'
   | 'cute-pic'
@@ -44,15 +46,18 @@ export const Navbar: React.FC<NavbarProps> = ({
   onReopenEnvelope,
   onShowAdmin,
 }) => {
+  const isSubRoom =
+    activeTab !== 'home' && activeTab !== 'melodies' && activeTab !== 'rooms';
+
   const handleBrandClick = () => {
     triggerHaptic(30);
     onSelectTab('home');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleBackToHome = () => {
+  const handleBackClick = () => {
     triggerHaptic(30);
-    onSelectTab('home');
+    onSelectTab(isSubRoom ? 'rooms' : 'home');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -68,22 +73,22 @@ export const Navbar: React.FC<NavbarProps> = ({
       className="sticky top-0 z-40 backdrop-blur-md border-b transition-colors duration-300 shadow-xs"
     >
       <div className="max-w-5xl mx-auto px-2 sm:px-4 h-14 flex items-center justify-between gap-1 sm:gap-2 flex-nowrap">
-        {/* Left Side: Back to Home button (when in any section) + Brand Logo */}
+        {/* Left Side: Back button (when inside a sub-room) + Brand Logo */}
         <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 shrink">
-          {activeTab !== 'home' && (
+          {isSubRoom && (
             <button
-              onClick={handleBackToHome}
+              onClick={handleBackClick}
               className="flex items-center gap-1 px-2 sm:px-3 py-1 sm:py-1.5 rounded-full border text-[11px] sm:text-xs font-bold cursor-pointer transition-transform active:scale-95 shadow-xs shrink-0"
               style={{
                 backgroundColor: 'var(--card-subtle)',
                 borderColor: 'var(--card-border)',
                 color: 'var(--accent)',
               }}
-              title="Back to Home"
-              aria-label="Back to Home"
+              title="Back to Rooms"
+              aria-label="Back to Rooms"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
-              <span>Home</span>
+              <span>Rooms</span>
             </button>
           )}
 

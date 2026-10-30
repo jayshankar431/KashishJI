@@ -111,6 +111,28 @@
   --input-bg: rgba(16, 8, 34, 0.55);
 }
 
+/* PASTEL THEME: Modern Feminine Pastel (Soft Pink #E9A8D0, Lavender #B9A7E8, Blush Pink #F5D5E8, Light Background #F8F5FF, White Cards #FFFFFF, Deep Purple #7956B3) */
+[data-theme="pastel"] {
+  color-scheme: light;
+  --bg: #F8F5FF;
+  --bg-gradient: linear-gradient(145deg, #F8F5FF 0%, #FAF8FF 50%, #F5D5E8 100%);
+  --card: rgba(255, 255, 255, 0.98);
+  --card-solid: #FFFFFF;
+  --card-border: rgba(185, 167, 232, 0.55);
+  --text: #2c1a4d;
+  --text-soft: #7956B3;
+  --accent: #7956B3;
+  --accent-hover: #E9A8D0;
+  --accent-text: #ffffff;
+  --card-subtle: #F5D5E8;
+  --nav-bg: rgba(255, 255, 255, 0.97);
+  --shadow-color: rgba(121, 86, 179, 0.14);
+  --glass-blur: none;
+  --glass-border: rgba(185, 167, 232, 0.55);
+  --glass-shadow: 0 8px 26px rgba(121, 86, 179, 0.14);
+  --input-bg: #FFFFFF;
+}
+
 *,
 *::before,
 *::after {

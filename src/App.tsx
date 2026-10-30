@@ -27,7 +27,7 @@ import {
   syncContactsToCloud,
   saveCurrentUserIdentity,
 } from './androidBridge';
-import { Heart, Home, Music, Download, RefreshCw, CheckCircle2, Sparkles, ShieldAlert, ShieldCheck, ChevronDown, ChevronUp } from 'lucide-react';
+import { Heart, Home, Music, LayoutGrid, Download, RefreshCw, CheckCircle2, Sparkles, ShieldAlert, ShieldCheck, ChevronDown, ChevronUp } from 'lucide-react';
 import { DynamicSlot } from './components/DynamicSlot';
 import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
 import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
@@ -72,7 +72,76 @@ export default function App() {
     return 'loading';
   });
   const [isLoadingAssets, setIsLoadingAssets] = useState(true);
+  const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
   const prevApprovalRef = useRef<string>(approvalStatus);
+
+  // Detect when virtual keyboard or text input is active so the bottom floating hover dock never hovers on top of the keyboard
+  useEffect(() => {
+    const isTextInputElement = (el: Element | null): boolean => {
+      if (!el) return false;
+      const tag = el.tagName?.toUpperCase();
+      if (tag === 'TEXTAREA') return true;
+      if ((el as HTMLElement).isContentEditable) return true;
+      if (tag === 'INPUT') {
+        const type = ((el as HTMLInputElement).type || 'text').toLowerCase();
+        const nonKeyboardTypes = new Set([
+          'button',
+          'checkbox',
+          'color',
+          'file',
+          'hidden',
+          'image',
+          'radio',
+          'range',
+          'reset',
+          'submit',
+        ]);
+        return !nonKeyboardTypes.has(type);
+      }
+      return false;
+    };
+
+    let blurTimer: number | null = null;
+    const baseHeight = typeof window !== 'undefined' ? window.innerHeight : 800;
+
+    const handleFocusIn = (e: FocusEvent) => {
+      if (isTextInputElement(e.target as Element)) {
+        if (blurTimer) window.clearTimeout(blurTimer);
+        setIsKeyboardOpen(true);
+      }
+    };
+
+    const handleFocusOut = () => {
+      if (blurTimer) window.clearTimeout(blurTimer);
+      blurTimer = window.setTimeout(() => {
+        if (!isTextInputElement(document.activeElement)) {
+          setIsKeyboardOpen(false);
+        }
+      }, 120);
+    };
+
+    const handleViewportResize = () => {
+      const vv = window.visualViewport;
+      if (!vv) return;
+      const shrunkByKeyboard = baseHeight - vv.height > 140;
+      if (shrunkByKeyboard || isTextInputElement(document.activeElement)) {
+        setIsKeyboardOpen(true);
+      } else {
+        setIsKeyboardOpen(false);
+      }
+    };
+
+    document.addEventListener('focusin', handleFocusIn);
+    document.addEventListener('focusout', handleFocusOut);
+    window.visualViewport?.addEventListener('resize', handleViewportResize);
+
+    return () => {
+      if (blurTimer) window.clearTimeout(blurTimer);
+      document.removeEventListener('focusin', handleFocusIn);
+      document.removeEventListener('focusout', handleFocusOut);
+      window.visualViewport?.removeEventListener('resize', handleViewportResize);
+    };
+  }, []);
 
   // Sync unlock state with Firebase Authentication AND Real-Time Admin Approval Gate
   useEffect(() => {
@@ -236,9 +305,9 @@ export default function App() {
     };
   }, []);
 
-  // Theme state: 'default' (current dark look), 'glass' (Glassmorphism), or 'light'
+  // Theme state: 'default' (current dark look), 'glass' (Glassmorphism), 'light' (Soft Blush), or 'pastel' (Modern Feminine)
   const [appTheme, setAppTheme] = useState<AppThemeId>(() => getSavedTheme());
-  const isDarkMode = appTheme !== 'light';
+  const isDarkMode = appTheme !== 'light' && appTheme !== 'pastel';
   const [isThemeModalOpen, setIsThemeModalOpen] = useState<boolean>(false);
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(() => {
     return typeof window !== 'undefined' && window.location.hash === '#admin';
@@ -328,6 +397,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<NavTab>(() => {
     const validTabs: NavTab[] = [
       'home',
+      'melodies',
+      'rooms',
       'gallery',
       'games',
       'cute-pic',
@@ -948,26 +1019,54 @@ export default function App() {
           />
 
           {/* Main Content Area */}
-          <main className="flex-1 max-w-4xl mx-auto w-full px-3 sm:px-6 pt-2 sm:pt-3 pb-6 sm:pb-8">
+          <main
+            className={
+              activeTab === 'melodies'
+                ? 'flex-1 w-full'
+                : 'flex-1 max-w-4xl mx-auto w-full px-3 sm:px-6 pt-2 sm:pt-3 pb-28 sm:pb-32'
+            }
+          >
+            {/* Full-Page Persistent In-App YouTube Music & Video Studio (visible as full page on Melodies tab, stays alive in background on other tabs) */}
+            <DarlingMusicPlayer
+              activeTab={activeTab}
+              recipientName={site.name}
+              userId={authUser?.uid || 'guest'}
+            />
+
             <div key={activeTab} className="section-fade-slide">
               {activeTab === 'home' && (
-              <HomeSection
-                name={site.name}
-                birthday={site.birthday}
-                favouriteSong={site.favouriteSong}
-                favouriteColour={site.favouriteColour}
-                onNavigate={handleTabSelect}
-                isDarkMode={isDarkMode}
-                hugCount={progress.hugCount}
-                onSendHug={handleSendHug}
-              />
-            )}
+                <HomeSection
+                  name={site.name}
+                  birthday={site.birthday}
+                  favouriteSong={site.favouriteSong}
+                  favouriteColour={site.favouriteColour}
+                  onNavigate={handleTabSelect}
+                  isDarkMode={isDarkMode}
+                  hugCount={progress.hugCount}
+                  onSendHug={handleSendHug}
+                  viewMode="home"
+                />
+              )}
+
+              {activeTab === 'rooms' && (
+                <HomeSection
+                  name={site.name}
+                  birthday={site.birthday}
+                  favouriteSong={site.favouriteSong}
+                  favouriteColour={site.favouriteColour}
+                  onNavigate={handleTabSelect}
+                  isDarkMode={isDarkMode}
+                  hugCount={progress.hugCount}
+                  onSendHug={handleSendHug}
+                  viewMode="rooms"
+                />
+              )}
 
             {activeTab === 'gallery' && (
               <GallerySection
                 name={site.name}
                 isDarkMode={isDarkMode}
-                onBack={() => handleTabSelect('home')}
+                onBack={() => handleTabSelect('rooms')}
               />
             )}
 
@@ -1040,10 +1139,10 @@ export default function App() {
               );
             })()}
 
-            {activeTab !== 'home' && (
-              <div className="pt-10 pb-4 text-center">
+            {activeTab !== 'home' && activeTab !== 'melodies' && activeTab !== 'rooms' && (
+              <div className="pt-8 pb-4 text-center">
                 <button
-                  onClick={() => handleTabSelect('home')}
+                  onClick={() => handleTabSelect('rooms')}
                   className="inline-flex items-center gap-2 px-6 py-3 rounded-full border text-sm font-bold shadow-md cursor-pointer transition-transform active:scale-95 hover:scale-105"
                   style={{
                     backgroundColor: 'var(--card-subtle)',
@@ -1051,20 +1150,120 @@ export default function App() {
                     color: 'var(--accent)',
                   }}
                 >
-                  <Home className="w-4 h-4" />
-                  <span>Back to Home</span>
+                  <LayoutGrid className="w-4 h-4" />
+                  <span>Back to Rooms</span>
                 </button>
               </div>
             )}
             </div>
           </main>
 
-          {/* Persistent In-App YouTube Music Player 4 You Darling */}
-          <DarlingMusicPlayer
-            activeTab={activeTab}
-            recipientName={site.name}
-            userId={authUser?.uid || 'guest'}
-          />
+          {/* Bottom Floating Hover Navigation Dock (Left: Melodies, Center Circle: Home, Right: Rooms) */}
+          {(() => {
+            const isMelodiesActive = activeTab === 'melodies';
+            const isHomeActive = activeTab === 'home';
+            const isRoomsActive =
+              activeTab === 'rooms' ||
+              (activeTab !== 'home' && activeTab !== 'melodies');
+
+            if (isKeyboardOpen) return null;
+
+            return (
+              <nav
+                aria-label="Primary Bottom Navigation"
+                style={{
+                  paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+                }}
+                className="fixed bottom-3 left-1/2 -translate-x-1/2 z-[88] w-[92%] max-w-sm pointer-events-none select-none"
+              >
+                <div
+                  style={{
+                    backgroundColor: 'var(--nav-bg)',
+                    borderColor: 'var(--card-border)',
+                    boxShadow: '0 12px 34px var(--shadow-color)',
+                  }}
+                  className="pointer-events-auto relative rounded-full border backdrop-blur-xl px-4 py-2 flex items-center justify-between"
+                >
+                  {/* Left Button: Melodies */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      triggerHaptic(25);
+                      romanticAudio.playChime();
+                      handleTabSelect('melodies');
+                    }}
+                    style={{
+                      color: isMelodiesActive ? 'var(--accent)' : 'var(--text-soft)',
+                      backgroundColor: isMelodiesActive ? 'var(--card-subtle)' : 'transparent',
+                    }}
+                    className="flex-1 flex flex-col items-center justify-center gap-1 py-1.5 px-3 rounded-full transition-all duration-200 cursor-pointer hover:scale-105 active:scale-95"
+                  >
+                    <Music
+                      className={`w-5 h-5 transition-transform duration-200 ${
+                        isMelodiesActive ? 'scale-110' : ''
+                      }`}
+                    />
+                    <span className="text-[11px] font-bold tracking-wide">
+                      Melodies
+                    </span>
+                  </button>
+
+                  {/* Center Elevated Circle Button: Home */}
+                  <div className="relative flex flex-col items-center justify-center px-2 -mt-6">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        triggerHaptic(30);
+                        romanticAudio.playChime();
+                        handleTabSelect('home');
+                      }}
+                      aria-label="Home"
+                      style={{
+                        background: isHomeActive
+                          ? 'linear-gradient(135deg, #ec4899 0%, #e11d48 55%, #be123c 100%)'
+                          : 'var(--card)',
+                        color: isHomeActive ? '#ffffff' : 'var(--accent)',
+                        borderColor: isHomeActive ? 'rgba(255,255,255,0.35)' : 'var(--card-border)',
+                        boxShadow: isHomeActive
+                          ? '0 8px 24px rgba(225, 29, 72, 0.5)'
+                          : '0 6px 18px var(--shadow-color)',
+                      }}
+                      className="w-14 h-14 rounded-full border-2 flex flex-col items-center justify-center gap-0.5 transition-all duration-200 cursor-pointer hover:scale-105 active:scale-95"
+                    >
+                      <Home className="w-5 h-5" />
+                      <span className="text-[9px] font-bold tracking-wider uppercase leading-none">
+                        Home
+                      </span>
+                    </button>
+                  </div>
+
+                  {/* Right Button: Rooms */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      triggerHaptic(25);
+                      romanticAudio.playChime();
+                      handleTabSelect('rooms');
+                    }}
+                    style={{
+                      color: isRoomsActive ? 'var(--accent)' : 'var(--text-soft)',
+                      backgroundColor: isRoomsActive ? 'var(--card-subtle)' : 'transparent',
+                    }}
+                    className="flex-1 flex flex-col items-center justify-center gap-1 py-1.5 px-3 rounded-full transition-all duration-200 cursor-pointer hover:scale-105 active:scale-95"
+                  >
+                    <LayoutGrid
+                      className={`w-5 h-5 transition-transform duration-200 ${
+                        isRoomsActive ? 'scale-110' : ''
+                      }`}
+                    />
+                    <span className="text-[11px] font-bold tracking-wide">
+                      Rooms
+                    </span>
+                  </button>
+                </div>
+              </nav>
+            );
+          })()}
 
           {/* Real-Time Notifications & Truecaller-Style Overlay Popups */}
           <LiveOverlaysAndNotifications
