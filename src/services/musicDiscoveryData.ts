@@ -10,13 +10,30 @@ export interface GenreMood {
 export const GENRE_MOODS: GenreMood[] = [
   { id: 'all', name: 'All Melodies', emoji: '✨', color: '#b8236d' },
   { id: 'romantic', name: 'Romantic', emoji: '💖', color: '#ec4899' },
-  { id: 'bollywood', name: 'Bollywood Hits', emoji: '🎬', color: '#f59e0b' },
-  { id: 'lofi', name: 'Lo-Fi Chill', emoji: '🌙', color: '#8b5cf6' },
-  { id: 'punjabi', name: 'Punjabi Vibe', emoji: '🔥', color: '#ef4444' },
-  { id: 'indie', name: 'Indie Pop', emoji: '🎸', color: '#06b6d4' },
-  { id: 'sufi', name: 'Sufi & Soul', emoji: '🕊️', color: '#10b981' },
+  { id: 'sad', name: 'Sad & Soulful', emoji: '🌧️', color: '#64748b' },
+  { id: 'happy', name: 'Happy Vibes', emoji: '☀️', color: '#eab308' },
+  { id: 'chill', name: 'Chill', emoji: '🌊', color: '#0ea5e9' },
+  { id: 'lofi', name: 'Lo-Fi', emoji: '🌙', color: '#8b5cf6' },
+  { id: 'energetic', name: 'Energetic', emoji: '🔥', color: '#ef4444' },
+  { id: 'workout', name: 'Workout', emoji: '⚡', color: '#6366f1' },
   { id: 'acoustic', name: 'Acoustic', emoji: '☕', color: '#f97316' },
-  { id: 'workout', name: 'Workout Pump', emoji: '⚡', color: '#6366f1' },
+  { id: 'sufi', name: 'Sufi', emoji: '🕊️', color: '#10b981' },
+  { id: 'bollywood', name: 'Bollywood', emoji: '🎬', color: '#f59e0b' },
+  { id: 'punjabi', name: 'Punjabi', emoji: '🥁', color: '#dc2626' },
+  { id: 'indie', name: 'Indie Pop', emoji: '🎸', color: '#06b6d4' },
+];
+
+export const RELATED_MOOD_CHIPS: GenreMood[] = [
+  { id: 'context', name: 'Match Current Song', emoji: '🎯', color: '#b8236d' },
+  { id: 'romantic', name: 'Romantic', emoji: '💖', color: '#ec4899' },
+  { id: 'sad', name: 'Sad', emoji: '🌧️', color: '#64748b' },
+  { id: 'happy', name: 'Happy', emoji: '☀️', color: '#eab308' },
+  { id: 'chill', name: 'Chill', emoji: '🌊', color: '#0ea5e9' },
+  { id: 'lofi', name: 'Lo-Fi', emoji: '🌙', color: '#8b5cf6' },
+  { id: 'energetic', name: 'Energetic', emoji: '🔥', color: '#ef4444' },
+  { id: 'workout', name: 'Workout', emoji: '⚡', color: '#6366f1' },
+  { id: 'acoustic', name: 'Acoustic', emoji: '☕', color: '#f97316' },
+  { id: 'sufi', name: 'Sufi', emoji: '🕊️', color: '#10b981' },
 ];
 
 export interface DailyMix {
@@ -44,6 +61,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '3:25',
     durationSeconds: 205,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   kesariya: {
     videoId: 'BddP6PYo2gs',
@@ -54,6 +72,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '2:53',
     durationSeconds: 173,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   tumHiHo: {
     videoId: 'Umqb9KENgmk',
@@ -64,6 +83,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '4:28',
     durationSeconds: 268,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   lover: {
     videoId: 'mH_LFkWxpI0',
@@ -74,6 +94,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '3:08',
     durationSeconds: 188,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   chaleya: {
     videoId: 'VAdGW7QDJiU',
@@ -84,6 +105,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '3:08',
     durationSeconds: 188,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   heeriye: {
     videoId: 'RLzC55ai0eo',
@@ -94,6 +116,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '3:19',
     durationSeconds: 199,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   raataanLambiyan: {
     videoId: 'orYf6VDtj_k',
@@ -104,6 +127,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '3:54',
     durationSeconds: 234,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   pehleBhiMain: {
     videoId: 'iAIBF2ngbWY',
@@ -114,6 +138,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '4:09',
     durationSeconds: 249,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   satranga: {
     videoId: 'HrnrqYxYrbk',
@@ -124,6 +149,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '4:33',
     durationSeconds: 273,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   oMaahi: {
     videoId: 'Etkd-07gnxM',
@@ -134,6 +160,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '4:06',
     durationSeconds: 246,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   agarTumSaathHo: {
     videoId: 'sK7riqg2mr4',
@@ -144,6 +171,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '5:42',
     durationSeconds: 342,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   tereHawaale: {
     videoId: 'KUpwupYj_tY',
@@ -154,6 +182,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '5:31',
     durationSeconds: 331,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   sajni: {
     videoId: 'k3g_WjLCsXM',
@@ -164,6 +193,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '2:26',
     durationSeconds: 146,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   kabira: {
     videoId: 'jHNNMj5bNQw',
@@ -174,6 +204,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '4:12',
     durationSeconds: 252,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   shayad: {
     videoId: 'MJyKN-8UncM',
@@ -184,6 +215,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '3:10',
     durationSeconds: 190,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   bornToShine: {
     videoId: 'dCmp56tSSmA',
@@ -194,6 +226,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '3:38',
     durationSeconds: 218,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   bars52: {
     videoId: '4DfVxVeqk2o',
@@ -204,6 +237,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '3:42',
     durationSeconds: 222,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   softly: {
     videoId: 'cWMxCE2HTag',
@@ -214,6 +248,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '2:51',
     durationSeconds: 171,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   husn: {
     videoId: 'gJLVTKhTnog',
@@ -224,6 +259,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '4:00',
     durationSeconds: 240,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   baarishein: {
     videoId: 'PJWemSzExXs',
@@ -234,6 +270,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '3:28',
     durationSeconds: 208,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   alagAasmaan: {
     videoId: 'vA86QFrXoho',
@@ -244,6 +281,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '3:46',
     durationSeconds: 226,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   gul: {
     videoId: 'SmaY7RfBgas',
@@ -254,6 +292,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '3:45',
     durationSeconds: 225,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   kasoor: {
     videoId: 'BmUe3-sfr7E',
@@ -264,6 +303,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '3:30',
     durationSeconds: 210,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   coldMess: {
     videoId: 'Il7Nv270zNk',
@@ -274,6 +314,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '6:08',
     durationSeconds: 368,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   chooLo: {
     videoId: 'sFMRqxCexDk',
@@ -284,6 +325,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '3:54',
     durationSeconds: 234,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   aaogeTumKabhi: {
     videoId: 'i96UO8-GFvw',
@@ -294,6 +336,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '4:25',
     durationSeconds: 265,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   kunFayaKun: {
     videoId: 'T94PHkuydcw',
@@ -304,6 +347,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '6:21',
     durationSeconds: 381,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   raanjhanaa: {
     videoId: 'vgm1u2gPxzw',
@@ -314,6 +358,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '3:10',
     durationSeconds: 190,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   afreenAfreen: {
     videoId: 'kw4tT7SCmaY',
@@ -324,6 +369,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '6:45',
     durationSeconds: 405,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   pasoori: {
     videoId: '5Eqb_-j3FDA',
@@ -334,6 +380,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '4:37',
     durationSeconds: 277,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   kahaniSuno: {
     videoId: 'KgdBrGHviv4',
@@ -344,6 +391,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '2:52',
     durationSeconds: 172,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   faasle: {
     videoId: 'EiiOYwqk3A0',
@@ -354,6 +402,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '3:37',
     durationSeconds: 217,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   iraaday: {
     videoId: 'Qwm6BSGrOq0',
@@ -364,6 +413,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '2:14',
     durationSeconds: 134,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   nadaanParinde: {
     videoId: '6MgsHSAcI9k',
@@ -374,6 +424,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '6:42',
     durationSeconds: 402,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   zinda: {
     videoId: 'Ax0G_P2dSBw',
@@ -384,6 +435,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '3:30',
     durationSeconds: 210,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
   karHarMaidaanFateh: {
     videoId: '9iIX4PBplAY',
@@ -394,6 +446,7 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     durationText: '3:32',
     durationSeconds: 212,
     mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
   },
 } satisfies Record<string, YouTubeTrack>;
 
@@ -429,49 +482,49 @@ export const QUICK_PICKS_TRACKS: (DiscoveryTrackItem & { vibe: string })[] = [
   {
     ...CANONICAL_DISCOVERY_CATALOG.apnaBanaLe,
     genreId: 'romantic',
-    secondaryGenres: ['bollywood', 'acoustic'],
+    secondaryGenres: ['bollywood', 'acoustic', 'chill'],
     vibe: 'Soulful & Melodic',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.kesariya,
     genreId: 'romantic',
-    secondaryGenres: ['bollywood'],
+    secondaryGenres: ['bollywood', 'happy'],
     vibe: 'Pure Romance',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.chaleya,
     genreId: 'bollywood',
-    secondaryGenres: ['romantic', 'workout'],
+    secondaryGenres: ['romantic', 'happy', 'energetic'],
     vibe: 'Chartbuster Groove',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.lover,
     genreId: 'punjabi',
-    secondaryGenres: ['workout'],
+    secondaryGenres: ['energetic', 'happy', 'workout'],
     vibe: 'Upbeat Urban Punjabi',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.heeriye,
     genreId: 'romantic',
-    secondaryGenres: ['indie', 'lofi'],
+    secondaryGenres: ['indie', 'lofi', 'happy', 'chill'],
     vibe: 'Dreamy Pop Melody',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.husn,
     genreId: 'indie',
-    secondaryGenres: ['acoustic', 'lofi'],
+    secondaryGenres: ['acoustic', 'lofi', 'sad', 'chill'],
     vibe: 'Acoustic Poetry',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.pasoori,
     genreId: 'sufi',
-    secondaryGenres: ['indie', 'punjabi'],
+    secondaryGenres: ['indie', 'punjabi', 'energetic'],
     vibe: 'Global Fusion Anthem',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.zinda,
     genreId: 'workout',
-    secondaryGenres: ['bollywood'],
+    secondaryGenres: ['bollywood', 'energetic'],
     vibe: 'High-Octane Energy',
   },
 ];
@@ -480,25 +533,25 @@ export const MADE_FOR_YOU_TRACKS: (DiscoveryTrackItem & { reason: string })[] = 
   {
     ...CANONICAL_DISCOVERY_CATALOG.satranga,
     genreId: 'romantic',
-    secondaryGenres: ['bollywood'],
+    secondaryGenres: ['bollywood', 'sad'],
     reason: 'Matches your romantic Bollywood favorites',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.oMaahi,
     genreId: 'bollywood',
-    secondaryGenres: ['romantic', 'sufi'],
+    secondaryGenres: ['romantic', 'sufi', 'happy'],
     reason: 'Inspired by your recent Arijit Singh sessions',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.softly,
     genreId: 'punjabi',
-    secondaryGenres: ['workout', 'lofi'],
+    secondaryGenres: ['energetic', 'chill', 'happy'],
     reason: 'Trending Punjabi vibe in your queue',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.kasoor,
     genreId: 'acoustic',
-    secondaryGenres: ['indie', 'lofi'],
+    secondaryGenres: ['indie', 'lofi', 'chill', 'happy'],
     reason: 'Warm acoustic storytelling for your mood',
   },
   {
@@ -510,7 +563,7 @@ export const MADE_FOR_YOU_TRACKS: (DiscoveryTrackItem & { reason: string })[] = 
   {
     ...CANONICAL_DISCOVERY_CATALOG.coldMess,
     genreId: 'indie',
-    secondaryGenres: ['acoustic', 'lofi'],
+    secondaryGenres: ['acoustic', 'lofi', 'sad', 'chill'],
     reason: 'Indie ballad loved by listeners like you',
   },
 ];
@@ -519,37 +572,37 @@ export const DISCOVER_WEEKLY_TRACKS: (DiscoveryTrackItem & { tag: string })[] = 
   {
     ...CANONICAL_DISCOVERY_CATALOG.pehleBhiMain,
     genreId: 'bollywood',
-    secondaryGenres: ['romantic', 'lofi'],
+    secondaryGenres: ['romantic', 'lofi', 'sad'],
     tag: 'Weekly Feature',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.sajni,
     genreId: 'romantic',
-    secondaryGenres: ['bollywood', 'acoustic'],
+    secondaryGenres: ['bollywood', 'acoustic', 'chill'],
     tag: 'Fresh Melody',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.bars52,
     genreId: 'punjabi',
-    secondaryGenres: ['workout'],
+    secondaryGenres: ['workout', 'energetic'],
     tag: 'Power Anthem',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.iraaday,
     genreId: 'lofi',
-    secondaryGenres: ['indie', 'romantic'],
+    secondaryGenres: ['indie', 'romantic', 'chill'],
     tag: 'Late Night Chill',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.afreenAfreen,
     genreId: 'sufi',
-    secondaryGenres: ['acoustic'],
+    secondaryGenres: ['acoustic', 'romantic'],
     tag: 'Timeless Harmony',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.karHarMaidaanFateh,
     genreId: 'workout',
-    secondaryGenres: ['bollywood'],
+    secondaryGenres: ['bollywood', 'energetic'],
     tag: 'Peak Motivation',
   },
 ];
@@ -558,37 +611,37 @@ export const SIMILAR_TO_FAVORITES_TRACKS: (DiscoveryTrackItem & { referenceArtis
   {
     ...CANONICAL_DISCOVERY_CATALOG.tumHiHo,
     genreId: 'romantic',
-    secondaryGenres: ['bollywood'],
+    secondaryGenres: ['bollywood', 'sad'],
     referenceArtist: 'Because you listened to Arijit Singh',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.shayad,
     genreId: 'bollywood',
-    secondaryGenres: ['romantic', 'lofi'],
+    secondaryGenres: ['romantic', 'lofi', 'chill', 'happy'],
     referenceArtist: 'Because you love Romantic Bollywood',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.bornToShine,
     genreId: 'punjabi',
-    secondaryGenres: ['workout'],
+    secondaryGenres: ['workout', 'energetic', 'happy'],
     referenceArtist: 'Because you played Diljit Dosanjh',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.raataanLambiyan,
     genreId: 'romantic',
-    secondaryGenres: ['bollywood', 'acoustic'],
+    secondaryGenres: ['bollywood', 'acoustic', 'happy'],
     referenceArtist: 'Because you enjoy soulful duets',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.agarTumSaathHo,
-    genreId: 'bollywood',
-    secondaryGenres: ['romantic', 'acoustic'],
+    genreId: 'sad',
+    secondaryGenres: ['bollywood', 'romantic', 'acoustic'],
     referenceArtist: 'Because you love emotional classics',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.tereHawaale,
     genreId: 'romantic',
-    secondaryGenres: ['bollywood', 'sufi'],
+    secondaryGenres: ['bollywood', 'sufi', 'chill'],
     referenceArtist: 'Because you saved heartfelt melodies',
   },
 ];
@@ -597,37 +650,37 @@ export const HIDDEN_GEMS_TRACKS: (DiscoveryTrackItem & { gemFact: string })[] = 
   {
     ...CANONICAL_DISCOVERY_CATALOG.baarishein,
     genreId: 'indie',
-    secondaryGenres: ['acoustic', 'lofi'],
+    secondaryGenres: ['acoustic', 'lofi', 'sad', 'chill'],
     gemFact: 'Indie gem with heartfelt acoustic vocals',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.alagAasmaan,
     genreId: 'acoustic',
-    secondaryGenres: ['indie', 'lofi'],
+    secondaryGenres: ['indie', 'lofi', 'chill'],
     gemFact: 'Intimate ukulele poetry for quiet evenings',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.kunFayaKun,
     genreId: 'sufi',
-    secondaryGenres: ['bollywood'],
+    secondaryGenres: ['bollywood', 'chill'],
     gemFact: 'Timeless spiritual journey & divine tranquility',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.chooLo,
     genreId: 'indie',
-    secondaryGenres: ['acoustic'],
+    secondaryGenres: ['acoustic', 'sad'],
     gemFact: 'India’s most celebrated indie rock anthem',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.kabira,
     genreId: 'sufi',
-    secondaryGenres: ['bollywood', 'acoustic'],
+    secondaryGenres: ['bollywood', 'acoustic', 'sad'],
     gemFact: 'Rustic folk warmth & soulful nostalgia',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.nadaanParinde,
     genreId: 'workout',
-    secondaryGenres: ['sufi', 'bollywood'],
+    secondaryGenres: ['sufi', 'bollywood', 'energetic'],
     gemFact: 'Soaring rock crescendo by A.R. Rahman',
   },
 ];
@@ -636,25 +689,25 @@ export const NEW_ARTISTS_TRACKS: (DiscoveryTrackItem & { spotlight: string })[] 
   {
     ...CANONICAL_DISCOVERY_CATALOG.gul,
     genreId: 'indie',
-    secondaryGenres: ['acoustic', 'lofi'],
+    secondaryGenres: ['acoustic', 'lofi', 'chill'],
     spotlight: 'Rising Singer-Songwriter',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.kahaniSuno,
     genreId: 'sufi',
-    secondaryGenres: ['romantic', 'lofi'],
+    secondaryGenres: ['romantic', 'lofi', 'sad'],
     spotlight: 'Soulful Indie Sensation',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.faasle,
     genreId: 'lofi',
-    secondaryGenres: ['romantic', 'indie', 'acoustic'],
+    secondaryGenres: ['romantic', 'indie', 'acoustic', 'sad', 'chill'],
     spotlight: 'New Melodic Voice',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.aaogeTumKabhi,
     genreId: 'indie',
-    secondaryGenres: ['acoustic'],
+    secondaryGenres: ['acoustic', 'energetic'],
     spotlight: 'Indie Rock Pioneers',
   },
 ];
@@ -731,6 +784,7 @@ export function matchesDiscoveryGenre(item: DiscoveryTrackItem, selectedGenreId:
 }
 
 const FAVORITES_KEY_PREFIX = 'kashish_music_favorites_v2_';
+const FAVORITE_TRACKS_KEY_PREFIX = 'kashish_music_favorite_tracks_v1_';
 
 export function loadUserFavorites(userId: string): Set<string> {
   if (typeof window === 'undefined' || !window.localStorage) return new Set();
@@ -739,7 +793,7 @@ export function loadUserFavorites(userId: string): Set<string> {
     if (raw) {
       const arr = JSON.parse(raw);
       if (Array.isArray(arr)) {
-        return new Set(arr);
+        return new Set(arr.filter((id): id is string => typeof id === 'string' && id.length > 0));
       }
     }
   } catch {}
@@ -754,6 +808,160 @@ export function saveUserFavorites(userId: string, ids: Set<string>): void {
       JSON.stringify(Array.from(ids))
     );
   } catch {}
+}
+
+export function loadUserFavoriteTracks(userId: string): YouTubeTrack[] {
+  const favIds = loadUserFavorites(userId);
+  const storedMap = new Map<string, YouTubeTrack>();
+
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      const raw = window.localStorage.getItem(`${FAVORITE_TRACKS_KEY_PREFIX}${userId}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            if (item && typeof item.videoId === 'string' && item.videoId && item.title) {
+              storedMap.set(item.videoId, resolveCanonicalTrack(item));
+            }
+          }
+        }
+      }
+    } catch {}
+  }
+
+  for (const d of ALL_DISCOVERY_TRACKS) {
+    if (!storedMap.has(d.videoId)) {
+      storedMap.set(d.videoId, d);
+    }
+  }
+
+  const result: YouTubeTrack[] = [];
+  for (const id of favIds) {
+    const found = storedMap.get(id);
+    if (found) {
+      result.push(resolveCanonicalTrack(found));
+    }
+  }
+  return result;
+}
+
+export function saveUserFavoriteTracks(userId: string, tracks: YouTubeTrack[]): void {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    const deduped: YouTubeTrack[] = [];
+    const seen = new Set<string>();
+    for (const t of tracks) {
+      if (t && t.videoId && !seen.has(t.videoId)) {
+        seen.add(t.videoId);
+        deduped.push(resolveCanonicalTrack(t));
+      }
+    }
+    window.localStorage.setItem(
+      `${FAVORITE_TRACKS_KEY_PREFIX}${userId}`,
+      JSON.stringify(deduped.slice(0, 200))
+    );
+  } catch {}
+}
+
+// ============================================================================
+// PERSONALIZED USER LISTENING & TASTE PROFILE ENGINE (PHASE 4C)
+// ============================================================================
+
+export interface UserListeningProfile {
+  artistPlayCounts: Record<string, number>;
+  trackPlayCounts: Record<string, number>;
+  skippedTrackCounts: Record<string, number>;
+  genrePlayCounts: Record<string, number>;
+  artistListenSeconds: Record<string, number>;
+  updatedAt: number;
+}
+
+const LISTENING_PROFILE_KEY_PREFIX = 'kashish_music_taste_profile_v1_';
+
+export function loadUserListeningProfile(userId: string = 'guest'): UserListeningProfile {
+  const empty: UserListeningProfile = {
+    artistPlayCounts: {},
+    trackPlayCounts: {},
+    skippedTrackCounts: {},
+    genrePlayCounts: {},
+    artistListenSeconds: {},
+    updatedAt: Date.now(),
+  };
+  if (typeof window === 'undefined' || !window.localStorage) return empty;
+  try {
+    const raw = window.localStorage.getItem(`${LISTENING_PROFILE_KEY_PREFIX}${userId || 'guest'}`);
+    if (!raw) return empty;
+    const parsed = JSON.parse(raw);
+    return {
+      artistPlayCounts: parsed?.artistPlayCounts || {},
+      trackPlayCounts: parsed?.trackPlayCounts || {},
+      skippedTrackCounts: parsed?.skippedTrackCounts || {},
+      genrePlayCounts: parsed?.genrePlayCounts || {},
+      artistListenSeconds: parsed?.artistListenSeconds || {},
+      updatedAt: typeof parsed?.updatedAt === 'number' ? parsed.updatedAt : Date.now(),
+    };
+  } catch {
+    return empty;
+  }
+}
+
+function saveUserListeningProfile(userId: string, profile: UserListeningProfile): void {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    profile.updatedAt = Date.now();
+    window.localStorage.setItem(
+      `${LISTENING_PROFILE_KEY_PREFIX}${userId || 'guest'}`,
+      JSON.stringify(profile)
+    );
+  } catch {}
+}
+
+export function recordTrackPlayEvent(userId: string, track: YouTubeTrack): void {
+  if (!track?.videoId) return;
+  const profile = loadUserListeningProfile(userId);
+  profile.trackPlayCounts[track.videoId] = (profile.trackPlayCounts[track.videoId] || 0) + 1;
+  const artists = parseArtistNames(track.artist);
+  for (const artist of artists) {
+    const key = artist.toLowerCase();
+    profile.artistPlayCounts[key] = (profile.artistPlayCounts[key] || 0) + 1;
+  }
+  const context = inferTrackMusicalContext(track);
+  profile.genrePlayCounts[context.primaryGenre] =
+    (profile.genrePlayCounts[context.primaryGenre] || 0) + 1;
+  for (const mood of context.moods) {
+    profile.genrePlayCounts[mood] = (profile.genrePlayCounts[mood] || 0) + 1;
+  }
+  saveUserListeningProfile(userId, profile);
+}
+
+export function recordTrackListenDuration(
+  userId: string,
+  track: YouTubeTrack | null,
+  listenedSeconds: number
+): void {
+  if (!track?.videoId || !Number.isFinite(listenedSeconds) || listenedSeconds <= 0) return;
+  const profile = loadUserListeningProfile(userId);
+  if (listenedSeconds < 10) {
+    // Switching away before 10s indicates a user skip
+    profile.skippedTrackCounts[track.videoId] =
+      (profile.skippedTrackCounts[track.videoId] || 0) + 1;
+  } else {
+    // Positive engagement: decay any previous skip count and credit artist listening time
+    if (profile.skippedTrackCounts[track.videoId]) {
+      profile.skippedTrackCounts[track.videoId] = Math.max(
+        0,
+        profile.skippedTrackCounts[track.videoId] - 1
+      );
+    }
+    const artists = parseArtistNames(track.artist);
+    for (const artist of artists) {
+      const key = artist.toLowerCase();
+      profile.artistListenSeconds[key] =
+        (profile.artistListenSeconds[key] || 0) + Math.min(300, Math.round(listenedSeconds));
+    }
+  }
+  saveUserListeningProfile(userId, profile);
 }
 
 // ============================================================================
@@ -782,14 +990,38 @@ const RELATED_ARTIST_CLUSTERS: Record<string, string[]> = {
   'arijit singh': ['Atif Aslam', 'Jubin Nautiyal', 'Vishal Mishra', 'Pritam', 'Shreya Ghoshal', 'KK', 'Sonu Nigam', 'Darshan Raval', 'Armaan Malik', 'Sachin-Jigar', 'Mithoon'],
   'diljit dosanjh': ['Karan Aujla', 'AP Dhillon', 'Amrinder Gill', 'Shubh', 'Guru Randhawa', 'Sidhu Moose Wala', 'Harrdy Sandhu', 'B Praak'],
   'karan aujla': ['Diljit Dosanjh', 'AP Dhillon', 'Shubh', 'Ikky', 'Sidhu Moose Wala', 'Prem Dhillon', 'Amrinder Gill'],
+  'ap dhillon': ['Shubh', 'Karan Aujla', 'Diljit Dosanjh', 'Gurinder Gill', 'Ikky', 'Talwiinder'],
+  'shubh': ['AP Dhillon', 'Karan Aujla', 'Diljit Dosanjh', 'Sidhu Moose Wala', 'Ikky'],
+  'sidhu moose wala': ['Karan Aujla', 'Shubh', 'AP Dhillon', 'Diljit Dosanjh', 'Prem Dhillon', 'Ammy Virk'],
+  'amrinder gill': ['Diljit Dosanjh', 'Sartaj', 'Prabh Gill', 'Ammy Virk', 'Harrdy Sandhu', 'B Praak'],
+  'guru randhawa': ['Diljit Dosanjh', 'Harrdy Sandhu', 'Badshah', 'B Praak', 'Jass Manak'],
+  'harrdy sandhu': ['B Praak', 'Jaani', 'Guru Randhawa', 'Diljit Dosanjh', 'Jass Manak'],
+  'b praak': ['Jaani', 'Jubin Nautiyal', 'Vishal Mishra', 'Arijit Singh', 'Harrdy Sandhu', 'Ammy Virk'],
   'anuv jain': ['Prateek Kuhad', 'Aditya Rikhari', 'The Local Train', 'Abdul Hannan', 'Kaifi Khalil', 'When Chai Met Toast', 'Ritviz', 'Zaeden'],
   'prateek kuhad': ['Anuv Jain', 'The Local Train', 'Aditya Rikhari', 'When Chai Met Toast', 'Taba Chake', 'Lifafa', 'OAFF'],
   'the local train': ['Anuv Jain', 'Prateek Kuhad', 'Parvaaz', 'Agnee', 'Indian Ocean', 'Aditya Rikhari'],
+  'aditya rikhari': ['Anuv Jain', 'Prateek Kuhad', 'Abdul Hannan', 'Kaifi Khalil', 'Zaeden'],
+  'abdul hannan': ['Kaifi Khalil', 'Hasan Raheem', 'Ali Sethi', 'Anuv Jain', 'Aditya Rikhari'],
   'a.r. rahman': ['Mohit Chauhan', 'Javed Ali', 'Rahat Fateh Ali Khan', 'Shankar-Ehsaan-Loy', 'Amit Trivedi', 'Pritam', 'Coke Studio'],
   'vishal mishra': ['Arijit Singh', 'Jubin Nautiyal', 'Sachet Tandon', 'B Praak', 'Darshan Raval', 'Pritam'],
   'jubin nautiyal': ['Arijit Singh', 'Atif Aslam', 'Vishal Mishra', 'B Praak', 'Stebin Ben', 'Darshan Raval'],
   'kaifi khalil': ['Abdul Hannan', 'Ali Sethi', 'Atif Aslam', 'Anuv Jain', 'Aditya Rikhari', 'Hasan Raheem'],
   'ali sethi': ['Shae Gill', 'Kaifi Khalil', 'Rahat Fateh Ali Khan', 'Abida Parveen', 'Atif Aslam', 'Coke Studio'],
+  'rahat fateh ali khan': ['Atif Aslam', 'Nusrat Fateh Ali Khan', 'Ali Sethi', 'A.R. Rahman', 'Javed Ali', 'Shafqat Amanat Ali'],
+  'atif aslam': ['Arijit Singh', 'KK', 'Rahat Fateh Ali Khan', 'Mohit Chauhan', 'Jubin Nautiyal', 'Mustafa Zahid'],
+  'kk': ['Mohit Chauhan', 'Atif Aslam', 'Arijit Singh', 'Pritam', 'Sonu Nigam', 'Shaan', 'Emraan Hashmi Hits'],
+  'mohit chauhan': ['KK', 'Arijit Singh', 'Atif Aslam', 'Pritam', 'A.R. Rahman', 'Javed Ali'],
+  'sonu nigam': ['Shreya Ghoshal', 'KK', 'Shaan', 'Udit Narayan', 'Arijit Singh', 'Kumar Sanu'],
+  'darshan raval': ['Armaan Malik', 'Arijit Singh', 'Jubin Nautiyal', 'Vishal Mishra', 'Anuv Jain'],
+  'armaan malik': ['Darshan Raval', 'Arijit Singh', 'Amaal Mallik', 'Jubin Nautiyal', 'Atif Aslam'],
+  'shreya ghoshal': ['Arijit Singh', 'Sonu Nigam', 'Sunidhi Chauhan', 'Pritam', 'A.R. Rahman', 'Shilpa Rao'],
+  'pritam': ['Arijit Singh', 'KK', 'Mohit Chauhan', 'Atif Aslam', 'Vishal-Shekhar', 'Amit Trivedi'],
+  'sachin-jigar': ['Arijit Singh', 'Vishal Mishra', 'Pritam', 'Amit Trivedi', 'Darshan Raval'],
+  'amit trivedi': ['A.R. Rahman', 'Pritam', 'Sachin-Jigar', 'Mohit Chauhan', 'Tochi Raina'],
+  'mithoon': ['Arijit Singh', 'Atif Aslam', 'KK', 'Jubin Nautiyal', 'Vishal Mishra'],
+  'kishore kumar': ['Mohammed Rafi', 'Lata Mangeshkar', 'R.D. Burman', 'Mukesh', 'Kumar Sanu'],
+  'kumar sanu': ['Udit Narayan', 'Alka Yagnik', 'Sonu Nigam', 'Abhijeet', '90s Bollywood Hits'],
+  'udit narayan': ['Alka Yagnik', 'Kumar Sanu', 'Sonu Nigam', 'Shreya Ghoshal'],
 };
 
 function parseArtistNames(artistStr: string): string[] {
@@ -809,16 +1041,125 @@ function normalizeTrackTitleKey(title: string): string {
     .slice(0, 28);
 }
 
+export interface InferredMusicalContext {
+  primaryGenre: string;
+  moods: string[];
+  language: 'punjabi' | 'hindi' | 'urdu_sufi' | 'english';
+}
+
+/**
+ * Analyzes any track (canonical or searched) to determine its genre, mood, and language context.
+ */
+export function inferTrackMusicalContext(track: YouTubeTrack): InferredMusicalContext {
+  const known = DISCOVERY_ITEMS_BY_ID.get(track.videoId);
+  const combined = `${track.title || ''} ${track.artist || ''} ${track.album || ''}`.toLowerCase();
+
+  let language: 'punjabi' | 'hindi' | 'urdu_sufi' | 'english' = 'hindi';
+  if (
+    /\b(diljit|karan aujla|ap dhillon|shubh|sidhu moose|guru randhawa|amrinder gill|harrdy sandhu|ikky|jass manak|ammy virk|arjan dhillon|prem dhillon|gurinder gill|talwiinder|gippy grewal|parmish verma|nimrat khaira|sunanda sharma|sartaj|prabh gill|garry sandhu|mankirt|jatt|punjabi|gabru|koka|nakhra|chobbar|velly|52 bars|softly|born to shine|goat|moonchild)\b/i.test(
+      combined
+    )
+  ) {
+    language = 'punjabi';
+  } else if (
+    /\b(rahat fateh|ali sethi|kaifi khalil|abdul hannan|coke studio|abida parveen|nusrat|shafqat amanat|atif aslam.*coke studio|pasoori|afreen|kahani suno|iraaday|sufi|qawwali|tajdar|kun faya)\b/i.test(
+      combined
+    )
+  ) {
+    language = 'urdu_sufi';
+  } else if (
+    /\b(ed sheeran|taylor swift|the weeknd|justin bieber|alan walker|imagine dragons|coldplay|billie eilish|ariana grande|post malone|shawn mendes|charlie puth|dua lipa|bruno mars|maroon 5|chainsmokers|eminem|drake|adele|lady gaga|harry styles|selena gomez|sia|lana del rey|linkin park|one direction)\b/i.test(
+      combined
+    )
+  ) {
+    language = 'english';
+  }
+
+  if (known) {
+    return {
+      primaryGenre: known.genreId,
+      moods: [known.genreId, ...(known.secondaryGenres || [])],
+      language,
+    };
+  }
+
+  const moods: string[] = [];
+  let primaryGenre =
+    language === 'punjabi'
+      ? 'punjabi'
+      : language === 'urdu_sufi'
+        ? 'sufi'
+        : language === 'english'
+          ? 'chill'
+          : 'romantic';
+
+  if (/\b(lofi|lo-fi|slowed|reverb|chill|midnight|sleep|rain)\b/i.test(combined)) {
+    primaryGenre = 'lofi';
+    moods.push('lofi', 'chill');
+  }
+  if (
+    /\b(sad|broken|heartbreak|judai|bewafa|rona|tanhai|agar tum saath ho|channa mereya|pehle bhi main|faasle|kahani suno|cold\/mess|hamari adhuri|bekhayali|tujhe bhula diya|bhar do jholi)\b/i.test(
+      combined
+    )
+  ) {
+    if (primaryGenre === 'romantic') primaryGenre = 'sad';
+    moods.push('sad', 'romantic');
+  }
+  if (
+    /\b(workout|gym|motivational|pump|zinda|fateh|sultan|chak de|energetic|party|dance|bhangra|club|beast|brothers anthem|dangal)\b/i.test(
+      combined
+    )
+  ) {
+    primaryGenre = 'workout';
+    moods.push('workout', 'energetic', 'happy');
+  }
+  if (
+    /\b(acoustic|unplugged|guitar|ukulele|anuv jain|prateek kuhad|local train|husn|kasoor|baarishein|alag aasmaan|gul|choo lo)\b/i.test(
+      combined
+    )
+  ) {
+    if (primaryGenre === 'romantic') primaryGenre = 'acoustic';
+    moods.push('acoustic', 'indie', 'chill');
+  }
+  if (/\b(sufi|qawwali|kun faya|afreen|raanjhanaa|maula|allah|khuda|peer|ishq)\b/i.test(combined)) {
+    if (language === 'urdu_sufi') primaryGenre = 'sufi';
+    moods.push('sufi');
+  }
+  if (language === 'punjabi') {
+    primaryGenre = 'punjabi';
+    moods.push('punjabi', 'energetic', 'happy');
+  }
+  if (moods.length === 0) {
+    moods.push('romantic', 'bollywood', 'happy');
+  }
+
+  return {
+    primaryGenre,
+    moods: Array.from(new Set(moods)),
+    language,
+  };
+}
+
 /**
  * Computes an instant (0ms) contextual list of related songs from the verified catalog
- * based on same artist, related artists, same album/movie, genre, and musical style.
+ * based on same artist, related artists, same album/movie, genre, mood, and user taste profile.
  */
-export function getInstantRelatedTracks(seedTrack: YouTubeTrack, limit = 10): YouTubeTrack[] {
+export function getInstantRelatedTracks(
+  seedTrack: YouTubeTrack,
+  limit = 10,
+  moodFilter = 'context',
+  userId = 'guest'
+): YouTubeTrack[] {
   const seedArtists = parseArtistNames(seedTrack.artist).map((a) => a.toLowerCase());
-  const seedMeta = DISCOVERY_ITEMS_BY_ID.get(seedTrack.videoId);
-  const seedGenre = seedMeta?.genreId || 'romantic';
-  const seedSecondary = new Set(seedMeta?.secondaryGenres || []);
+  const seedContext = inferTrackMusicalContext(seedTrack);
+  const seedGenre =
+    moodFilter && moodFilter !== 'context' && moodFilter !== 'all'
+      ? moodFilter
+      : seedContext.primaryGenre;
+  const seedMoods = new Set(seedContext.moods);
   const seedAlbum = (seedTrack.album || '').trim().toLowerCase();
+  const profile = loadUserListeningProfile(userId);
+  const favorites = loadUserFavorites(userId);
 
   const clusterArtists = new Set<string>();
   for (const a of seedArtists) {
@@ -832,32 +1173,61 @@ export function getInstantRelatedTracks(seedTrack: YouTubeTrack, limit = 10): Yo
     let score = 0;
     const candArtists = parseArtistNames(cand.artist).map((a) => a.toLowerCase());
     const candMeta = DISCOVERY_ITEMS_BY_ID.get(cand.videoId);
+    const candContext = inferTrackMusicalContext(cand);
 
-    // 1. Same artist / co-artist
-    for (const ca of candArtists) {
-      if (seedArtists.some((sa) => ca.includes(sa) || sa.includes(ca))) {
-        score += 55;
-      } else if (clusterArtists.has(ca)) {
-        score += 28;
+    // If an explicit mood chip is active, strongly boost tracks matching that mood
+    if (moodFilter && moodFilter !== 'context' && moodFilter !== 'all') {
+      if (candMeta && matchesDiscoveryGenre(candMeta, moodFilter)) {
+        score += 90;
+      } else if (candContext.moods.includes(moodFilter) || candContext.primaryGenre === moodFilter) {
+        score += 75;
+      } else {
+        score -= 40;
       }
     }
 
-    // 2. Same album / movie soundtrack
-    if (seedAlbum && cand.album && cand.album.toLowerCase() === seedAlbum) {
-      score += 40;
+    // 1. Same language affinity (e.g. Punjabi -> Punjabi, Hindi -> Hindi)
+    if (candContext.language === seedContext.language) {
+      score += 45;
+    } else if (seedContext.language === 'punjabi' && moodFilter === 'context') {
+      score -= 35;
     }
 
-    // 3. Same primary or secondary genre & mood
+    // 2. Same artist / co-artist
+    for (const ca of candArtists) {
+      if (seedArtists.some((sa) => ca.includes(sa) || sa.includes(ca))) {
+        score += 60;
+      } else if (clusterArtists.has(ca)) {
+        score += 30;
+      }
+      // Personalization: Boost user's frequently played & listened artists
+      const artistPlays = profile.artistPlayCounts[ca] || 0;
+      const artistListenSec = profile.artistListenSeconds[ca] || 0;
+      if (artistPlays > 0) score += Math.min(25, artistPlays * 5);
+      if (artistListenSec > 60) score += Math.min(20, Math.floor(artistListenSec / 60) * 4);
+    }
+
+    // 3. Same album / movie soundtrack
+    if (seedAlbum && cand.album && cand.album.toLowerCase() === seedAlbum) {
+      score += 45;
+    }
+
+    // 4. Same primary or secondary genre & mood
     if (candMeta) {
-      if (candMeta.genreId === seedGenre) score += 30;
-      if (seedSecondary.has(candMeta.genreId)) score += 18;
+      if (candMeta.genreId === seedGenre) score += 32;
+      if (seedMoods.has(candMeta.genreId)) score += 18;
       if (candMeta.secondaryGenres) {
         for (const sg of candMeta.secondaryGenres) {
-          if (sg === seedGenre) score += 20;
-          if (seedSecondary.has(sg)) score += 12;
+          if (sg === seedGenre) score += 22;
+          if (seedMoods.has(sg)) score += 12;
         }
       }
     }
+
+    // 5. Personalization: Boost liked songs & penalize repeatedly skipped tracks
+    if (favorites.has(cand.videoId)) score += 15;
+    const skips = profile.skippedTrackCounts[cand.videoId] || 0;
+    if (skips > 0) score -= skips * 25;
 
     return { track: cand, score };
   });
@@ -867,7 +1237,9 @@ export function getInstantRelatedTracks(seedTrack: YouTubeTrack, limit = 10): Yo
 }
 
 interface RelatedRecommendationCacheEntry {
+  cacheKey: string;
   seedVideoId: string;
+  moodFilter: string;
   tracks: YouTubeTrack[];
   seenVideoIds: Set<string>;
   seenTitleKeys: Set<string>;
@@ -876,10 +1248,99 @@ interface RelatedRecommendationCacheEntry {
   cursorIndex: number;
 }
 
-const MAX_RELATED_CACHE_ENTRIES = 25;
+const MAX_RELATED_CACHE_ENTRIES = 35;
 const relatedRecommendationCache = new Map<string, RelatedRecommendationCacheEntry>();
 
-function buildInitialRelatedQueries(seedTrack: YouTubeTrack): string[] {
+const MOOD_QUERY_MAP: Record<string, string[]> = {
+  romantic: [
+    'Romantic Bollywood hit songs',
+    'Arijit Singh romantic love songs',
+    'Soulful Hindi romantic melodies',
+    'Best Bollywood love songs Pritam',
+    'Shreya Ghoshal Jubin Nautiyal romantic songs',
+    'Atif Aslam romantic Hindi songs',
+    'Heartfelt Hindi romantic songs',
+  ],
+  sad: [
+    'Sad emotional Bollywood songs',
+    'Arijit Singh heartbreak sad songs',
+    'Emotional Hindi breakup songs',
+    'Soulful sad Hindi melodies',
+    'B Praak Vishal Mishra emotional songs',
+    'Late night sad Hindi songs',
+  ],
+  happy: [
+    'Feel good happy Bollywood songs',
+    'Upbeat Hindi melody songs',
+    'Happy romantic Bollywood songs',
+    'Pritam feel good Hindi songs',
+    'Vibrant Punjabi & Bollywood hits',
+  ],
+  chill: [
+    'Chill Hindi indie & Bollywood songs',
+    'Relaxing soulful Hindi songs',
+    'Evening chill Bollywood melodies',
+    'Anuv Jain Prateek Kuhad chill songs',
+    'Smooth Hindi vibe songs',
+  ],
+  lofi: [
+    'Lo-Fi chill Hindi songs',
+    'Bollywood lofi remix songs',
+    'Midnight lofi Hindi melodies',
+    'Slowed reverb romantic Hindi songs',
+    'Peaceful Hindi lofi beats songs',
+  ],
+  energetic: [
+    'High energy Bollywood dance & vibe songs',
+    'Upbeat Punjabi chartbuster songs',
+    'Energetic Hindi hit songs',
+    'Diljit Dosanjh Karan Aujla upbeat songs',
+    'Superhit Bollywood party anthems',
+  ],
+  workout: [
+    'High energy Bollywood workout songs',
+    'Punjabi gym motivation songs',
+    'Motivational Hindi rock & workout anthems',
+    'Karan Aujla Diljit Dosanjh workout hits',
+    'Power packed Hindi gym songs',
+  ],
+  acoustic: [
+    'Acoustic unplugged Hindi songs',
+    'Peaceful acoustic Bollywood melodies',
+    'Anuv Jain Prateek Kuhad acoustic songs',
+    'Guitar unplugged romantic Hindi songs',
+    'Indie acoustic Hindi songs',
+  ],
+  sufi: [
+    'Sufi soulful Hindi & Urdu songs',
+    'A.R. Rahman Sufi classic songs',
+    'Coke Studio Sufi & soulful hits',
+    'Rahat Fateh Ali Khan Ali Sethi songs',
+    'Spiritual Sufi rock Hindi songs',
+  ],
+  bollywood: [
+    'Latest Bollywood chartbuster songs',
+    'Superhit Hindi movie songs',
+    'Evergreen Bollywood melody hits',
+  ],
+  punjabi: [
+    'Punjabi superhit songs Diljit Dosanjh Karan Aujla',
+    'Urban Punjabi vibe songs AP Dhillon Shubh',
+    'Trending Punjabi hit songs',
+    'Amrinder Gill B Praak Punjabi songs',
+  ],
+  indie: [
+    'Indian Indie pop songs Anuv Jain Prateek Kuhad',
+    'Hindi Indie acoustic songs The Local Train',
+    'Underrated Hindi indie songs Aditya Rikhari',
+  ],
+};
+
+function buildInitialRelatedQueries(
+  seedTrack: YouTubeTrack,
+  moodFilter = 'context',
+  userId = 'guest'
+): string[] {
   const cleanTitle = (seedTrack.title || '')
     .replace(/\(.*?\)|\[.*?\]/g, '')
     .replace(/official\s*(music\s*)?video|full\s*video|lyric\s*video/gi, '')
@@ -888,8 +1349,8 @@ function buildInitialRelatedQueries(seedTrack: YouTubeTrack): string[] {
   const primaryArtist = artists[0] || 'Arijit Singh';
   const secondaryArtist = artists[1] || '';
   const album = (seedTrack.album || '').replace(/Single$/i, '').trim();
-  const seedMeta = DISCOVERY_ITEMS_BY_ID.get(seedTrack.videoId);
-  const genreId = seedMeta?.genreId || 'romantic';
+  const context = inferTrackMusicalContext(seedTrack);
+  const profile = loadUserListeningProfile(userId);
 
   const queries: string[] = [];
   const pushUnique = (q: string) => {
@@ -899,43 +1360,67 @@ function buildInitialRelatedQueries(seedTrack: YouTubeTrack): string[] {
     }
   };
 
-  // 1. Similar to current song + primary artist
-  pushUnique(`${cleanTitle} ${primaryArtist} similar songs`);
-  // 2. Same primary artist top hits
-  pushUnique(`${primaryArtist} top hit songs`);
-  // 3. Album / movie soundtrack songs
-  if (album && album.toLowerCase() !== cleanTitle.toLowerCase()) {
-    pushUnique(`${album} movie songs ${primaryArtist}`);
+  // If the user explicitly selected a specific Mood Filter chip, prioritize that mood first!
+  if (moodFilter && moodFilter !== 'context' && moodFilter !== 'all') {
+    const moodQueries = MOOD_QUERY_MAP[moodFilter] || [];
+    pushUnique(`${primaryArtist} ${moodFilter} songs`);
+    for (const mq of moodQueries) {
+      pushUnique(mq);
+    }
   }
-  // 4. Co-artist / composer songs
+
+  // 1. Similar to current song + primary artist (matched to language & style)
+  if (context.language === 'punjabi') {
+    pushUnique(`${cleanTitle} ${primaryArtist} Punjabi songs`);
+    pushUnique(`${primaryArtist} top Punjabi hit songs`);
+    pushUnique(`${primaryArtist} latest Punjabi songs`);
+  } else if (context.language === 'english') {
+    pushUnique(`${cleanTitle} ${primaryArtist} songs`);
+    pushUnique(`${primaryArtist} best hit songs`);
+    pushUnique(`${primaryArtist} popular tracks`);
+  } else {
+    pushUnique(`${cleanTitle} ${primaryArtist} songs`);
+    pushUnique(`${primaryArtist} top hit songs`);
+    pushUnique(`${primaryArtist} best melody songs`);
+  }
+
+  // 2. Album / movie soundtrack songs
+  if (album && album.toLowerCase() !== cleanTitle.toLowerCase()) {
+    pushUnique(`${album} songs ${primaryArtist}`);
+  }
+
+  // 3. Co-artist / composer songs
   if (secondaryArtist) {
     pushUnique(`${secondaryArtist} best hit songs`);
   }
-  // 5. Related artists from cluster
-  const cluster = RELATED_ARTIST_CLUSTERS[primaryArtist.toLowerCase()] || [
-    'Arijit Singh',
-    'Jubin Nautiyal',
-    'Vishal Mishra',
-    'Atif Aslam',
-    'Pritam',
-    'Anuv Jain',
-    'Diljit Dosanjh',
-  ];
+
+  // 4. Related artists from cluster (matching current song's artist style)
+  const cluster =
+    RELATED_ARTIST_CLUSTERS[primaryArtist.toLowerCase()] ||
+    (context.language === 'punjabi'
+      ? ['Diljit Dosanjh', 'Karan Aujla', 'AP Dhillon', 'Shubh', 'Amrinder Gill', 'Guru Randhawa']
+      : context.language === 'urdu_sufi'
+        ? ['Atif Aslam', 'Rahat Fateh Ali Khan', 'Ali Sethi', 'Kaifi Khalil', 'A.R. Rahman']
+        : context.language === 'english'
+          ? [primaryArtist]
+          : ['Arijit Singh', 'Jubin Nautiyal', 'Vishal Mishra', 'Atif Aslam', 'Pritam', 'Shreya Ghoshal']);
+
   for (const relArtist of cluster.slice(0, 5)) {
     pushUnique(`${relArtist} top songs`);
   }
+
+  // 5. Personalized user taste queries (top listened artists from user's history)
+  const topUserArtists = Object.entries(profile.artistPlayCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([artist]) => artist);
+  for (const favArtist of topUserArtists) {
+    pushUnique(`${favArtist} best songs`);
+  }
+
   // 6. Genre & mood specific discovery queries
-  const genreQueryMap: Record<string, string[]> = {
-    romantic: ['Romantic Bollywood hit songs', 'Soulful Hindi love songs', 'Romantic acoustic Hindi songs'],
-    bollywood: ['Latest Bollywood chartbuster songs', 'Superhit Hindi movie songs', 'Bollywood melody hits'],
-    punjabi: ['Punjabi superhit songs', 'Urban Punjabi vibe songs', 'Trending Punjabi hits'],
-    indie: ['Indian Indie pop songs', 'Hindi Indie acoustic songs', 'Underrated Hindi indie songs'],
-    sufi: ['Sufi soulful Hindi songs', 'Coke Studio classic songs', 'Spiritual Sufi rock songs'],
-    acoustic: ['Acoustic unplugged Hindi songs', 'Peaceful acoustic melodies', 'Late night acoustic songs'],
-    lofi: ['Lo-Fi chill Hindi songs', 'Midnight lofi Bollywood songs', 'Slowed reverb Hindi melodies'],
-    workout: ['High energy Bollywood workout songs', 'Punjabi gym pump songs', 'Motivational Hindi anthems'],
-  };
-  for (const gq of genreQueryMap[genreId] || genreQueryMap.romantic) {
+  const effectiveGenre = context.primaryGenre;
+  for (const gq of MOOD_QUERY_MAP[effectiveGenre] || MOOD_QUERY_MAP.romantic) {
     pushUnique(gq);
   }
   for (const relArtist of cluster.slice(5)) {
@@ -945,22 +1430,72 @@ function buildInitialRelatedQueries(seedTrack: YouTubeTrack): string[] {
   return queries;
 }
 
-function isGenuineYouTubeMusicSong(track: YouTubeTrack): boolean {
-  if (!track || !track.videoId || !track.title) return false;
-  if (track.mediaType === 'video' || track.catalogSource === 'youtube_video') return false;
-  // Filter out video-only uploads (Official Video, Full Video, Lyrical Video, Trailer, Teaser, Jukebox)
-  const videoTitlePattern =
-    /\b(official\s*(music\s*)?video|full\s*video|lyrical\s*video|lyric\s*video|video\s*song|making\s*of|trailer|teaser|jukebox|full\s*movie)\b/i;
-  if (videoTitlePattern.test(track.title)) return false;
+const REGIONAL_DUB_PATTERN =
+  /\b(tamil|telugu|malayalam|kannada|bhojpuri|bengali|marathi|gujarati|odia|assamese)\b/i;
+
+function isContentAwareRelatedTrack(
+  candidate: YouTubeTrack,
+  seedTrack: YouTubeTrack,
+  _moodFilter: string
+): boolean {
+  if (!candidate || !candidate.videoId || !candidate.title) return false;
+  if (candidate.videoId === seedTrack.videoId) return false;
+  if (!candidate.artist || candidate.artist.trim().length < 2) return false;
+
+  // Exclude ringtones/shorts (<45s) and marathon jukeboxes/compilations (>15m)
+  if (
+    typeof candidate.durationSeconds === 'number' &&
+    candidate.durationSeconds > 0 &&
+    (candidate.durationSeconds < 45 || candidate.durationSeconds > 900)
+  ) {
+    return false;
+  }
+
+  const seedCombined = `${seedTrack.title || ''} ${seedTrack.artist || ''} ${seedTrack.album || ''}`;
+  const candCombined = `${candidate.title || ''} ${candidate.artist || ''} ${candidate.album || ''}`;
+
+  // Prevent dubbed or unrelated regional language results unless the seed track itself is in that language
+  const candRegionalMatch = candCombined.match(REGIONAL_DUB_PATTERN);
+  if (candRegionalMatch && !REGIONAL_DUB_PATTERN.test(seedCombined)) {
+    return false;
+  }
+
+  const seedContext = inferTrackMusicalContext(seedTrack);
+  const candContext = inferTrackMusicalContext(candidate);
+
+  if (seedContext.language === 'punjabi' && candContext.language !== 'punjabi') {
+    const seedArtists = parseArtistNames(seedTrack.artist).map((a) => a.toLowerCase());
+    const candArtists = parseArtistNames(candidate.artist).map((a) => a.toLowerCase());
+    const hasOverlap = seedArtists.some((sa) =>
+      candArtists.some((ca) => ca.includes(sa) || sa.includes(ca))
+    );
+    if (!hasOverlap) return false;
+  }
+
   return true;
 }
 
-function getOrCreateRelatedEntry(seedTrack: YouTubeTrack): RelatedRecommendationCacheEntry {
-  const existing = relatedRecommendationCache.get(seedTrack.videoId);
+function isGenuineYouTubeMusicSong(track: YouTubeTrack): boolean {
+  if (!track || !track.videoId || !track.title) return false;
+  if (track.mediaType === 'video' || track.catalogSource === 'youtube_video') return false;
+  // Filter out non-song uploads (Trailers, Teasers, Making Of, Full Movies, Jukeboxes, Karaoke, Ringtones)
+  const nonSongPattern =
+    /\b(making\s*of|trailer|teaser|jukebox|full\s*movie|dialogue\s*promo|interview|behind\s*the\s*scenes|karaoke|ringtone|whatsapp\s*status|status\s*video|reaction|review)\b/i;
+  if (nonSongPattern.test(track.title)) return false;
+  return true;
+}
+
+function getOrCreateRelatedEntry(
+  seedTrack: YouTubeTrack,
+  moodFilter = 'context',
+  userId = 'guest'
+): RelatedRecommendationCacheEntry {
+  const normalizedMood = (moodFilter || 'context').toLowerCase();
+  const cacheKey = `${seedTrack.videoId}__${normalizedMood}`;
+  const existing = relatedRecommendationCache.get(cacheKey);
   if (existing) {
-    // Refresh LRU order
-    relatedRecommendationCache.delete(seedTrack.videoId);
-    relatedRecommendationCache.set(seedTrack.videoId, existing);
+    relatedRecommendationCache.delete(cacheKey);
+    relatedRecommendationCache.set(cacheKey, existing);
     return existing;
   }
 
@@ -969,12 +1504,28 @@ function getOrCreateRelatedEntry(seedTrack: YouTubeTrack): RelatedRecommendation
   const seedTitleKey = normalizeTrackTitleKey(seedTrack.title);
   if (seedTitleKey) seenTitleKeys.add(seedTitleKey);
 
-  // Start with an empty list so 100% of related tracks come from YouTube Music Songs catalog
+  // Immediately seed with high-affinity canonical songs so the Related Songs list is never empty (0ms instant response)
+  const instantSeeds = getInstantRelatedTracks(seedTrack, 8, normalizedMood, userId);
   const initialTracks: YouTubeTrack[] = [];
+  for (const t of instantSeeds) {
+    if (!seenVideoIds.has(t.videoId)) {
+      const tk = normalizeTrackTitleKey(t.title);
+      seenVideoIds.add(t.videoId);
+      if (tk) seenTitleKeys.add(tk);
+      initialTracks.push({
+        ...t,
+        thumbnail: normalizeSquareThumbnail(t.thumbnail, t.videoId),
+        mediaType: 'song',
+        catalogSource: 'youtube_music',
+      });
+    }
+  }
 
-  const queries = buildInitialRelatedQueries(seedTrack);
+  const queries = buildInitialRelatedQueries(seedTrack, normalizedMood, userId);
   const entry: RelatedRecommendationCacheEntry = {
+    cacheKey,
     seedVideoId: seedTrack.videoId,
+    moodFilter: normalizedMood,
     tracks: initialTracks,
     seenVideoIds,
     seenTitleKeys,
@@ -987,19 +1538,23 @@ function getOrCreateRelatedEntry(seedTrack: YouTubeTrack): RelatedRecommendation
     const oldestKey = relatedRecommendationCache.keys().next().value;
     if (oldestKey) relatedRecommendationCache.delete(oldestKey);
   }
-  relatedRecommendationCache.set(seedTrack.videoId, entry);
+  relatedRecommendationCache.set(cacheKey, entry);
   return entry;
 }
 
 /**
  * Returns the currently cached YouTube Music related songs for `seedTrack` synchronously.
  */
-export function getCachedRelatedTracks(seedTrack: YouTubeTrack): {
+export function getCachedRelatedTracks(
+  seedTrack: YouTubeTrack,
+  moodFilter = 'context',
+  userId = 'guest'
+): {
   tracks: YouTubeTrack[];
   hasMore: boolean;
   cursorIndex: number;
 } {
-  const entry = getOrCreateRelatedEntry(seedTrack);
+  const entry = getOrCreateRelatedEntry(seedTrack, moodFilter, userId);
   return {
     tracks: entry.tracks,
     hasMore: entry.cursorIndex < entry.queries.length,
@@ -1014,11 +1569,13 @@ export function getCachedRelatedTracks(seedTrack: YouTubeTrack): {
  */
 export async function fetchNextRelatedTracksBatch(
   seedTrack: YouTubeTrack,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  moodFilter = 'context',
+  userId = 'guest'
 ): Promise<{ tracks: YouTubeTrack[]; hasMore: boolean }> {
-  const entry = getOrCreateRelatedEntry(seedTrack);
+  const entry = getOrCreateRelatedEntry(seedTrack, moodFilter, userId);
+  const profile = loadUserListeningProfile(userId);
 
-  // Pull up to 2 queries per cursor batch until we add new unique YouTube Music songs or exhaust current queries
   let attempts = 0;
   const startCount = entry.tracks.length;
 
@@ -1039,37 +1596,44 @@ export async function fetchNextRelatedTracksBatch(
       throw new DOMException('Aborted', 'AbortError');
     }
 
+    const newlyDiscovered: YouTubeTrack[] = [];
+
     for (const outcome of outcomes) {
       if (outcome.status !== 'fulfilled') continue;
       for (const rawTrack of outcome.value) {
-        if (!isGenuineYouTubeMusicSong(rawTrack)) continue;
-        if (entry.seenVideoIds.has(rawTrack.videoId)) continue;
+        const canonical = resolveCanonicalTrack(rawTrack);
+        if (!isGenuineYouTubeMusicSong(canonical)) continue;
+        if (!isContentAwareRelatedTrack(canonical, seedTrack, moodFilter)) continue;
+        if (entry.seenVideoIds.has(canonical.videoId)) continue;
 
-        const titleKey = normalizeTrackTitleKey(rawTrack.title);
+        // Skip tracks that the user has repeatedly skipped (>2 times)
+        if ((profile.skippedTrackCounts[canonical.videoId] || 0) > 2) continue;
+
+        const titleKey = normalizeTrackTitleKey(canonical.title);
         if (titleKey && entry.seenTitleKeys.has(titleKey)) continue;
 
-        entry.seenVideoIds.add(rawTrack.videoId);
+        entry.seenVideoIds.add(canonical.videoId);
         if (titleKey) entry.seenTitleKeys.add(titleKey);
 
         const ytmSong: YouTubeTrack = {
-          ...rawTrack,
-          thumbnail: normalizeSquareThumbnail(rawTrack.thumbnail, rawTrack.videoId),
+          ...canonical,
+          thumbnail: normalizeSquareThumbnail(canonical.thumbnail, canonical.videoId),
           mediaType: 'song',
           catalogSource: 'youtube_music',
         };
-        entry.tracks.push(ytmSong);
+        newlyDiscovered.push(ytmSong);
 
         // Dynamically expand the pagination cursor graph using newly discovered related artists & albums
         const newArtists = parseArtistNames(ytmSong.artist);
         for (const artistName of newArtists) {
           const candidates = [
             `${artistName} best songs`,
-            `${artistName} romantic melody songs`,
-            `${artistName} latest hit songs`,
+            `${artistName} hit melody songs`,
+            `${artistName} latest songs`,
           ];
           for (const cq of candidates) {
             const lower = cq.toLowerCase();
-            if (!entry.queriedSet.has(lower) && entry.queries.length < 120) {
+            if (!entry.queriedSet.has(lower) && entry.queries.length < 160) {
               entry.queriedSet.add(lower);
               entry.queries.push(cq);
             }
@@ -1078,7 +1642,7 @@ export async function fetchNextRelatedTracksBatch(
         if (ytmSong.album && ytmSong.album.length >= 3) {
           const albumQuery = `${ytmSong.album} movie songs`;
           const lowerAlbum = albumQuery.toLowerCase();
-          if (!entry.queriedSet.has(lowerAlbum) && entry.queries.length < 120) {
+          if (!entry.queriedSet.has(lowerAlbum) && entry.queries.length < 160) {
             entry.queriedSet.add(lowerAlbum);
             entry.queries.push(albumQuery);
           }
@@ -1086,7 +1650,13 @@ export async function fetchNextRelatedTracksBatch(
       }
     }
 
-    if (entry.tracks.length > startCount) {
+    if (newlyDiscovered.length > 0) {
+      // If this was the very first network fetch, place fresh live YouTube Music matches at the front!
+      if (entry.cursorIndex <= 2 && startCount <= 8) {
+        entry.tracks = [...newlyDiscovered, ...entry.tracks];
+      } else {
+        entry.tracks.push(...newlyDiscovered);
+      }
       break;
     }
   }
@@ -1096,4 +1666,5 @@ export async function fetchNextRelatedTracksBatch(
     hasMore: entry.cursorIndex < entry.queries.length,
   };
 }
+
 

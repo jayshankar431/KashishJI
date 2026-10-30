@@ -29,16 +29,23 @@ import {
   Settings2,
   Compass,
   Sparkles,
+  ListMusic,
+  Zap,
 } from 'lucide-react';
 import { MusicDiscoveryView } from './MusicDiscoveryView';
 import {
   loadUserFavorites,
   saveUserFavorites,
+  loadUserFavoriteTracks,
+  saveUserFavoriteTracks,
   QUICK_PICKS_TRACKS,
   ALL_DISCOVERY_TRACKS,
   resolveCanonicalTrack,
   getCachedRelatedTracks,
   fetchNextRelatedTracksBatch,
+  RELATED_MOOD_CHIPS,
+  recordTrackPlayEvent,
+  recordTrackListenDuration,
 } from '../services/musicDiscoveryData';
 import {
   YouTubeTrack,
@@ -48,6 +55,8 @@ import {
   getCachedVideoSearchEntry,
   refreshSearchInBackground,
   findEmbeddableAlternative,
+  getKnownPlayableVideoId,
+  preloadNextTrackResources,
   formatDuration,
   loadUserRecentPlayedTracks,
   loadUserLastPlayedTrack,
@@ -64,6 +73,21 @@ import {
 } from '../services/youtubeSearch';
 import { triggerHaptic, showNativeToast, logNativeActivity } from '../androidBridge';
 import type { NavTab } from './Navbar';
+
+export interface EqBandSettings {
+  bass: number; // -12 to +12 dB (100 Hz lowshelf)
+  mid: number; // -12 to +12 dB (1000 Hz peaking)
+  treble: number; // -12 to +12 dB (8000 Hz highshelf)
+}
+
+export const EQ_PRESETS: Record<string, EqBandSettings> = {
+  Flat: { bass: 0, mid: 0, treble: 0 },
+  'Bass Boost': { bass: 7, mid: 1, treble: 2 },
+  Vocal: { bass: -2, mid: 6, treble: 3 },
+  Acoustic: { bass: 3, mid: 2, treble: 5 },
+  Club: { bass: 6, mid: 3, treble: 4 },
+  'Lo-Fi Warm': { bass: 5, mid: -1, treble: -4 },
+};
 
 export interface PlaybackTelemetryEntry {
   videoId: string;
@@ -87,6 +111,7 @@ declare global {
   interface Window {
     YT?: any;
     onYouTubeIframeAPIReady?: () => void;
+    __kashishConsumeMusicPlayerBack?: () => boolean;
     __kashishMusicMetrics?: {
       playerPrewarmedAtMs: number | null;
       searches: SearchTelemetryEntry[];
@@ -224,6 +249,7 @@ function getTopLevelNativeAudioElement(): HTMLAudioElement | null {
     const audio = document.createElement('audio');
     audio.id = 'kashish-native-music-audio';
     audio.preload = 'auto';
+    audio.crossOrigin = 'anonymous';
     audio.setAttribute('playsinline', 'true');
     audio.setAttribute('referrerpolicy', 'no-referrer');
     audio.style.display = 'none';
@@ -232,6 +258,102 @@ function getTopLevelNativeAudioElement(): HTMLAudioElement | null {
     return audio;
   } catch {
     return null;
+  }
+}
+
+interface WebAudioEqGraph {
+  ctx: AudioContext;
+  bassFilter: BiquadFilterNode;
+  midFilter: BiquadFilterNode;
+  trebleFilter: BiquadFilterNode;
+  preampGain: GainNode;
+}
+
+let sharedEqGraph: WebAudioEqGraph | null = null;
+
+function ensureWebAudioEqGraph(): WebAudioEqGraph | null {
+  if (typeof window === 'undefined') return null;
+  if (sharedEqGraph) {
+    if (sharedEqGraph.ctx.state === 'suspended') {
+      sharedEqGraph.ctx.resume().catch(() => {});
+    }
+    return sharedEqGraph;
+  }
+  const nativeAudio = getTopLevelNativeAudioElement();
+  if (!nativeAudio) return null;
+
+  try {
+    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return null;
+    const ctx: AudioContext = new AudioCtx();
+    const source = ctx.createMediaElementSource(nativeAudio);
+
+    const bassFilter = ctx.createBiquadFilter();
+    bassFilter.type = 'lowshelf';
+    bassFilter.frequency.value = 100;
+
+    const midFilter = ctx.createBiquadFilter();
+    midFilter.type = 'peaking';
+    midFilter.Q.value = 1.0;
+    midFilter.frequency.value = 1000;
+
+    const trebleFilter = ctx.createBiquadFilter();
+    trebleFilter.type = 'highshelf';
+    trebleFilter.frequency.value = 8000;
+
+    const preampGain = ctx.createGain();
+    preampGain.gain.value = 1.0;
+
+    source.connect(bassFilter);
+    bassFilter.connect(midFilter);
+    midFilter.connect(trebleFilter);
+    trebleFilter.connect(preampGain);
+    preampGain.connect(ctx.destination);
+
+    sharedEqGraph = {
+      ctx,
+      bassFilter,
+      midFilter,
+      trebleFilter,
+      preampGain,
+    };
+    return sharedEqGraph;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Computes a smooth, distortion-free preamp / loudness contour multiplier (0.45x to 1.00x,
+ * centered at 0.80x for Flat 0dB) from the 3-band EQ settings so that both Web Audio DSP
+ * and cross-origin YouTube IFrame playback respond audibly across the entire -12dB to +12dB
+ * range without clipping at default 90% master volume.
+ */
+function computeEqLoudnessMultiplier(bands: EqBandSettings): number {
+  const weightedDb = bands.bass * 0.44 + bands.mid * 0.34 + bands.treble * 0.22;
+  // Map weightedDb (-12..+12) around 0.80 reference gain so boosts up to +12dB scale smoothly up to 1.00x
+  // and cuts down to -12dB attenuate smoothly down to 0.45x.
+  if (weightedDb >= 0) {
+    return Math.min(1.05, 0.8 + (weightedDb / 12) * 0.22);
+  }
+  return Math.max(0.45, 0.8 + (weightedDb / 12) * 0.35);
+}
+
+function applyEqualizerToWebAudio(bands: EqBandSettings): boolean {
+  const graph = ensureWebAudioEqGraph();
+  if (!graph) return false;
+  try {
+    const now = graph.ctx.currentTime;
+    graph.bassFilter.gain.setTargetAtTime(bands.bass, now, 0.015);
+    graph.midFilter.gain.setTargetAtTime(bands.mid, now, 0.015);
+    graph.trebleFilter.gain.setTargetAtTime(bands.treble, now, 0.015);
+    // Headroom protection when heavy boost is active
+    const maxBoost = Math.max(0, bands.bass, bands.mid, bands.treble);
+    const headroomGain = maxBoost > 6 ? Math.pow(10, -((maxBoost - 6) * 0.35) / 20) : 1.0;
+    graph.preampGain.gain.setTargetAtTime(headroomGain, now, 0.015);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -268,6 +390,8 @@ interface ProgressBarProps {
 /**
  * Isolated progress scrubber component so 1-second time ticks never re-render
  * the search results list or parent card, while keeping Media Session position synced.
+ * Includes seek-target lock protection so YouTube IFrame seek latency never causes
+ * the scrubber to snap back to the old position after dragging or clicking.
  */
 const PlayerProgressBar = memo(
   ({
@@ -285,21 +409,49 @@ const PlayerProgressBar = memo(
     const [duration, setDuration] = useState(fallbackDurationSec);
     const [isSeeking, setIsSeeking] = useState(false);
 
+    const barContainerRef = useRef<HTMLDivElement | null>(null);
+    const isDraggingRef = useRef<boolean>(false);
+    // Prevent stale getCurrentTime() values from snapping the scrubber back right after a seek commit
+    const seekTargetRef = useRef<number | null>(null);
+    const seekCommitTimestampRef = useRef<number>(0);
+
     useEffect(() => {
+      isDraggingRef.current = false;
+      seekTargetRef.current = null;
+      seekCommitTimestampRef.current = 0;
+      setIsSeeking(false);
       setCurrentTime(0);
       setDuration(fallbackDurationSec || 0);
     }, [trackId, fallbackDurationSec]);
 
     useEffect(() => {
-      if (!isPlaying || isSeeking) return;
       const updateProgress = () => {
+        if (isDraggingRef.current) return;
         try {
           const { currentTime: cur, duration: dur } = getPlaybackMetrics();
-          setCurrentTime(cur);
           const effectiveDur = dur > 0 ? dur : fallbackDurationSec;
+
+          if (seekTargetRef.current !== null) {
+            const elapsedSinceSeek = performance.now() - seekCommitTimestampRef.current;
+            const drift = Math.abs(cur - seekTargetRef.current);
+            if (drift <= 1.8 || elapsedSinceSeek > 3000) {
+              // Player has caught up to the seek target (or 3s lock window expired)
+              seekTargetRef.current = null;
+              setCurrentTime(cur);
+            } else {
+              // Keep showing the committed seek position while YouTube IFrame buffer catches up
+              setCurrentTime(seekTargetRef.current);
+            }
+          } else {
+            setCurrentTime(cur);
+          }
+
           if (effectiveDur > 0) {
             setDuration(effectiveDur);
-            updateMediaSessionPosition(cur, effectiveDur);
+            updateMediaSessionPosition(
+              seekTargetRef.current !== null ? seekTargetRef.current : cur,
+              effectiveDur
+            );
           }
         } catch {
           // Ignore transient player state errors
@@ -307,31 +459,81 @@ const PlayerProgressBar = memo(
       };
 
       updateProgress();
-      const interval = window.setInterval(updateProgress, 1000);
+      if (!isPlaying) return;
+      const interval = window.setInterval(updateProgress, 400);
       return () => window.clearInterval(interval);
-    }, [isPlaying, isSeeking, getPlaybackMetrics, fallbackDurationSec]);
+    }, [isPlaying, getPlaybackMetrics, fallbackDurationSec]);
 
-    const handleSeekChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-      const nextVal = Number(e.target.value);
-      setCurrentTime(nextVal);
+    const computeSecondsFromClientX = useCallback(
+      (clientX: number): number => {
+        const el = barContainerRef.current;
+        const effectiveDur = duration > 0 ? duration : fallbackDurationSec;
+        if (!el || effectiveDur <= 0) return 0;
+        const rect = el.getBoundingClientRect();
+        if (rect.width <= 0) return 0;
+        const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        return Math.round(ratio * effectiveDur * 2) / 2;
+      },
+      [duration, fallbackDurationSec]
+    );
+
+    const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+      const effectiveDur = duration > 0 ? duration : fallbackDurationSec;
+      if (!trackId || effectiveDur <= 0) return;
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {}
+      isDraggingRef.current = true;
+      setIsSeeking(true);
+      const nextSec = computeSecondsFromClientX(e.clientX);
+      seekTargetRef.current = nextSec;
+      setCurrentTime(nextSec);
     };
 
-    const handleSeekCommit = (
-      e:
-        | React.MouseEvent<HTMLInputElement>
-        | React.TouchEvent<HTMLInputElement>
-        | React.ChangeEvent<HTMLInputElement>
-    ) => {
-      const target = e.currentTarget as HTMLInputElement;
-      const seekToSec = Number(target.value);
+    const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!isDraggingRef.current) return;
+      const nextSec = computeSecondsFromClientX(e.clientX);
+      seekTargetRef.current = nextSec;
+      setCurrentTime(nextSec);
+    };
+
+    const commitPointerSeek = (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!isDraggingRef.current) return;
+      try {
+        if (e.currentTarget.hasPointerCapture?.(e.pointerId)) {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        }
+      } catch {}
+      isDraggingRef.current = false;
+      const seekToSec = computeSecondsFromClientX(e.clientX);
+      seekTargetRef.current = seekToSec;
+      seekCommitTimestampRef.current = performance.now();
+      setCurrentTime(seekToSec);
       setIsSeeking(false);
       onSeekTo(seekToSec);
-      if (duration > 0) {
-        updateMediaSessionPosition(seekToSec, duration);
+      const effectiveDur = duration > 0 ? duration : fallbackDurationSec;
+      if (effectiveDur > 0) {
+        updateMediaSessionPosition(seekToSec, effectiveDur);
       }
     };
 
-    const progressPercent = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+      const effectiveDur = duration > 0 ? duration : fallbackDurationSec;
+      if (!trackId || effectiveDur <= 0) return;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        const delta = e.key === 'ArrowRight' ? 5 : -5;
+        const seekToSec = Math.max(0, Math.min(effectiveDur, currentTime + delta));
+        seekTargetRef.current = seekToSec;
+        seekCommitTimestampRef.current = performance.now();
+        setCurrentTime(seekToSec);
+        onSeekTo(seekToSec);
+        updateMediaSessionPosition(seekToSec, effectiveDur);
+      }
+    };
+
+    const effectiveDur = duration > 0 ? duration : fallbackDurationSec;
+    const progressPercent = effectiveDur > 0 ? Math.min(100, (currentTime / effectiveDur) * 100) : 0;
 
     return (
       <div className="flex items-center gap-2 w-full">
@@ -341,40 +543,52 @@ const PlayerProgressBar = memo(
         >
           {formatDuration(currentTime) || '0:00'}
         </span>
-        <div className="relative flex-1 flex items-center h-4">
+        <div
+          ref={barContainerRef}
+          role="slider"
+          tabIndex={!trackId || effectiveDur <= 0 ? -1 : 0}
+          aria-label="Seek song playback position"
+          aria-valuemin={0}
+          aria-valuemax={Math.round(effectiveDur || 100)}
+          aria-valuenow={Math.round(currentTime)}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={commitPointerSeek}
+          onPointerCancel={commitPointerSeek}
+          onKeyDown={handleKeyDown}
+          className={`relative flex-1 flex items-center h-6 select-none touch-none ${
+            !trackId || effectiveDur <= 0 ? 'cursor-default opacity-60' : 'cursor-pointer group'
+          }`}
+        >
           <div
             style={{ backgroundColor: trackBg }}
-            className="w-full h-1.5 rounded-full overflow-hidden"
+            className="w-full h-1.5 group-hover:h-2 rounded-full overflow-hidden transition-all"
           >
             <div
               style={{
                 width: `${progressPercent}%`,
                 background: accentGradient || accentColor,
               }}
-              className="h-full rounded-full transition-all duration-200"
+              className={`h-full rounded-full ${isSeeking ? '' : 'transition-all duration-150'}`}
             />
           </div>
-          <input
-            type="range"
-            min={0}
-            max={duration > 0 ? duration : 100}
-            step={1}
-            value={currentTime}
-            disabled={!trackId || !duration}
-            onMouseDown={() => setIsSeeking(true)}
-            onTouchStart={() => setIsSeeking(true)}
-            onChange={handleSeekChange}
-            onMouseUp={handleSeekCommit}
-            onTouchEnd={handleSeekCommit}
-            aria-label="Seek song playback position"
-            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-default"
-          />
+          {trackId && effectiveDur > 0 && (
+            <div
+              style={{
+                left: `calc(${progressPercent}% - 6px)`,
+                background: accentGradient || accentColor,
+              }}
+              className={`absolute w-3 h-3 rounded-full shadow-md pointer-events-none transition-transform ${
+                isSeeking ? 'scale-125' : 'scale-90 group-hover:scale-110'
+              }`}
+            />
+          )}
         </div>
         <span
           style={{ color: textColor }}
           className="text-[10px] font-mono tabular-nums w-8 shrink-0"
         >
-          {duration > 0 ? formatDuration(duration) : '--:--'}
+          {effectiveDur > 0 ? formatDuration(effectiveDur) : '--:--'}
         </span>
       </div>
     );
@@ -522,19 +736,30 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     loadUserRecentSearches(userId)
   );
   const [favoriteIds, setFavoriteIds] = useState<Set<string>>(() => loadUserFavorites(userId));
+  const [favoriteTracks, setFavoriteTracks] = useState<YouTubeTrack[]>(() =>
+    loadUserFavoriteTracks(userId)
+  );
 
   const handleToggleFavorite = useCallback((track: YouTubeTrack) => {
     triggerHaptic(20);
+    const canonical = resolveCanonicalTrack(track);
     setFavoriteIds((prev) => {
       const next = new Set(prev);
-      if (next.has(track.videoId)) {
-        next.delete(track.videoId);
-        setStatusNotice(`Removed "${track.title}" from favorites`);
+      const isRemoving = next.has(canonical.videoId);
+      if (isRemoving) {
+        next.delete(canonical.videoId);
+        setStatusNotice(`Removed "${canonical.title}" from favorites`);
       } else {
-        next.add(track.videoId);
-        setStatusNotice(`Added "${track.title}" to favorites ❤️`);
+        next.add(canonical.videoId);
+        setStatusNotice(`Added "${canonical.title}" to favorites ❤️`);
       }
       saveUserFavorites(userId, next);
+      setFavoriteTracks((prevTracks) => {
+        const filtered = prevTracks.filter((t) => t.videoId !== canonical.videoId);
+        const nextTracks = isRemoving ? filtered : [canonical, ...filtered];
+        saveUserFavoriteTracks(userId, nextTracks);
+        return nextTracks;
+      });
       return next;
     });
   }, [userId]);
@@ -581,7 +806,68 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
   const [sleepRemainingSec, setSleepRemainingSec] = useState<number | null>(null);
   const [isSleepMenuOpen, setIsSleepMenuOpen] = useState<boolean>(false);
   const [isEqMenuOpen, setIsEqMenuOpen] = useState<boolean>(false);
-  const [activeEqPreset, setActiveEqPreset] = useState<string>('Bass Boost');
+  const [activeEqPreset, setActiveEqPreset] = useState<string>(() => {
+    if (typeof window === 'undefined') return 'Bass Boost';
+    try {
+      const raw = window.localStorage.getItem(`kashish_music_eq_v2_${userId || 'guest'}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.preset === 'string') return parsed.preset;
+      }
+    } catch {}
+    return 'Bass Boost';
+  });
+  const [eqBands, setEqBands] = useState<EqBandSettings>(() => {
+    if (typeof window === 'undefined') return EQ_PRESETS['Bass Boost'];
+    try {
+      const raw = window.localStorage.getItem(`kashish_music_eq_v2_${userId || 'guest'}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (
+          parsed?.bands &&
+          typeof parsed.bands.bass === 'number' &&
+          typeof parsed.bands.mid === 'number' &&
+          typeof parsed.bands.treble === 'number'
+        ) {
+          return {
+            bass: Math.max(-12, Math.min(12, parsed.bands.bass)),
+            mid: Math.max(-12, Math.min(12, parsed.bands.mid)),
+            treble: Math.max(-12, Math.min(12, parsed.bands.treble)),
+          };
+        }
+      }
+    } catch {}
+    return EQ_PRESETS['Bass Boost'];
+  });
+  const eqBandsRef = useRef<EqBandSettings>(eqBands);
+
+  // Quality Toggle Button State (Default OFF = Low Quality / Data Saver; ON = High Quality with glow)
+  const [isHighQuality, setIsHighQuality] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      return window.localStorage.getItem(`kashish_music_quality_hq_v1_${userId || 'guest'}`) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const isHighQualityRef = useRef<boolean>(isHighQuality);
+
+  // Library / Active Queue Modal State
+  const [isLibraryQueueOpen, setIsLibraryQueueOpen] = useState<boolean>(false);
+  const [libraryTab, setLibraryTab] = useState<'queue' | 'favorites' | 'history'>('queue');
+
+  // Explicit Active Playback Queue Synchronization State & Refs
+  const [customQueue, setCustomQueue] = useState<YouTubeTrack[]>([]);
+  const customQueueRef = useRef<YouTubeTrack[]>([]);
+  const [activeQueueLabel, setActiveQueueLabel] = useState<string>('RELATED');
+  const activeQueueLabelRef = useRef<string>('RELATED');
+  const relatedTracksRef = useRef<YouTubeTrack[]>([]);
+  const relatedMoodFilterRef = useRef<string>('context');
+
+  // Track listening duration & playback watchdog refs
+  const trackListenStartPerfRef = useRef<number | null>(null);
+  const playbackWatchdogTimerRef = useRef<number | null>(null);
+
   const preFadeVolumeRef = useRef<number>(90);
   const isSleepFadingRef = useRef<boolean>(false);
 
@@ -718,6 +1004,84 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     videoTracksRef.current = videoTracks;
   }, [videoTracks]);
 
+  useEffect(() => {
+    customQueueRef.current = customQueue;
+  }, [customQueue]);
+
+  useEffect(() => {
+    activeQueueLabelRef.current = activeQueueLabel;
+  }, [activeQueueLabel]);
+
+  useEffect(() => {
+    isHighQualityRef.current = isHighQuality;
+  }, [isHighQuality]);
+
+  // Apply 3-Band Equalizer to Web Audio API graph and scale YouTube IFrame preamp contour immediately
+  useEffect(() => {
+    eqBandsRef.current = eqBands;
+    applyEqualizerToWebAudio(eqBands);
+    if (playerRef.current && isPlayerReadyRef.current && !isMutedRef.current) {
+      try {
+        const eqMult = computeEqLoudnessMultiplier(eqBands);
+        const scaledVol = Math.max(0, Math.min(100, Math.round(volumeRef.current * eqMult)));
+        playerRef.current.setVolume(scaledVol);
+      } catch {}
+    }
+    if (typeof window !== 'undefined') {
+      try {
+        window.localStorage.setItem(
+          `kashish_music_eq_v2_${userIdRef.current || 'guest'}`,
+          JSON.stringify({ preset: activeEqPreset, bands: eqBands })
+        );
+      } catch {}
+    }
+  }, [eqBands, activeEqPreset]);
+
+  const handleSelectEqPreset = useCallback((presetName: string) => {
+    triggerHaptic(15);
+    ensureWebAudioEqGraph();
+    const presetBands = EQ_PRESETS[presetName] || EQ_PRESETS.Flat;
+    setActiveEqPreset(presetName);
+    setEqBands({ ...presetBands });
+    showNativeToast(`Equalizer: ${presetName} active 🎚️`);
+  }, []);
+
+  const handleEqBandChange = useCallback((band: keyof EqBandSettings, dbValue: number) => {
+    ensureWebAudioEqGraph();
+    const clamped = Math.max(-12, Math.min(12, Math.round(dbValue)));
+    setActiveEqPreset('Custom');
+    setEqBands((prev) => ({ ...prev, [band]: clamped }));
+  }, []);
+
+  // Toggle Low Quality (Data Saver, glow OFF) vs High Quality (HD Audio/Video, glow ON)
+  const handleToggleHighQuality = useCallback(() => {
+    triggerHaptic(15);
+    setIsHighQuality((prev) => {
+      const next = !prev;
+      isHighQualityRef.current = next;
+      if (typeof window !== 'undefined') {
+        try {
+          window.localStorage.setItem(
+            `kashish_music_quality_hq_v1_${userIdRef.current || 'guest'}`,
+            next ? '1' : '0'
+          );
+        } catch {}
+      }
+      if (playerRef.current && isPlayerReadyRef.current) {
+        try {
+          const targetQuality = next ? 'hd720' : showVideoViewportRef.current ? 'medium' : 'small';
+          playerRef.current.setPlaybackQuality?.(targetQuality);
+          playerRef.current.setPlaybackQualityRange?.(
+            targetQuality,
+            next ? 'hd1080' : targetQuality
+          );
+        } catch {}
+      }
+      setStatusNotice(next ? 'High Quality enabled ✨' : 'Data Saver / Standard Quality active');
+      return next;
+    });
+  }, []);
+
   // Prefetch search result thumbnails instantly so images load with zero delay
   useEffect(() => {
     for (const t of tracks) {
@@ -801,6 +1165,8 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     setVideoTracks(savedSearch?.videoResults || []);
     setRecentSearches(savedRecent);
     setRecentPlayedTracks(savedRecentPlayed);
+    setFavoriteIds(loadUserFavorites(userId));
+    setFavoriteTracks(loadUserFavoriteTracks(userId));
     setSearchError(null);
     setStatusNotice(null);
     if (typeof window !== 'undefined') {
@@ -1145,10 +1511,21 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
             } catch {}
 
             try {
-              event.target.setVolume(volumeRef.current);
+              const eqMult = computeEqLoudnessMultiplier(eqBandsRef.current);
+              const initialVol = Math.max(
+                0,
+                Math.min(100, Math.round(volumeRef.current * eqMult))
+              );
+              event.target.setVolume(initialVol);
               if (isMutedRef.current) {
                 event.target.mute();
               }
+              const targetQuality = isHighQualityRef.current
+                ? 'hd720'
+                : showVideoViewportRef.current
+                ? 'default'
+                : 'small';
+
               if (pendingTrackRef.current && userWantPlayingRef.current) {
                 const trackToPlay = pendingTrackRef.current;
                 pendingTrackRef.current = null;
@@ -1159,17 +1536,19 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     activeTelemetryEntryRef.current.tapToPlayerReadyMs = readyDelta;
                   }
                 }
-                loadedVideoIdInPlayerRef.current = trackToPlay.videoId;
+                const playableId = getKnownPlayableVideoId(trackToPlay.videoId);
+                loadedVideoIdInPlayerRef.current = playableId;
                 event.target.loadVideoById({
-                  videoId: trackToPlay.videoId,
-                  suggestedQuality: showVideoViewportRef.current ? 'default' : 'small',
+                  videoId: playableId,
+                  suggestedQuality: targetQuality,
                 });
                 event.target.playVideo();
               } else if (currentTrackRef.current && !userWantPlayingRef.current) {
                 // Pre-cue the restored last-played track without autoplaying
-                loadedVideoIdInPlayerRef.current = currentTrackRef.current.videoId;
+                const playableId = getKnownPlayableVideoId(currentTrackRef.current.videoId);
+                loadedVideoIdInPlayerRef.current = playableId;
                 event.target.cueVideoById({
-                  videoId: currentTrackRef.current.videoId,
+                  videoId: playableId,
                   suggestedQuality: 'small',
                 });
               } else if (!userWantPlayingRef.current) {
@@ -1185,6 +1564,10 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
             const state = event.data;
             // YT.PlayerState: PLAYING = 1, PAUSED = 2, BUFFERING = 3, ENDED = 0, CUED = 5
             if (state === 1) {
+              if (playbackWatchdogTimerRef.current) {
+                window.clearTimeout(playbackWatchdogTimerRef.current);
+                playbackWatchdogTimerRef.current = null;
+              }
               if (!firstAudioReachedRef.current) {
                 firstAudioReachedRef.current = true;
                 if (tapTimestampRef.current !== null) {
@@ -1194,6 +1577,14 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   }
                 }
               }
+              try {
+                const targetQuality = isHighQualityRef.current
+                  ? 'hd720'
+                  : showVideoViewportRef.current
+                  ? 'default'
+                  : 'small';
+                event.target?.setPlaybackQuality?.(targetQuality);
+              } catch {}
               const carrier = getTopLevelAudioCarrier();
               if (carrier && carrier.paused) {
                 carrier.play().catch(() => {});
@@ -1205,15 +1596,16 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                 applyMediaMetadata(currentTrackRef.current, true);
               }
             } else if (state === 2) {
-              // If the user still wants music playing and the video viewport is hidden (or app is minimized),
+              // If the user still wants music playing and the video viewport is hidden (or app is minimized/backgrounded),
               // YouTube's iframe auto-paused on background transition — resume immediately!
+              const isBackgrounded =
+                typeof document !== 'undefined' &&
+                (document.visibilityState === 'hidden' ||
+                  document.hidden ||
+                  !document.hasFocus());
               if (
                 userWantPlayingRef.current &&
-                (!showVideoViewportRef.current ||
-                  (typeof document !== 'undefined' &&
-                    (document.visibilityState === 'hidden' ||
-                      document.hidden ||
-                      !document.hasFocus())))
+                (!showVideoViewportRef.current || isBackgrounded)
               ) {
                 try {
                   event.target?.playVideo?.();
@@ -1238,6 +1630,10 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                 activeTelemetryEntryRef.current.bufferingInterruptions += 1;
               }
             } else if (state === 0) {
+              if (playbackWatchdogTimerRef.current) {
+                window.clearTimeout(playbackWatchdogTimerRef.current);
+                playbackWatchdogTimerRef.current = null;
+              }
               setIsPlaying(false);
               setIsBuffering(false);
               playNextTrackRef.current();
@@ -1245,6 +1641,10 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
           },
           onError: async (event: any) => {
             if (playbackBackendRef.current !== 'yt') return;
+            if (playbackWatchdogTimerRef.current) {
+              window.clearTimeout(playbackWatchdogTimerRef.current);
+              playbackWatchdogTimerRef.current = null;
+            }
             const errCode = event?.data;
             const failedTrack = currentTrackRef.current;
             if (failedTrack && errCode !== undefined) {
@@ -1271,7 +1671,11 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                 try {
                   playerRef.current.loadVideoById({
                     videoId: altTrack.videoId,
-                    suggestedQuality: showVideoViewportRef.current ? 'default' : 'small',
+                    suggestedQuality: isHighQualityRef.current
+                      ? 'hd720'
+                      : showVideoViewportRef.current
+                      ? 'default'
+                      : 'small',
                   });
                   playerRef.current.playVideo();
                   setStatusNotice(null);
@@ -1316,7 +1720,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     ensureYouTubePlayer();
   }, [ensureYouTubePlayer]);
 
-  // Helper to start or switch to YouTube IFrame Player for a track (used for Video viewport or fallback)
+  // Helper to start or switch to YouTube IFrame Player for a track (with instant playable ID lookup + stall watchdog)
   const startYouTubeIframePlayback = useCallback(
     (track: YouTubeTrack, startSeconds = 0) => {
       playbackBackendRef.current = 'yt';
@@ -1332,13 +1736,20 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
         carrier.play().catch(() => {});
       }
 
+      const playableVideoId = getKnownPlayableVideoId(track.videoId);
+      const targetQuality = isHighQualityRef.current
+        ? 'hd720'
+        : showVideoViewportRef.current
+        ? 'default'
+        : 'small';
+
       if (playerRef.current && isPlayerReadyRef.current) {
-        loadedVideoIdInPlayerRef.current = track.videoId;
+        loadedVideoIdInPlayerRef.current = playableVideoId;
         try {
           playerRef.current.loadVideoById({
-            videoId: track.videoId,
+            videoId: playableVideoId,
             startSeconds: startSeconds > 0 ? startSeconds : 0,
-            suggestedQuality: showVideoViewportRef.current ? 'default' : 'small',
+            suggestedQuality: targetQuality,
           });
           playerRef.current.playVideo();
         } catch {
@@ -1348,6 +1759,44 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
         pendingTrackRef.current = track;
         ensureYouTubePlayer();
       }
+
+      // Clear any previous watchdog and arm a 4.5s stall recovery watchdog
+      if (playbackWatchdogTimerRef.current) {
+        window.clearTimeout(playbackWatchdogTimerRef.current);
+      }
+      playbackWatchdogTimerRef.current = window.setTimeout(async () => {
+        if (
+          !userWantPlayingRef.current ||
+          currentTrackRef.current?.videoId !== track.videoId ||
+          firstAudioReachedRef.current
+        ) {
+          return;
+        }
+        try {
+          const st = playerRef.current?.getPlayerState?.();
+          // If still UNSTARTED (-1) or CUED (5) after 4.5s, resolve an embeddable alternative
+          if (st === -1 || st === 5 || st === undefined) {
+            triedEmbedIdsRef.current.add(playableVideoId);
+            triedEmbedIdsRef.current.add(track.videoId);
+            const altTrack = await findEmbeddableAlternative(track, triedEmbedIdsRef.current);
+            if (
+              altTrack &&
+              userWantPlayingRef.current &&
+              currentTrackRef.current?.videoId === track.videoId &&
+              playerRef.current &&
+              isPlayerReadyRef.current
+            ) {
+              triedEmbedIdsRef.current.add(altTrack.videoId);
+              loadedVideoIdInPlayerRef.current = altTrack.videoId;
+              playerRef.current.loadVideoById({
+                videoId: altTrack.videoId,
+                suggestedQuality: targetQuality,
+              });
+              playerRef.current.playVideo();
+            }
+          }
+        } catch {}
+      }, 4500);
 
       // If an older APK's Java updateMusicNotification briefly stole Android AudioFocus at t=0ms,
       // re-assert WebView playback at 90ms and 320ms after Java AudioFocus was abandoned.
@@ -1465,7 +1914,12 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
   }, [applyMediaMetadata, startYouTubeIframePlayback]);
 
   const handleSelectTrack = useCallback(
-    (incomingTrack: YouTubeTrack) => {
+    (
+      incomingTrack: YouTubeTrack,
+      contextQueue?: YouTubeTrack[],
+      contextLabel?: string,
+      preserveQueueOrder = false
+    ) => {
       const tapStartPerf = performance.now();
       lastPlayInitiatedAtRef.current = tapStartPerf;
       triggerHaptic(25);
@@ -1482,16 +1936,54 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
         artist: canonicalTrack.artist || 'Kashish Melodies',
       };
 
-      // Persist as the current user's last actually PLAYED song
-      saveUserLastPlayedTrack(userIdRef.current, unifiedTrack);
-      setRecentPlayedTracks(
-        loadUserRecentPlayedTracks(userIdRef.current).map((t) => resolveCanonicalTrack(t))
-      );
+      // Synchronize the active playback queue:
+      // 1) If stepping via Next/Prev or selecting inside an explicit queue/playlist, preserve queue order & label
+      if (contextQueue && contextQueue.length > 0) {
+        const hasTrack = contextQueue.some((t) => t.videoId === unifiedTrack.videoId);
+        const nextQueue =
+          preserveQueueOrder && hasTrack
+            ? contextQueue
+            : hasTrack
+            ? contextQueue
+            : [unifiedTrack, ...contextQueue];
+        customQueueRef.current = nextQueue;
+        setCustomQueue(nextQueue);
+        const label = contextLabel || activeQueueLabelRef.current || 'RELATED';
+        activeQueueLabelRef.current = label;
+        setActiveQueueLabel(label);
+      } else if (
+        unifiedTrack.mediaType === 'video' &&
+        videoTracksRef.current.some((v) => v.videoId === unifiedTrack.videoId)
+      ) {
+        customQueueRef.current = videoTracksRef.current;
+        setCustomQueue(videoTracksRef.current);
+        activeQueueLabelRef.current = 'VIDEOS';
+        setActiveQueueLabel('VIDEOS');
+      } else {
+        // 2) Whenever a song is selected (e.g. from Search results or Quick Picks), seed the queue with
+        //    the selected song followed by its context-aware Related Songs (never raw unrelated search results)
+        const immediateRelated = getCachedRelatedTracks(
+          unifiedTrack,
+          relatedMoodFilterRef.current,
+          userIdRef.current
+        ).tracks;
+        const merged = [
+          unifiedTrack,
+          ...immediateRelated.filter((t) => t.videoId !== unifiedTrack.videoId),
+        ];
+        customQueueRef.current = merged;
+        setCustomQueue(merged);
+        activeQueueLabelRef.current = 'RELATED';
+        setActiveQueueLabel('RELATED');
+      }
+
+      const resolvedPlayableId = getKnownPlayableVideoId(unifiedTrack.videoId);
 
       // If tapping the exact song that is already loaded in the player, toggle play/pause immediately
       if (
         currentTrackRef.current?.videoId === unifiedTrack.videoId &&
-        loadedVideoIdInPlayerRef.current === unifiedTrack.videoId &&
+        (loadedVideoIdInPlayerRef.current === unifiedTrack.videoId ||
+          loadedVideoIdInPlayerRef.current === resolvedPlayableId) &&
         playerRef.current &&
         isPlayerReadyRef.current
       ) {
@@ -1512,6 +2004,20 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
           return;
         } catch {}
       }
+
+      // Record listening duration for the previous track before switching (for personalized skip/affinity learning)
+      if (currentTrackRef.current && trackListenStartPerfRef.current !== null) {
+        const listenedSec = (tapStartPerf - trackListenStartPerfRef.current) / 1000;
+        recordTrackListenDuration(userIdRef.current, currentTrackRef.current, listenedSec);
+      }
+      trackListenStartPerfRef.current = tapStartPerf;
+      recordTrackPlayEvent(userIdRef.current, unifiedTrack);
+
+      // Persist as the current user's last actually PLAYED song
+      saveUserLastPlayedTrack(userIdRef.current, unifiedTrack);
+      setRecentPlayedTracks(
+        loadUserRecentPlayedTracks(userIdRef.current).map((t) => resolveCanonicalTrack(t))
+      );
 
       tapTimestampRef.current = tapStartPerf;
       tapToReadyRecordedRef.current = null;
@@ -1568,10 +2074,12 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       carrier.play().catch(() => {});
     }
 
+    const playableId = getKnownPlayableVideoId(cur.videoId);
     if (
       playerRef.current &&
       isPlayerReadyRef.current &&
-      loadedVideoIdInPlayerRef.current === cur.videoId
+      (loadedVideoIdInPlayerRef.current === cur.videoId ||
+        loadedVideoIdInPlayerRef.current === playableId)
     ) {
       try {
         playerRef.current.playVideo();
@@ -1585,26 +2093,24 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
 
   const getActivePlaybackQueue = useCallback((): YouTubeTrack[] => {
     const cur = currentTrackRef.current;
-    const songs = tracksRef.current;
+    const explicitQueue = customQueueRef.current;
     const videos = videoTracksRef.current;
 
-    if (activeResultSectionRef.current === 'discover') {
-      if (cur && ALL_DISCOVERY_TRACKS.some((d) => d.videoId === cur.videoId)) {
-        return ALL_DISCOVERY_TRACKS;
-      }
-      if (!cur) {
-        return ALL_DISCOVERY_TRACKS;
-      }
+    // 1. If the explicit active queue (including RELATED queue) contains the current track,
+    //    return it in its exact preserved order so queue index (1/N, 2/N, 3/N) and Next/Prev work seamlessly!
+    if (cur && explicitQueue.length > 0 && explicitQueue.some((t) => t.videoId === cur.videoId)) {
+      return explicitQueue;
     }
 
+    // 2. Otherwise if we have related tracks for the playing song, build a related queue
+    if (cur && relatedTracksRef.current.length > 0) {
+      const others = relatedTracksRef.current.filter((t) => t.videoId !== cur.videoId);
+      return [cur, ...others];
+    }
+
+    // 3. Otherwise match against Videos or Discovery
     if (cur) {
       if (cur.mediaType === 'video' && videos.some((v) => v.videoId === cur.videoId)) {
-        return videos;
-      }
-      if (songs.some((s) => s.videoId === cur.videoId)) {
-        return songs;
-      }
-      if (videos.some((v) => v.videoId === cur.videoId)) {
         return videos;
       }
       if (ALL_DISCOVERY_TRACKS.some((d) => d.videoId === cur.videoId)) {
@@ -1612,13 +2118,13 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       }
     }
 
+    if (explicitQueue.length > 0) {
+      return explicitQueue;
+    }
     if (activeResultSectionRef.current === 'videos' && videos.length > 0) {
       return videos;
     }
-    if (activeResultSectionRef.current === 'discover') {
-      return ALL_DISCOVERY_TRACKS;
-    }
-    return songs.length > 0 ? songs : (videos.length > 0 ? videos : ALL_DISCOVERY_TRACKS);
+    return ALL_DISCOVERY_TRACKS;
   }, []);
 
   const playNextTrack = useCallback(() => {
@@ -1629,11 +2135,11 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       return;
     }
     if (repeatMode === 'one' && cur) {
-      handleSelectTrack(cur);
+      handleSelectTrack(cur, list, activeQueueLabelRef.current, true);
       return;
     }
     if (!cur) {
-      handleSelectTrack(list[0]);
+      handleSelectTrack(list[0], list, activeQueueLabelRef.current, true);
       return;
     }
     const idx = list.findIndex((t) => t.videoId === cur.videoId);
@@ -1652,7 +2158,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
         nextIdx = 0;
       }
     }
-    handleSelectTrack(list[nextIdx]);
+    handleSelectTrack(list[nextIdx], list, activeQueueLabelRef.current, true);
   }, [getActivePlaybackQueue, handleSelectTrack, repeatMode, isShuffle, pausePlayback]);
 
   const playPrevTrack = useCallback(() => {
@@ -1663,13 +2169,19 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       return;
     }
     if (!cur) {
-      handleSelectTrack(list[0]);
+      handleSelectTrack(list[0], list, activeQueueLabelRef.current, true);
       return;
     }
+    const { currentTime } = getPlaybackMetrics();
     const idx = list.findIndex((t) => t.videoId === cur.videoId);
+    // If more than 4 seconds into the song (or at the very first song in the queue), restart from 0:00
+    if (currentTime > 4 && idx <= 0) {
+      handleSeekTo(0);
+      return;
+    }
     const prevIdx = idx > 0 ? idx - 1 : list.length - 1;
-    handleSelectTrack(list[prevIdx]);
-  }, [getActivePlaybackQueue, handleSelectTrack]);
+    handleSelectTrack(list[prevIdx], list, activeQueueLabelRef.current, true);
+  }, [getActivePlaybackQueue, getPlaybackMetrics, handleSeekTo, handleSelectTrack]);
 
   const playNextTrackRef = useRef(playNextTrack);
   useEffect(() => {
@@ -1858,7 +2370,9 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     }
     if (playerRef.current && isPlayerReadyRef.current) {
       try {
-        playerRef.current.setVolume(clamped);
+        const eqMult = computeEqLoudnessMultiplier(eqBandsRef.current);
+        const scaledVol = Math.max(0, Math.min(100, Math.round(clamped * eqMult)));
+        playerRef.current.setVolume(scaledVol);
         if (clamped > 0 && playerRef.current.isMuted?.()) {
           playerRef.current.unMute();
         }
@@ -1980,7 +2494,9 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
 
     if (playerRef.current && isPlayerReadyRef.current) {
       try {
-        playerRef.current.setPlaybackQuality?.(nextShow ? 'default' : 'small');
+        playerRef.current.setPlaybackQuality?.(
+          isHighQualityRef.current ? 'hd720' : nextShow ? 'default' : 'small'
+        );
       } catch {}
     }
   };
@@ -2030,7 +2546,8 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
           volumeRef.current = next;
           if (playerRef.current && isPlayerReadyRef.current) {
             try {
-              playerRef.current.setVolume(next);
+              const eqMult = computeEqLoudnessMultiplier(eqBandsRef.current);
+              playerRef.current.setVolume(Math.min(100, Math.round(next * eqMult)));
             } catch {}
           }
           return next;
@@ -2042,7 +2559,8 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
           volumeRef.current = next;
           if (playerRef.current && isPlayerReadyRef.current) {
             try {
-              playerRef.current.setVolume(next);
+              const eqMult = computeEqLoudnessMultiplier(eqBandsRef.current);
+              playerRef.current.setVolume(Math.max(0, Math.round(next * eqMult)));
             } catch {}
           }
           return next;
@@ -2440,9 +2958,18 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     QUICK_PICKS_TRACKS[0];
 
   // ==================== DYNAMIC "MORE LIKE THIS" RELATED SONGS STATE ====================
+  const [relatedMoodFilter, setRelatedMoodFilter] = useState<string>('context');
+  useEffect(() => {
+    relatedMoodFilterRef.current = relatedMoodFilter;
+  }, [relatedMoodFilter]);
+
   const [relatedTracks, setRelatedTracks] = useState<YouTubeTrack[]>(() =>
-    getCachedRelatedTracks(displayTrack).tracks
+    getCachedRelatedTracks(displayTrack, 'context', userId).tracks
   );
+  useEffect(() => {
+    relatedTracksRef.current = relatedTracks;
+  }, [relatedTracks]);
+
   const [hasMoreRelated, setHasMoreRelated] = useState<boolean>(true);
   const [isLoadingRelated, setIsLoadingRelated] = useState<boolean>(false);
   const [isMoreLikeThisOpen, setIsMoreLikeThisOpen] = useState<boolean>(false);
@@ -2458,7 +2985,40 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     displayTrackRef.current = displayTrack;
   }, [displayTrack]);
 
-  // Automatically update "MORE LIKE THIS" recommendations whenever the current/display song changes
+  // Helper to merge newly loaded related tracks into the active RELATED queue
+  // without resetting the user's current queue position when stepping via Next/Prev
+  const syncRelatedTracksToActiveQueue = useCallback(
+    (seedTrack: YouTubeTrack, incomingRelated: YouTubeTrack[]) => {
+      if (!incomingRelated.length) return;
+      if (activeQueueLabelRef.current !== 'RELATED' && customQueueRef.current.length > 1) {
+        return;
+      }
+      const existing = customQueueRef.current;
+      const existingContainsSeed = existing.some((t) => t.videoId === seedTrack.videoId);
+
+      if (existingContainsSeed && existing.length > 1) {
+        const seen = new Set(existing.map((t) => t.videoId));
+        const additions = incomingRelated.filter((t) => !seen.has(t.videoId));
+        if (additions.length > 0) {
+          const merged = [...existing, ...additions];
+          customQueueRef.current = merged;
+          setCustomQueue(merged);
+        }
+      } else {
+        const merged = [
+          seedTrack,
+          ...incomingRelated.filter((t) => t.videoId !== seedTrack.videoId),
+        ];
+        customQueueRef.current = merged;
+        setCustomQueue(merged);
+        activeQueueLabelRef.current = 'RELATED';
+        setActiveQueueLabel('RELATED');
+      }
+    },
+    []
+  );
+
+  // Automatically update "MORE LIKE THIS" recommendations whenever the current/display song or mood filter changes
   useEffect(() => {
     const contextTrack = displayTrack;
     if (!contextTrack?.videoId) return;
@@ -2468,12 +3028,16 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     }
     isLoadingMoreRelatedRef.current = false;
 
-    const cached = getCachedRelatedTracks(contextTrack);
+    const cached = getCachedRelatedTracks(contextTrack, relatedMoodFilter, userId);
     setRelatedTracks(cached.tracks);
     setHasMoreRelated(cached.hasMore);
     hasMoreRelatedRef.current = cached.hasMore;
 
-    // If we already fetched at least one network batch for this track, no need to re-fetch until user scrolls
+    if (cached.tracks.length > 0) {
+      syncRelatedTracksToActiveQueue(contextTrack, cached.tracks);
+    }
+
+    // If we already fetched at least one network batch for this track + mood, no need to re-fetch until user scrolls
     if (cached.cursorIndex > 0 && cached.tracks.length >= 12) {
       setIsLoadingRelated(false);
       return;
@@ -2484,18 +3048,29 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     isLoadingMoreRelatedRef.current = true;
     setIsLoadingRelated(true);
 
-    void fetchNextRelatedTracksBatch(contextTrack, controller.signal)
+    void fetchNextRelatedTracksBatch(contextTrack, controller.signal, relatedMoodFilter, userId)
       .then((res) => {
-        if (controller.signal.aborted || displayTrackRef.current.videoId !== contextTrack.videoId) {
+        if (
+          controller.signal.aborted ||
+          displayTrackRef.current.videoId !== contextTrack.videoId ||
+          relatedMoodFilterRef.current !== relatedMoodFilter
+        ) {
           return;
         }
         setRelatedTracks(res.tracks);
         setHasMoreRelated(res.hasMore);
         hasMoreRelatedRef.current = res.hasMore;
+        if (res.tracks.length > 0) {
+          syncRelatedTracksToActiveQueue(contextTrack, res.tracks);
+        }
       })
       .catch(() => {})
       .finally(() => {
-        if (!controller.signal.aborted && displayTrackRef.current.videoId === contextTrack.videoId) {
+        if (
+          !controller.signal.aborted &&
+          displayTrackRef.current.videoId === contextTrack.videoId &&
+          relatedMoodFilterRef.current === relatedMoodFilter
+        ) {
           isLoadingMoreRelatedRef.current = false;
           setIsLoadingRelated(false);
         }
@@ -2504,11 +3079,12 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     return () => {
       controller.abort();
     };
-  }, [displayTrack.videoId]);
+  }, [displayTrack.videoId, relatedMoodFilter, userId, syncRelatedTracksToActiveQueue]);
 
   const loadMoreRelatedTracks = useCallback(async () => {
     if (isLoadingMoreRelatedRef.current || !hasMoreRelatedRef.current) return;
     const contextTrack = displayTrackRef.current;
+    const activeMood = relatedMoodFilterRef.current;
     if (!contextTrack?.videoId) return;
 
     const controller = new AbortController();
@@ -2517,16 +3093,32 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     setIsLoadingRelated(true);
 
     try {
-      const res = await fetchNextRelatedTracksBatch(contextTrack, controller.signal);
-      if (!controller.signal.aborted && displayTrackRef.current.videoId === contextTrack.videoId) {
+      const res = await fetchNextRelatedTracksBatch(
+        contextTrack,
+        controller.signal,
+        activeMood,
+        userIdRef.current
+      );
+      if (
+        !controller.signal.aborted &&
+        displayTrackRef.current.videoId === contextTrack.videoId &&
+        relatedMoodFilterRef.current === activeMood
+      ) {
         setRelatedTracks(res.tracks);
         setHasMoreRelated(res.hasMore);
         hasMoreRelatedRef.current = res.hasMore;
+        if (res.tracks.length > 0) {
+          syncRelatedTracksToActiveQueue(contextTrack, res.tracks);
+        }
       }
     } catch {
       // Ignore abort or transient network errors
     } finally {
-      if (!controller.signal.aborted && displayTrackRef.current.videoId === contextTrack.videoId) {
+      if (
+        !controller.signal.aborted &&
+        displayTrackRef.current.videoId === contextTrack.videoId &&
+        relatedMoodFilterRef.current === activeMood
+      ) {
         isLoadingMoreRelatedRef.current = false;
         setIsLoadingRelated(false);
       }
@@ -2565,6 +3157,109 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     observer.observe(sentinel);
     return () => observer.disconnect();
   }, [isMoreLikeThisOpen, relatedTracks.length, loadMoreRelatedTracks]);
+
+  // ==================== PHASE 7: INTELLIGENT NEXT-TRACK PRELOADING ====================
+  useEffect(() => {
+    if (!isPlaying || !currentTrack) return;
+    const queue = getActivePlaybackQueue();
+    if (queue.length < 2) return;
+
+    const curIdx = queue.findIndex((t) => t.videoId === currentTrack.videoId);
+    let nextIdx = curIdx >= 0 ? curIdx + 1 : 0;
+    if (nextIdx >= queue.length) {
+      if (repeatMode === 'off') return;
+      nextIdx = 0;
+    }
+    const nextTrack = queue[nextIdx];
+    if (!nextTrack || nextTrack.videoId === currentTrack.videoId) return;
+
+    const preloadController = new AbortController();
+    const timer = window.setTimeout(() => {
+      void preloadNextTrackResources(nextTrack, isHighQuality, preloadController.signal);
+    }, 2200);
+
+    return () => {
+      window.clearTimeout(timer);
+      preloadController.abort();
+    };
+  }, [
+    currentTrack,
+    isPlaying,
+    isHighQuality,
+    repeatMode,
+    isShuffle,
+    customQueue,
+    tracks,
+    videoTracks,
+    getActivePlaybackQueue,
+  ]);
+
+  // ==================== PHASE 5: BACK BUTTON & BROWSER HISTORY SUB-VIEW NAVIGATION ====================
+  const pushSubViewHistoryEntry = useCallback((subViewName: string) => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.history.pushState(
+        { tab: 'melodies', isUnlocked: true, kashishMusicSubView: subViewName },
+        '',
+        '#melodies'
+      );
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.__kashishConsumeMusicPlayerBack = () => {
+      if (activeTab !== 'melodies') return false;
+      if (isMoreLikeThisOpen) {
+        setIsMoreLikeThisOpen(false);
+        return true;
+      }
+      if (isLibraryQueueOpen) {
+        setIsLibraryQueueOpen(false);
+        return true;
+      }
+      if (isEqMenuOpen) {
+        setIsEqMenuOpen(false);
+        return true;
+      }
+      if (isSleepMenuOpen) {
+        setIsSleepMenuOpen(false);
+        return true;
+      }
+      if (isVideoFullscreen) {
+        setIsVideoFullscreen(false);
+        return true;
+      }
+      if (showVideoViewport) {
+        setShowVideoViewport(false);
+        showVideoViewportRef.current = false;
+        return true;
+      }
+      if (isListExpanded) {
+        setIsListExpanded(false);
+        return true;
+      }
+      if (isSearchFocused) {
+        setIsSearchFocused(false);
+        searchInputRef.current?.blur();
+        return true;
+      }
+      return false;
+    };
+    return () => {
+      window.__kashishConsumeMusicPlayerBack = undefined;
+    };
+  }, [
+    activeTab,
+    isMoreLikeThisOpen,
+    isLibraryQueueOpen,
+    isEqMenuOpen,
+    isSleepMenuOpen,
+    isVideoFullscreen,
+    showVideoViewport,
+    isListExpanded,
+    isSearchFocused,
+  ]);
 
   return (
     <div
@@ -2813,6 +3508,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     setActiveResultSection('songs');
                     setShowVideoViewport(false);
                     showVideoViewportRef.current = false;
+                    if (!isListExpanded) pushSubViewHistoryEntry('list');
                     setIsListExpanded(true);
                   }
                 }}
@@ -2850,6 +3546,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     setIsListExpanded(false);
                   } else {
                     setActiveResultSection('videos');
+                    if (!isListExpanded) pushSubViewHistoryEntry('list');
                     setIsListExpanded(true);
                   }
                 }}
@@ -2891,6 +3588,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     setActiveResultSection('discover');
                     setShowVideoViewport(false);
                     showVideoViewportRef.current = false;
+                    if (!isListExpanded) pushSubViewHistoryEntry('list');
                     setIsListExpanded(true);
                   }
                 }}
@@ -3341,7 +4039,11 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     type="button"
                     onClick={() => {
                       triggerHaptic(15);
-                      setIsEqMenuOpen((prev) => !prev);
+                      setIsEqMenuOpen((prev) => {
+                        const next = !prev;
+                        if (next) pushSubViewHistoryEntry('eq');
+                        return next;
+                      });
                       setIsSleepMenuOpen(false);
                     }}
                     style={{
@@ -3350,12 +4052,18 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                       borderColor: isEqMenuOpen ? activePalette.accent : activePalette.deckBorder,
                     }}
                     className="p-2.5 rounded-full border hover:opacity-90 active:scale-90 transition-all cursor-pointer relative"
-                    title={`Equalizer: ${activeEqPreset}`}
+                    title={`Equalizer: ${activeEqPreset} (Bass ${eqBands.bass >= 0 ? `+${eqBands.bass}` : eqBands.bass}dB, Mid ${eqBands.mid >= 0 ? `+${eqBands.mid}` : eqBands.mid}dB, Treble ${eqBands.treble >= 0 ? `+${eqBands.treble}` : eqBands.treble}dB)`}
                     aria-label="Equalizer"
                   >
                     <Sliders className="w-3.5 h-3.5" />
-                    {activeEqPreset !== 'Flat' && (
-                      <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full" style={{ backgroundColor: activePalette.accent }} />
+                    {(activeEqPreset !== 'Flat' ||
+                      eqBands.bass !== 0 ||
+                      eqBands.mid !== 0 ||
+                      eqBands.treble !== 0) && (
+                      <span
+                        className="absolute -top-1 -right-1 w-2 h-2 rounded-full"
+                        style={{ backgroundColor: activePalette.accent }}
+                      />
                     )}
                   </button>
 
@@ -3363,7 +4071,11 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     type="button"
                     onClick={() => {
                       triggerHaptic(15);
-                      setIsSleepMenuOpen((prev) => !prev);
+                      setIsSleepMenuOpen((prev) => {
+                        const next = !prev;
+                        if (next) pushSubViewHistoryEntry('sleep');
+                        return next;
+                      });
                       setIsEqMenuOpen(false);
                     }}
                     style={{
@@ -3429,7 +4141,10 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
 
                   <button
                     type="button"
-                    onClick={handleToggleVideoViewport}
+                    onClick={() => {
+                      if (!showVideoViewport) pushSubViewHistoryEntry('video');
+                      handleToggleVideoViewport();
+                    }}
                     style={{
                       background: showVideoViewport ? activePalette.accentGradient : activePalette.subBg,
                       color: showVideoViewport ? '#ffffff' : activePalette.textSecondary,
@@ -3443,44 +4158,103 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   </button>
                 </div>
 
-                {/* Equalizer Preset Picker Strip */}
+                {/* Functional 3-Band Equalizer & Presets Panel */}
                 {isEqMenuOpen && (
                   <div
                     style={{
                       backgroundColor: activePalette.subBg,
                       borderColor: activePalette.deckBorder,
                     }}
-                    className="w-full px-2.5 py-1.5 rounded-2xl border flex items-center justify-between gap-1 shrink-0 animate-in fade-in duration-200"
+                    className="w-full px-3 py-2 rounded-2xl border flex flex-col gap-2 shrink-0 animate-in fade-in duration-200"
                   >
-                    <span
-                      style={{ color: activePalette.textSecondary }}
-                      className="text-[10px] font-bold shrink-0 pl-1"
-                    >
-                      EQ:
-                    </span>
-                    <div className="flex items-center gap-1 flex-wrap justify-end">
-                      {(['Bass Boost', 'Vocal', 'Acoustic', 'Club', 'Flat'] as const).map((preset) => {
-                        const isSelected = activeEqPreset === preset;
-                        return (
-                          <button
-                            key={`eq-preset-${preset}`}
-                            type="button"
-                            onClick={() => {
-                              triggerHaptic(15);
-                              setActiveEqPreset(preset);
-                              showNativeToast(`Equalizer: ${preset} profile active 🎚️`);
-                            }}
-                            style={{
-                              background: isSelected ? activePalette.accentGradient : 'transparent',
-                              color: isSelected ? '#ffffff' : activePalette.textPrimary,
-                              borderColor: isSelected ? activePalette.accent : activePalette.deckBorder,
-                            }}
-                            className="px-2 py-0.5 rounded-lg border text-[10px] font-bold cursor-pointer active:scale-95 transition-transform"
-                          >
-                            {preset}
-                          </button>
-                        );
-                      })}
+                    <div className="flex items-center justify-between gap-1">
+                      <span
+                        style={{ color: activePalette.textSecondary }}
+                        className="text-[10px] font-bold uppercase tracking-wider shrink-0"
+                      >
+                        EQ Presets ({activeEqPreset})
+                      </span>
+                      <div className="flex items-center gap-2.5">
+                        <button
+                          type="button"
+                          onClick={() => handleSelectEqPreset('Flat')}
+                          style={{ color: activePalette.accent }}
+                          className="text-[10px] font-semibold hover:opacity-80 cursor-pointer"
+                        >
+                          Reset
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setIsEqMenuOpen(false)}
+                          style={{ color: activePalette.textSecondary }}
+                          className="text-[10px] font-semibold hover:opacity-80 cursor-pointer"
+                        >
+                          Done
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1 flex-wrap">
+                      {(['Flat', 'Bass Boost', 'Vocal', 'Acoustic', 'Club', 'Lo-Fi Warm'] as const).map(
+                        (preset) => {
+                          const isSelected = activeEqPreset === preset;
+                          return (
+                            <button
+                              key={`eq-preset-${preset}`}
+                              type="button"
+                              onClick={() => handleSelectEqPreset(preset)}
+                              style={{
+                                background: isSelected
+                                  ? activePalette.accentGradient
+                                  : 'transparent',
+                                color: isSelected ? '#ffffff' : activePalette.textPrimary,
+                                borderColor: isSelected
+                                  ? activePalette.accent
+                                  : activePalette.deckBorder,
+                              }}
+                              className="px-2 py-0.5 rounded-lg border text-[10px] font-bold cursor-pointer active:scale-95 transition-transform"
+                            >
+                              {preset}
+                            </button>
+                          );
+                        }
+                      )}
+                    </div>
+
+                    {/* Interactive Bass, Midrange, and Treble Frequency Sliders (-12dB to +12dB) */}
+                    <div className="grid grid-cols-3 gap-2 pt-1 border-t border-white/10">
+                      {(
+                        [
+                          { key: 'bass', label: 'Bass 100Hz', val: eqBands.bass },
+                          { key: 'mid', label: 'Mid 1kHz', val: eqBands.mid },
+                          { key: 'treble', label: 'Treble 8kHz', val: eqBands.treble },
+                        ] as const
+                      ).map((band) => (
+                        <div key={band.key} className="flex flex-col gap-1">
+                          <div className="flex items-center justify-between text-[9px] font-mono">
+                            <span style={{ color: activePalette.textSecondary }}>{band.label}</span>
+                            <span
+                              style={{ color: activePalette.accent }}
+                              className="font-bold tabular-nums"
+                            >
+                              {band.val > 0 ? `+${band.val}` : band.val}dB
+                            </span>
+                          </div>
+                          <input
+                            type="range"
+                            min={-12}
+                            max={12}
+                            step={1}
+                            value={band.val}
+                            onChange={(e) =>
+                              handleEqBandChange(band.key, Number(e.target.value))
+                            }
+                            style={{ accentColor: activePalette.accent }}
+                            className="w-full h-1 rounded-lg cursor-pointer"
+                            aria-label={`${band.label} gain`}
+                          />
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
@@ -3536,8 +4310,37 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   </div>
                 )}
 
-                {/* D. Main Playback Controls (Previous, Large Play/Pause, Next) */}
-                <div className="flex items-center justify-center gap-6 w-full shrink-0">
+                {/* D. Main Playback Controls (Quality Toggle, Previous, Large Play/Pause, Next, Library/Queue) */}
+                <div className="flex items-center justify-center gap-3.5 sm:gap-5 w-full shrink-0">
+                  {/* 1. Compact Quality Toggle Button (Default OFF = Low/Data Saver without glow; ON = High Quality with glow) */}
+                  <button
+                    type="button"
+                    onClick={handleToggleHighQuality}
+                    style={{
+                      background: isHighQuality
+                        ? activePalette.accentGradient
+                        : activePalette.subBg,
+                      color: isHighQuality ? '#ffffff' : activePalette.textSecondary,
+                      borderColor: isHighQuality
+                        ? activePalette.accent
+                        : activePalette.deckBorder,
+                      boxShadow: isHighQuality
+                        ? `0 0 14px ${activePalette.accent}, 0 4px 12px ${activePalette.accentGlow}`
+                        : 'none',
+                    }}
+                    className="w-9 h-9 sm:w-10 sm:h-10 rounded-full border flex items-center justify-center hover:opacity-90 active:scale-90 transition-all cursor-pointer"
+                    title={
+                      isHighQuality
+                        ? 'High Quality Active (Tap for Data Saver)'
+                        : 'Data Saver / Low Quality (Tap for High Quality)'
+                    }
+                    aria-label={isHighQuality ? 'High Quality Enabled' : 'Low Quality Data Saver'}
+                    aria-pressed={isHighQuality}
+                  >
+                    <Zap className={`w-4 h-4 ${isHighQuality ? 'fill-current' : ''}`} />
+                  </button>
+
+                  {/* 2. Previous Track */}
                   <button
                     type="button"
                     onClick={playPrevTrack}
@@ -3552,6 +4355,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     <SkipBack className="w-4 h-4" />
                   </button>
 
+                  {/* 3. Play / Pause */}
                   <button
                     type="button"
                     onClick={handleTogglePlayPause}
@@ -3572,6 +4376,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     )}
                   </button>
 
+                  {/* 4. Next Track */}
                   <button
                     type="button"
                     onClick={playNextTrack}
@@ -3585,10 +4390,34 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   >
                     <SkipForward className="w-4 h-4" />
                   </button>
+
+                  {/* 5. Compact Library / Active Queue Button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      triggerHaptic(15);
+                      pushSubViewHistoryEntry('library');
+                      setIsLibraryQueueOpen(true);
+                    }}
+                    style={{
+                      background: isLibraryQueueOpen
+                        ? activePalette.accentGradient
+                        : activePalette.subBg,
+                      color: isLibraryQueueOpen ? '#ffffff' : activePalette.textSecondary,
+                      borderColor: isLibraryQueueOpen
+                        ? activePalette.accent
+                        : activePalette.deckBorder,
+                    }}
+                    className="w-9 h-9 sm:w-10 sm:h-10 rounded-full border flex items-center justify-center hover:opacity-90 active:scale-90 transition-all cursor-pointer"
+                    title="Open Music Library & Active Queue"
+                    aria-label="Open Music Library and Active Queue"
+                  >
+                    <ListMusic className="w-4 h-4" />
+                  </button>
                 </div>
 
-                {/* E. Wide Progress Bar & Queue Context */}
-                <div className="w-full space-y-1 px-1 shrink-0">
+                {/* E. Wide Progress Bar & Compact Queue + "More" Button Row */}
+                <div className="w-full space-y-1.5 px-1 shrink-0">
                   <PlayerProgressBar
                     getPlaybackMetrics={getPlaybackMetrics}
                     onSeekTo={handleSeekTo}
@@ -3608,73 +4437,65 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     const queuePos = currentIdx >= 0 ? currentIdx + 1 : 1;
                     const totalQueue = activeQueue.length > 0 ? activeQueue.length : 1;
                     const queueContextLabel =
-                      activeResultSection === 'discover'
+                      customQueue.length > 0 &&
+                      customQueue.some((t) => t.videoId === displayTrack.videoId)
+                        ? activeQueueLabel
+                        : activeResultSection === 'discover'
                         ? 'DISCOVER'
                         : activeResultSection === 'videos'
                         ? 'VIDEOS'
                         : 'SONGS';
                     return (
-                      <div
-                        style={{ color: activePalette.textSecondary }}
-                        className="text-[10px] font-bold tracking-widest uppercase"
-                      >
-                        {queueContextLabel} – {queuePos} / {totalQueue}
+                      <div className="flex items-center justify-between gap-2 pt-0.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            triggerHaptic(15);
+                            setLibraryTab('queue');
+                            pushSubViewHistoryEntry('library');
+                            setIsLibraryQueueOpen(true);
+                          }}
+                          style={{ color: activePalette.textSecondary }}
+                          className="text-[10px] font-bold tracking-widest uppercase hover:opacity-80 transition-opacity cursor-pointer truncate"
+                          title="Tap to view active playback queue"
+                        >
+                          {queueContextLabel} – {queuePos} / {totalQueue}
+                        </button>
+
+                        {/* Compact Single "More" Button (Replaces Full-Width MORE LIKE THIS Strip) */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            triggerHaptic(15);
+                            pushSubViewHistoryEntry('more');
+                            setIsMoreLikeThisOpen(true);
+                            if (
+                              relatedTracks.length < 18 &&
+                              hasMoreRelatedRef.current &&
+                              !isLoadingMoreRelatedRef.current
+                            ) {
+                              void loadMoreRelatedTracks();
+                            }
+                          }}
+                          style={{
+                            background: activePalette.accentGradient,
+                            color: activePalette.accentText,
+                            boxShadow: `0 3px 10px ${activePalette.accentGlow}`,
+                          }}
+                          className="px-3 py-1 rounded-xl text-[11px] font-bold hover:opacity-95 active:scale-95 transition-all cursor-pointer shrink-0 flex items-center gap-1"
+                          aria-label="Open related songs"
+                          title="More related songs"
+                        >
+                          {isLoadingRelated ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Sparkles className="w-3 h-3" />
+                          )}
+                          <span>More</span>
+                        </button>
                       </div>
                     );
                   })()}
-                </div>
-
-                {/* F. MORE LIKE THIS Section Below Progress Bar */}
-                <div className="w-full px-1 shrink-0">
-                  <div
-                    style={{
-                      backgroundColor: activePalette.subBg,
-                      borderColor: activePalette.deckBorder,
-                    }}
-                    className="flex items-center justify-between gap-2 px-3 py-1.5 rounded-2xl border"
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Sparkles
-                        className="w-3.5 h-3.5 shrink-0"
-                        style={{ color: activePalette.accent }}
-                      />
-                      <span
-                        style={{ color: activePalette.textPrimary }}
-                        className="text-[11px] sm:text-xs font-bold uppercase tracking-wider truncate"
-                      >
-                        MORE LIKE THIS
-                      </span>
-                      {isLoadingRelated && (
-                        <Loader2
-                          className="w-3 h-3 animate-spin shrink-0"
-                          style={{ color: activePalette.accent }}
-                        />
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        triggerHaptic(15);
-                        setIsMoreLikeThisOpen(true);
-                        if (
-                          relatedTracks.length < 18 &&
-                          hasMoreRelatedRef.current &&
-                          !isLoadingMoreRelatedRef.current
-                        ) {
-                          void loadMoreRelatedTracks();
-                        }
-                      }}
-                      style={{
-                        background: activePalette.accentGradient,
-                        color: activePalette.accentText,
-                        boxShadow: `0 4px 12px ${activePalette.accentGlow}`,
-                      }}
-                      className="px-4 py-1.5 rounded-xl text-xs font-bold hover:opacity-95 active:scale-95 transition-all cursor-pointer shrink-0 flex items-center gap-1.5"
-                      aria-label="Open full More Like This related songs list"
-                    >
-                      <span>More</span>
-                    </button>
-                  </div>
                 </div>
 
                 {statusNotice && (
@@ -3753,7 +4574,14 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   <MusicDiscoveryView
                     currentTrack={displayTrack}
                     isPlaying={isPlaying}
-                    onSelectTrack={(t) => handleSelectTrack({ ...t, mediaType: 'song' })}
+                    onSelectTrack={(t, contextQueue, contextLabel) => {
+                      handleSelectTrack(
+                        { ...t, mediaType: 'song' },
+                        contextQueue && contextQueue.length > 0 ? contextQueue : undefined,
+                        contextLabel
+                      );
+                      setIsListExpanded(false);
+                    }}
                     onPreCueTrack={handlePreCueTrack}
                     favoriteIds={favoriteIds}
                     onToggleFavorite={handleToggleFavorite}
@@ -3868,10 +4696,14 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                         onClick={() => {
                           showVideoViewportRef.current = true;
                           setShowVideoViewport(true);
-                          handleSelectTrack({
-                            ...video,
-                            mediaType: 'video',
-                          });
+                          handleSelectTrack(
+                            {
+                              ...video,
+                              mediaType: 'video',
+                            },
+                            videoTracks,
+                            'VIDEOS'
+                          );
                           setIsListExpanded(false);
                         }}
                         style={{
@@ -3963,57 +4795,92 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
               {/* Modal Header */}
               <div
                 style={{ borderColor: activePalette.deckBorder }}
-                className="flex items-center justify-between gap-3 pb-3 mb-2 border-b shrink-0"
+                className="flex flex-col gap-2.5 pb-2.5 mb-2 border-b shrink-0"
               >
-                <div className="min-w-0 flex-1 text-left">
-                  <div className="flex items-center gap-1.5">
-                    <Sparkles
-                      className="w-4 h-4 shrink-0"
-                      style={{ color: activePalette.accent }}
-                    />
-                    <h3
-                      style={{ color: activePalette.textPrimary }}
-                      className="text-xs sm:text-sm font-extrabold uppercase tracking-wider truncate"
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0 flex-1 text-left">
+                    <div className="flex items-center gap-1.5">
+                      <Sparkles
+                        className="w-4 h-4 shrink-0"
+                        style={{ color: activePalette.accent }}
+                      />
+                      <h3
+                        style={{ color: activePalette.textPrimary }}
+                        className="text-xs sm:text-sm font-extrabold uppercase tracking-wider truncate"
+                      >
+                        Related Songs
+                      </h3>
+                      <span
+                        style={{
+                          backgroundColor: activePalette.subBg,
+                          color: activePalette.accent,
+                          borderColor: activePalette.deckBorder,
+                        }}
+                        className="px-2 py-0.5 rounded-full border text-[10px] font-mono font-bold shrink-0"
+                      >
+                        {relatedTracks.length} songs
+                      </span>
+                    </div>
+                    <p
+                      style={{ color: activePalette.textSecondary }}
+                      className="text-[11px] truncate mt-0.5"
                     >
-                      More Like This
-                    </h3>
-                    <span
-                      style={{
-                        backgroundColor: activePalette.subBg,
-                        color: activePalette.accent,
-                        borderColor: activePalette.deckBorder,
-                      }}
-                      className="px-2 py-0.5 rounded-full border text-[10px] font-mono font-bold shrink-0"
-                    >
-                      {relatedTracks.length} songs
-                    </span>
+                      Based on <span className="font-semibold">{displayTrack.title}</span> ·{' '}
+                      {displayTrack.artist}
+                    </p>
                   </div>
-                  <p
-                    style={{ color: activePalette.textSecondary }}
-                    className="text-[11px] truncate mt-0.5"
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      triggerHaptic(15);
+                      setIsMoreLikeThisOpen(false);
+                    }}
+                    style={{
+                      backgroundColor: activePalette.subBg,
+                      color: activePalette.textPrimary,
+                      borderColor: activePalette.deckBorder,
+                    }}
+                    className="p-2 rounded-full border hover:opacity-90 active:scale-90 transition-all cursor-pointer shrink-0"
+                    aria-label="Close Related Songs panel"
+                    title="Close"
                   >
-                    Based on <span className="font-semibold">{displayTrack.title}</span> ·{' '}
-                    {displayTrack.artist}
-                  </p>
+                    <X className="w-4 h-4" />
+                  </button>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    triggerHaptic(15);
-                    setIsMoreLikeThisOpen(false);
-                  }}
-                  style={{
-                    backgroundColor: activePalette.subBg,
-                    color: activePalette.textPrimary,
-                    borderColor: activePalette.deckBorder,
-                  }}
-                  className="p-2 rounded-full border hover:opacity-90 active:scale-90 transition-all cursor-pointer shrink-0"
-                  aria-label="Close More Like This panel"
-                  title="Close"
-                >
-                  <X className="w-4 h-4" />
-                </button>
+                {/* Mood & Context Filter Chips */}
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5 w-full">
+                  {RELATED_MOOD_CHIPS.map((chip) => {
+                    const isSelected = relatedMoodFilter === chip.id;
+                    return (
+                      <button
+                        key={`related-mood-${chip.id}`}
+                        type="button"
+                        onClick={() => {
+                          triggerHaptic(15);
+                          setRelatedMoodFilter(chip.id);
+                          if (relatedScrollContainerRef.current) {
+                            relatedScrollContainerRef.current.scrollTop = 0;
+                          }
+                        }}
+                        style={{
+                          background: isSelected
+                            ? activePalette.accentGradient
+                            : activePalette.subBg,
+                          color: isSelected ? '#ffffff' : activePalette.textSecondary,
+                          borderColor: isSelected
+                            ? activePalette.accent
+                            : activePalette.deckBorder,
+                        }}
+                        className="px-2.5 py-1 rounded-xl border text-[10px] font-bold shrink-0 flex items-center gap-1 active:scale-95 transition-all cursor-pointer"
+                      >
+                        <span>{chip.emoji}</span>
+                        <span>{chip.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* Continuous Infinite-Scroll Related Songs List */}
@@ -4028,7 +4895,21 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   return (
                     <div
                       key={`expanded-related-${song.videoId}`}
-                      onClick={() => handleSelectTrack({ ...song, mediaType: 'song' })}
+                      onClick={() => {
+                        const basePool = [
+                          displayTrack,
+                          ...relatedTracks.filter((r) => r.videoId !== displayTrack.videoId),
+                        ];
+                        const nextRelatedQueue = basePool.some((r) => r.videoId === song.videoId)
+                          ? basePool
+                          : [song, ...basePool];
+                        handleSelectTrack(
+                          { ...song, mediaType: 'song' },
+                          nextRelatedQueue,
+                          'RELATED',
+                          true
+                        );
+                      }}
                       onMouseEnter={() => handlePreCueTrack(song)}
                       onTouchStart={() => handlePreCueTrack(song)}
                       style={{
@@ -4134,6 +5015,241 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     </span>
                   )}
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* LIBRARY & ACTIVE PLAYBACK QUEUE MODAL (Phase 9 Library Button) */}
+        {isMelodiesPage && isLibraryQueueOpen && (
+          <div
+            onClick={() => setIsLibraryQueueOpen(false)}
+            className="fixed inset-0 top-14 pb-[82px] z-50 flex items-center justify-center px-3 sm:px-6 py-2.5 bg-black/70 backdrop-blur-md animate-in fade-in duration-200"
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                backgroundColor: activePalette.deckBg,
+                borderColor: activePalette.deckBorder,
+                boxShadow: activePalette.shellShadow,
+              }}
+              className="w-full max-w-2xl h-full max-h-full rounded-3xl border p-3.5 sm:p-5 flex flex-col justify-between overflow-hidden backdrop-blur-xl"
+            >
+              <div
+                style={{ borderColor: activePalette.deckBorder }}
+                className="flex flex-col gap-2.5 pb-2.5 mb-2 border-b shrink-0"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <ListMusic
+                      className="w-4 h-4 shrink-0"
+                      style={{ color: activePalette.accent }}
+                    />
+                    <h3
+                      style={{ color: activePalette.textPrimary }}
+                      className="text-xs sm:text-sm font-extrabold uppercase tracking-wider truncate"
+                    >
+                      Music Library & Queue
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      triggerHaptic(15);
+                      setIsLibraryQueueOpen(false);
+                    }}
+                    style={{
+                      backgroundColor: activePalette.subBg,
+                      color: activePalette.textPrimary,
+                      borderColor: activePalette.deckBorder,
+                    }}
+                    className="p-2 rounded-full border hover:opacity-90 active:scale-90 transition-all cursor-pointer shrink-0"
+                    aria-label="Close Library & Queue"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Library Tabs: Active Queue | Favorites | Recently Played */}
+                <div className="grid grid-cols-3 gap-1.5">
+                  {(() => {
+                    const favIdSet = favoriteIds;
+                    const favCount = favIdSet.size;
+                    return (
+                      [
+                        { id: 'queue', label: `Active Queue (${getActivePlaybackQueue().length})` },
+                        { id: 'favorites', label: `Favorites (${favCount})` },
+                        { id: 'history', label: `History (${recentPlayedTracks.length})` },
+                      ] as const
+                    ).map((tab) => {
+                      const isSelected = libraryTab === tab.id;
+                      return (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          onClick={() => {
+                            triggerHaptic(15);
+                            setLibraryTab(tab.id);
+                          }}
+                          style={{
+                            background: isSelected
+                              ? activePalette.accentGradient
+                              : activePalette.subBg,
+                            color: isSelected ? '#ffffff' : activePalette.textSecondary,
+                            borderColor: isSelected
+                              ? activePalette.accent
+                              : activePalette.deckBorder,
+                          }}
+                          className="py-1.5 px-2 rounded-xl border text-[11px] font-bold truncate cursor-pointer active:scale-95 transition-all"
+                        >
+                          {tab.label}
+                        </button>
+                      );
+                    });
+                  })()}
+                </div>
+              </div>
+
+              <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-2">
+                {(() => {
+                  const activeQueue = getActivePlaybackQueue();
+                  const favTracks: YouTubeTrack[] = [];
+                  const seenFav = new Set<string>();
+                  for (const pool of [
+                    favoriteTracks,
+                    recentPlayedTracks,
+                    tracks,
+                    relatedTracks,
+                    ALL_DISCOVERY_TRACKS,
+                  ]) {
+                    for (const t of pool) {
+                      if (favoriteIds.has(t.videoId) && !seenFav.has(t.videoId)) {
+                        seenFav.add(t.videoId);
+                        favTracks.push(resolveCanonicalTrack(t));
+                      }
+                    }
+                  }
+
+                  const displayedList =
+                    libraryTab === 'queue'
+                      ? activeQueue
+                      : libraryTab === 'favorites'
+                      ? favTracks
+                      : recentPlayedTracks;
+                  const queueTag =
+                    libraryTab === 'queue'
+                      ? activeQueueLabel
+                      : libraryTab === 'favorites'
+                      ? 'FAVORITES'
+                      : 'RECENTLY PLAYED';
+
+                  if (displayedList.length === 0) {
+                    return (
+                      <div className="py-10 text-center">
+                        <p
+                          style={{ color: activePalette.textSecondary }}
+                          className="text-xs opacity-75"
+                        >
+                          {libraryTab === 'favorites'
+                            ? 'No favorite songs yet. Tap the heart icon on any song to save it here.'
+                            : libraryTab === 'history'
+                            ? 'No recently played songs yet.'
+                            : 'Active queue is empty.'}
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  return displayedList.map((song, idx) => {
+                    const isCurrent = currentTrack?.videoId === song.videoId;
+                    const isFav = favoriteIds.has(song.videoId);
+                    return (
+                      <div
+                        key={`lib-${libraryTab}-${song.videoId}-${idx}`}
+                        onClick={() => {
+                          handleSelectTrack(
+                            { ...song, mediaType: song.mediaType || 'song' },
+                            displayedList,
+                            queueTag,
+                            true
+                          );
+                        }}
+                        onMouseEnter={() => handlePreCueTrack(song)}
+                        onTouchStart={() => handlePreCueTrack(song)}
+                        style={{
+                          backgroundColor: isCurrent ? activePalette.subBg : 'transparent',
+                          borderColor: isCurrent
+                            ? activePalette.accent
+                            : activePalette.deckBorder,
+                        }}
+                        className="w-full text-left p-2 sm:px-3 sm:py-2.5 rounded-2xl border flex items-center gap-3 hover:bg-white/[0.04] active:scale-[0.99] transition-all cursor-pointer group"
+                      >
+                        <span
+                          style={{
+                            color: isCurrent
+                              ? activePalette.accent
+                              : activePalette.textSecondary,
+                          }}
+                          className="text-[10px] sm:text-[11px] font-mono tabular-nums w-6 text-right shrink-0"
+                        >
+                          {String(idx + 1).padStart(2, '0')}
+                        </span>
+
+                        <div className="relative w-10 h-10 sm:w-11 sm:h-11 aspect-square rounded-xl overflow-hidden shrink-0 bg-black/40 border border-white/10">
+                          <HighResThumbnail
+                            videoId={song.videoId}
+                            rawThumbnail={song.thumbnail}
+                            alt={song.title}
+                            aspect="square"
+                            loading="lazy"
+                          />
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <p
+                            style={{
+                              color: isCurrent
+                                ? activePalette.accent
+                                : activePalette.textPrimary,
+                            }}
+                            className="text-xs sm:text-sm font-bold truncate"
+                          >
+                            {song.title}
+                          </p>
+                          <p
+                            style={{ color: activePalette.textSecondary }}
+                            className="text-[10px] sm:text-xs truncate"
+                          >
+                            {song.artist}
+                          </p>
+                        </div>
+
+                        {song.durationText && (
+                          <span
+                            style={{ color: activePalette.textSecondary }}
+                            className="text-[10px] sm:text-xs font-mono tabular-nums shrink-0"
+                          >
+                            {song.durationText}
+                          </span>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleToggleFavorite(song);
+                          }}
+                          className="p-1.5 rounded-full text-white/70 hover:text-white shrink-0 active:scale-90 transition-transform cursor-pointer"
+                          aria-label="Favorite song"
+                        >
+                          <Heart
+                            className={`w-4 h-4 ${isFav ? 'fill-red-500 text-red-500' : ''}`}
+                          />
+                        </button>
+                      </div>
+                    );
+                  });
+                })()}
               </div>
             </div>
           </div>

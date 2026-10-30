@@ -579,10 +579,19 @@ export default function App() {
     }
 
     const handlePopState = (event: PopStateEvent) => {
+      // 1. If the Music Player has an active open sub-view (More/Related Songs, Library/Queue, Equalizer, etc.),
+      // consume the back press to close that sub-view and stay on the Music Player view.
+      const consumeMusicBack = (window as any).__kashishConsumeMusicPlayerBack;
+      if (typeof consumeMusicBack === 'function' && consumeMusicBack() === true) {
+        window.history.pushState({ tab: 'melodies', isUnlocked: true }, '', '#melodies');
+        return;
+      }
 
       // 2. Identify destination tab from history state or URL hash
       const rawHash = window.location.hash.replace('#', '');
-      const targetTab: NavTab = event.state?.tab || (rawHash ? (rawHash as NavTab) : 'home');
+      const targetTab: NavTab =
+        event.state?.tab ||
+        (event.state?.kashishMusicSubView ? 'melodies' : rawHash ? (rawHash as NavTab) : 'home');
 
       // 3. Switch to target tab (e.g. Home) without pushing extra duplicate history
       handleTabSelectRef.current(targetTab, false);

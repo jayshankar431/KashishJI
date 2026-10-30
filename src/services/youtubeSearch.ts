@@ -874,26 +874,41 @@ export async function refreshSearchInBackground(
   };
 }
 
+const verifiedPlayableIdMap = new Map<string, string>();
+
+export function getKnownPlayableVideoId(videoId: string): string {
+  return verifiedPlayableIdMap.get(videoId) || videoId;
+}
+
+export function rememberPlayableAlternative(originalVideoId: string, workingVideoId: string): void {
+  if (originalVideoId && workingVideoId) {
+    verifiedPlayableIdMap.set(originalVideoId, workingVideoId);
+  }
+}
+
 /**
  * Finds an embeddable YouTube video or song alternative if the primary track has
  * third-party embedding disabled by the uploader (YouTube Error 101 / 150 / 152).
- * Prioritizes standard YouTube videos first because Topic Art Tracks frequently block embeds.
+ * Prioritizes standard YouTube videos and lyrical/audio uploads because Topic Art Tracks frequently block embeds.
  */
 export async function findEmbeddableAlternative(
   track: YouTubeTrack,
-  triedVideoIds: Set<string>
+  triedVideoIds: Set<string>,
+  signal?: AbortSignal
 ): Promise<YouTubeTrack | null> {
   try {
-    const cleanTitle = track.title
-      .replace(/\(official.*?\)/gi, '')
-      .replace(/\[official.*?\]/gi, '')
-      .replace(/official video|full video|music video/gi, '')
+    const cleanTitle = (track.title || '')
+      .replace(/\(.*?\)|\[.*?\]/g, '')
+      .replace(/official\s*(music\s*)?video|full\s*video|music\s*video|lyric\s*video/gi, '')
       .trim();
-    const cleanArtist = track.artist.replace(/ - Topic$/i, '').trim();
-    const altQuery = `${cleanTitle} ${cleanArtist}`.trim();
+    const primaryArtist = (track.artist || '')
+      .replace(/ - Topic$/i, '')
+      .split(/[,&·|/]/)[0]
+      .trim();
+    const altQuery = `${cleanTitle || track.title} ${primaryArtist}`.trim();
     const [videosRes, songsRes] = await Promise.allSettled([
-      searchYouTubeVideos(altQuery),
-      searchYouTubeSongs(altQuery),
+      searchYouTubeVideos(altQuery, signal),
+      searchYouTubeSongs(`${altQuery} song`, signal),
     ]);
     const candidates: YouTubeTrack[] = [];
     if (videosRes.status === 'fulfilled') candidates.push(...videosRes.value);
@@ -906,11 +921,11 @@ export async function findEmbeddableAlternative(
         .split(/\s+/)
         .filter((w) => w.length >= 2);
 
-    const targetWords = normalizeWords(cleanTitle);
+    const targetWords = normalizeWords(cleanTitle || track.title);
 
     // 1. Prefer candidates whose title contains the key words of the requested track
     for (const candidate of candidates) {
-      if (triedVideoIds.has(candidate.videoId)) continue;
+      if (!candidate.videoId || triedVideoIds.has(candidate.videoId)) continue;
       const candTitleLower = candidate.title.toLowerCase();
       if (
         targetWords.length === 0 ||
@@ -918,6 +933,7 @@ export async function findEmbeddableAlternative(
         (targetWords.length >= 2 &&
           targetWords.slice(0, 2).every((w) => candTitleLower.includes(w)))
       ) {
+        rememberPlayableAlternative(track.videoId, candidate.videoId);
         return candidate;
       }
     }
@@ -927,11 +943,21 @@ export async function findEmbeddableAlternative(
       const primaryWord = targetWords[0];
       for (const candidate of candidates) {
         if (
+          candidate.videoId &&
           !triedVideoIds.has(candidate.videoId) &&
           candidate.title.toLowerCase().includes(primaryWord)
         ) {
+          rememberPlayableAlternative(track.videoId, candidate.videoId);
           return candidate;
         }
+      }
+    }
+
+    // 3. Final fallback: first untried candidate from the specific title+artist query
+    for (const candidate of candidates) {
+      if (candidate.videoId && !triedVideoIds.has(candidate.videoId)) {
+        rememberPlayableAlternative(track.videoId, candidate.videoId);
+        return candidate;
       }
     }
   } catch {
@@ -939,6 +965,83 @@ export async function findEmbeddableAlternative(
   }
   return null;
 }
+
+/**
+ * Proactively verifies whether `track.videoId` is embeddable and warms up its stream/artwork
+ * in the background so `Next` starts with near-zero delay.
+ */
+export async function preloadNextTrackResources(
+  track: YouTubeTrack,
+  isHighQuality: boolean,
+  signal?: AbortSignal
+): Promise<string> {
+  if (!track?.videoId) return '';
+
+  const knownId = verifiedPlayableIdMap.get(track.videoId);
+  if (knownId) return knownId;
+
+  // 1. Pre-warm thumbnail artwork according to Quality / Data Saver mode
+  if (typeof window !== 'undefined' && typeof Image !== 'undefined') {
+    const img = new Image();
+    img.src = isHighQuality
+      ? normalizeSquareThumbnail(track.thumbnail, track.videoId)
+      : `https://i.ytimg.com/vi/${track.videoId}/mqdefault.jpg`;
+  }
+
+  // 2. Verify oEmbed availability; if 401/403/404, resolve an embeddable alternative ahead of time
+  let playableId = track.videoId;
+  try {
+    const oembedRes = await fetchWithTimeout(
+      `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${encodeURIComponent(
+        track.videoId
+      )}&format=json`,
+      signal,
+      2800
+    );
+    if (oembedRes.ok) {
+      verifiedPlayableIdMap.set(track.videoId, track.videoId);
+    } else if (oembedRes.status === 401 || oembedRes.status === 403 || oembedRes.status === 404) {
+      const alt = await findEmbeddableAlternative(track, new Set([track.videoId]), signal);
+      if (alt?.videoId) {
+        playableId = alt.videoId;
+        verifiedPlayableIdMap.set(track.videoId, playableId);
+      }
+    }
+  } catch {
+    // Network/abort — keep original ID
+  }
+
+  if (signal?.aborted) return playableId;
+
+  // 3. Warm server/native audio stream resolver & pre-buffer initial ~30s audio chunk (~480KB) when available
+  try {
+    const isStaticHost =
+      typeof window !== 'undefined' &&
+      (window.location.hostname.endsWith('.web.app') ||
+        window.location.hostname.endsWith('.firebaseapp.com'));
+
+    if (!isStaticHost) {
+      const infoRes = await fetchWithTimeout(
+        `/api/ytmusic/stream-info?videoId=${encodeURIComponent(playableId)}`,
+        signal,
+        3200
+      );
+      if (infoRes.ok && !signal?.aborted) {
+        // Pre-buffer ~30 seconds of audio (~480KB at 128kbps; or ~192KB in Data Saver mode) into browser HTTP cache
+        const preloadBytes = isHighQuality ? 491520 : 196608;
+        void fetch(`/api/ytmusic/stream?videoId=${encodeURIComponent(playableId)}`, {
+          headers: { Range: `bytes=0-${preloadBytes}` },
+          signal,
+        }).catch(() => {});
+      }
+    }
+  } catch {
+    // Ignore stream pre-buffer errors
+  }
+
+  return playableId;
+}
+
 
 const POPULAR_MUSIC_SUGGESTIONS: string[] = [
   'Tum Hi Ho Arijit Singh',
