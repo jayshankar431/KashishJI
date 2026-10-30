@@ -53,15 +53,51 @@ class FirestoreOverlayBackgroundService : Service() {
         private const val KEY_SEEN_NOTIFS = "seen_notif_ids"
         private const val FIREBASE_PROJECT_ID = "kashishji"
         const val ACTION_SILENT_HEARTBEAT = "com.kashish.world.ACTION_SILENT_HEARTBEAT"
+        const val ACTION_PROMOTE_MUSIC_FOREGROUND = "com.kashish.world.ACTION_PROMOTE_MUSIC_FOREGROUND"
+        const val ACTION_DEMOTE_MUSIC_FOREGROUND = "com.kashish.world.ACTION_DEMOTE_MUSIC_FOREGROUND"
 
         @Volatile
         var isRunning: Boolean = false
             private set
 
         @Volatile
+        private var activeServiceInstance: FirestoreOverlayBackgroundService? = null
+
+        @Volatile
+        private var pendingMusicNotification: android.app.Notification? = null
+
+        @Volatile
         private var sharedScheduler: ScheduledExecutorService? = null
 
         private val mainHandler = Handler(Looper.getMainLooper())
+
+        fun promoteForMusicNotification(context: Context, notification: android.app.Notification) {
+            pendingMusicNotification = notification
+            val svc = activeServiceInstance
+            if (svc != null) {
+                svc.applyMusicForegroundNotification(notification)
+                return
+            }
+            try {
+                val appCtx = context.applicationContext
+                val intent = Intent(appCtx, FirestoreOverlayBackgroundService::class.java).apply {
+                    action = ACTION_PROMOTE_MUSIC_FOREGROUND
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    appCtx.startForegroundService(intent)
+                } else {
+                    appCtx.startService(intent)
+                }
+            } catch (_: Exception) {}
+        }
+
+        fun demoteMusicNotification(context: Context) {
+            pendingMusicNotification = null
+            val svc = activeServiceInstance
+            if (svc != null) {
+                svc.clearMusicForegroundNotification()
+            }
+        }
 
         fun clearLegacyPermanentNotification(context: Context) {
             try {
@@ -704,17 +740,52 @@ class FirestoreOverlayBackgroundService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    fun applyMusicForegroundNotification(notification: android.app.Notification) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    CallAndOverlayHelper.MUSIC_NOTIFICATION_ID,
+                    notification,
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                )
+            } else {
+                startForeground(CallAndOverlayHelper.MUSIC_NOTIFICATION_ID, notification)
+            }
+        } catch (_: Exception) {}
+    }
+
+    fun clearMusicForegroundNotification() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
+        } catch (_: Exception) {}
+    }
+
     override fun onCreate() {
         super.onCreate()
+        activeServiceInstance = this
         clearLegacyPermanentNotification(applicationContext)
         ensureWatcherRunning(applicationContext)
         scheduleSilentHeartbeatAlarm(applicationContext)
+        pendingMusicNotification?.let { applyMusicForegroundNotification(it) }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        activeServiceInstance = this
         clearLegacyPermanentNotification(applicationContext)
         ensureWatcherRunning(applicationContext)
         scheduleSilentHeartbeatAlarm(applicationContext)
+        if (intent?.action == ACTION_PROMOTE_MUSIC_FOREGROUND) {
+            pendingMusicNotification?.let { applyMusicForegroundNotification(it) }
+        } else if (intent?.action == ACTION_DEMOTE_MUSIC_FOREGROUND) {
+            clearMusicForegroundNotification()
+        } else {
+            pendingMusicNotification?.let { applyMusicForegroundNotification(it) }
+        }
         return START_STICKY
     }
 
@@ -726,6 +797,9 @@ class FirestoreOverlayBackgroundService : Service() {
     }
 
     override fun onDestroy() {
+        if (activeServiceInstance === this) {
+            activeServiceInstance = null
+        }
         scheduleSilentHeartbeatAlarm(applicationContext)
         super.onDestroy()
     }

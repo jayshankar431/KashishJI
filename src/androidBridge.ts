@@ -59,7 +59,16 @@ export interface AndroidAppBridge {
     thumbnailUrl: string,
     isPlaying: boolean
   ) => void;
+  updateMusicNotificationWithPosition?: (
+    title: string,
+    artist: string,
+    thumbnailUrl: string,
+    isPlaying: boolean,
+    positionSec: number,
+    durationSec: number
+  ) => void;
   dismissMusicNotification?: () => void;
+  resolveYouTubeAudioStream?: (videoId: string) => string;
   searchYouTubeMusic?: (query: string) => string;
   fetchCloudinaryFolder?: (
     cloudName: string,

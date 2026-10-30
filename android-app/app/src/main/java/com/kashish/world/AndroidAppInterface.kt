@@ -364,6 +364,16 @@ class AndroidAppInterface(private val context: Context) {
     }
 
     @JavascriptInterface
+    fun requestAudioFocus() {
+        CallAndOverlayHelper.requestAudioFocus(context)
+    }
+
+    @JavascriptInterface
+    fun abandonAudioFocus() {
+        CallAndOverlayHelper.abandonAudioFocus(context)
+    }
+
+    @JavascriptInterface
     fun updateMusicNotification(title: String, artist: String, thumbnailUrl: String, isPlaying: Boolean) {
         CallAndOverlayHelper.updateMusicNotification(
             context = context,
@@ -375,8 +385,122 @@ class AndroidAppInterface(private val context: Context) {
     }
 
     @JavascriptInterface
+    fun updateMusicNotificationWithPosition(
+        title: String,
+        artist: String,
+        thumbnailUrl: String,
+        isPlaying: Boolean,
+        positionSec: Long,
+        durationSec: Long
+    ) {
+        CallAndOverlayHelper.updateMusicNotification(
+            context = context,
+            title = title,
+            artist = artist,
+            thumbnailUrl = thumbnailUrl,
+            isPlaying = isPlaying,
+            positionSec = positionSec,
+            durationSec = durationSec
+        )
+    }
+
+    @JavascriptInterface
     fun dismissMusicNotification() {
         CallAndOverlayHelper.dismissMusicNotification(context)
+    }
+
+    @JavascriptInterface
+    fun resolveYouTubeAudioStream(videoId: String): String {
+        val cleanId = videoId.trim()
+        if (cleanId.isEmpty()) return "{}"
+        var conn: java.net.HttpURLConnection? = null
+        return try {
+            val url = java.net.URL("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
+            conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 6000
+                readTimeout = 6000
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty(
+                    "User-Agent",
+                    "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 14; en_US; Quest 3; Build/UP1A.231005.007.A1; Cronet/132.0.6808.3)"
+                )
+                setRequestProperty("X-Goog-Api-Format-Version", "2")
+            }
+            val payload = JSONObject().apply {
+                put(
+                    "context",
+                    JSONObject().apply {
+                        put(
+                            "client",
+                            JSONObject().apply {
+                                put("clientName", "ANDROID_VR")
+                                put("clientVersion", "1.60.19")
+                                put("androidSdkVersion", 34)
+                                put("osName", "Android")
+                                put("osVersion", "14")
+                                put("hl", "en")
+                                put("gl", "IN")
+                            }
+                        )
+                    }
+                )
+                put("videoId", cleanId)
+                put("contentCheckOk", true)
+                put("racyCheckOk", true)
+            }
+            java.io.OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { writer ->
+                writer.write(payload.toString())
+                writer.flush()
+            }
+            if (conn.responseCode in 200..299) {
+                val raw = java.io.BufferedReader(java.io.InputStreamReader(conn.inputStream, Charsets.UTF_8)).use {
+                    it.readText()
+                }
+                val data = JSONObject(raw)
+                val streamingData = data.optJSONObject("streamingData")
+                val adaptive = streamingData?.optJSONArray("adaptiveFormats")
+                var bestUrl = ""
+                var bestMime = ""
+                var bestBitrate = -1
+                var bestIsMp4 = false
+                if (adaptive != null) {
+                    for (i in 0 until adaptive.length()) {
+                        val fmt = adaptive.optJSONObject(i) ?: continue
+                        val mime = fmt.optString("mimeType", "")
+                        val streamUrl = fmt.optString("url", "")
+                        if (!mime.startsWith("audio/") || !streamUrl.startsWith("http")) continue
+                        val isMp4 = mime.contains("audio/mp4")
+                        val bitrate = fmt.optInt("bitrate", 0)
+                        if (bestUrl.isEmpty() || (isMp4 && !bestIsMp4) || (isMp4 == bestIsMp4 && bitrate > bestBitrate)) {
+                            bestUrl = streamUrl
+                            bestMime = mime.substringBefore(";").trim()
+                            bestBitrate = bitrate
+                            bestIsMp4 = isMp4
+                        }
+                    }
+                }
+                if (bestUrl.isNotEmpty()) {
+                    JSONObject().apply {
+                        put("videoId", cleanId)
+                        put("url", bestUrl)
+                        put("mimeType", bestMime)
+                        put("bitrate", bestBitrate)
+                    }.toString()
+                } else {
+                    "{}"
+                }
+            } else {
+                "{}"
+            }
+        } catch (_: Exception) {
+            "{}"
+        } finally {
+            try {
+                conn?.disconnect()
+            } catch (_: Exception) {}
+        }
     }
 
     @JavascriptInterface

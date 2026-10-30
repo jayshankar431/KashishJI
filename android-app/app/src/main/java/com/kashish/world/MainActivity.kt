@@ -38,19 +38,15 @@ import java.util.Locale
  */
 class KeepAliveWebView(context: Context) : WebView(context) {
     override fun onWindowVisibilityChanged(visibility: Int) {
-        if (visibility != View.VISIBLE) {
-            super.onWindowVisibilityChanged(View.VISIBLE)
-        } else {
-            super.onWindowVisibilityChanged(visibility)
-        }
+        super.onWindowVisibilityChanged(View.VISIBLE)
     }
 
     override fun onVisibilityChanged(changedView: View, visibility: Int) {
-        if (visibility != View.VISIBLE) {
-            super.onVisibilityChanged(changedView, View.VISIBLE)
-        } else {
-            super.onVisibilityChanged(changedView, visibility)
-        }
+        super.onVisibilityChanged(changedView, View.VISIBLE)
+    }
+
+    override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+        super.onWindowFocusChanged(true)
     }
 }
 
@@ -131,13 +127,20 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
-        // Keep WebView timers and media session active if music is playing in background
-        if (CallAndOverlayHelper.isMusicSessionActive) {
-            try {
-                webView.onResume()
-                webView.resumeTimers()
-            } catch (_: Exception) {}
-        }
+        // Always keep WebView audio pipeline and timers active when minimizing the app
+        try {
+            webView.onResume()
+            webView.resumeTimers()
+        } catch (_: Exception) {}
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Prevent Chromium from suspending HTML5 <audio> or YouTube iframe when Activity enters stopped state
+        try {
+            webView.onResume()
+            webView.resumeTimers()
+        } catch (_: Exception) {}
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -212,8 +215,14 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
+            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                super.onPageStarted(view, url, favicon)
+                injectBackgroundAudioKeepAlive(view)
+            }
+
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
+                injectBackgroundAudioKeepAlive(view)
                 syncPermissionsIntoWebView()
                 handleIncomingSectionIntent(intent)
                 try {
@@ -266,6 +275,26 @@ class MainActivity : AppCompatActivity() {
                 return true
             }
         }
+    }
+
+    private fun injectBackgroundAudioKeepAlive(targetView: WebView? = webView) {
+        try {
+            val js = """
+                (function() {
+                  if (window.__kashishBgKeepAliveInjected) return;
+                  window.__kashishBgKeepAliveInjected = true;
+                  try {
+                    Object.defineProperty(document, 'hidden', { configurable: true, get: function() { return false; } });
+                    Object.defineProperty(document, 'visibilityState', { configurable: true, get: function() { return 'visible'; } });
+                    Object.defineProperty(document, 'webkitHidden', { configurable: true, get: function() { return false; } });
+                    document.addEventListener('visibilitychange', function(e) {
+                      e.stopImmediatePropagation();
+                    }, true);
+                  } catch(e) {}
+                })();
+            """.trimIndent()
+            targetView?.evaluateJavascript(js, null)
+        } catch (_: Exception) {}
     }
 
     private fun syncPermissionsIntoWebView() {

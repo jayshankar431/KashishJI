@@ -6,7 +6,9 @@ export interface YouTubeTrack {
   thumbnail: string;
   durationText: string;
   durationSeconds?: number;
-  catalogSource?: 'youtube_music';
+  viewsText?: string;
+  mediaType?: 'song' | 'video';
+  catalogSource?: 'youtube_music' | 'youtube_video';
 }
 
 interface CachedSearchItem {
@@ -15,8 +17,11 @@ interface CachedSearchItem {
 }
 
 const memoryCache = new Map<string, CachedSearchItem>();
+const videoMemoryCache = new Map<string, CachedSearchItem>();
 const inFlightSearches = new Map<string, Promise<YouTubeTrack[]>>();
+const inFlightVideoSearches = new Map<string, Promise<YouTubeTrack[]>>();
 const SESSION_CACHE_KEY = 'kashish_ytmusic_catalog_cache_v5';
+const SESSION_VIDEO_CACHE_KEY = 'kashish_ytvideo_catalog_cache_v1';
 export const SEARCH_CACHE_STALE_MS = 5 * 60 * 1000; // 5 minutes Stale-While-Revalidate threshold
 
 export function normalizeSquareThumbnail(rawUrl: string | undefined, videoId: string): string {
@@ -36,6 +41,18 @@ try {
       Object.entries(parsed).forEach(([k, v]) => {
         if (v && Array.isArray(v.tracks) && v.tracks.length > 0) {
           memoryCache.set(k, {
+            tracks: v.tracks,
+            cachedAt: typeof v.cachedAt === 'number' ? v.cachedAt : Date.now(),
+          });
+        }
+      });
+    }
+    const rawVid = window.sessionStorage.getItem(SESSION_VIDEO_CACHE_KEY);
+    if (rawVid) {
+      const parsedVid = JSON.parse(rawVid) as Record<string, CachedSearchItem>;
+      Object.entries(parsedVid).forEach(([k, v]) => {
+        if (v && Array.isArray(v.tracks) && v.tracks.length > 0) {
+          videoMemoryCache.set(k, {
             tracks: v.tracks,
             cachedAt: typeof v.cachedAt === 'number' ? v.cachedAt : Date.now(),
           });
@@ -68,12 +85,48 @@ function saveToCache(key: string, results: YouTubeTrack[]) {
   }
 }
 
+function saveToVideoCache(key: string, results: YouTubeTrack[]) {
+  if (!results.length) return;
+  const entry: CachedSearchItem = {
+    tracks: results,
+    cachedAt: Date.now(),
+  };
+  videoMemoryCache.set(key, entry);
+  try {
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      const obj: Record<string, CachedSearchItem> = {};
+      const entries = Array.from(videoMemoryCache.entries()).slice(-30);
+      for (const [k, v] of entries) {
+        obj[k] = v;
+      }
+      window.sessionStorage.setItem(SESSION_VIDEO_CACHE_KEY, JSON.stringify(obj));
+    }
+  } catch {
+    // Ignore quota errors
+  }
+}
+
 export function getCachedSearchEntry(
   rawQuery: string
 ): { tracks: YouTubeTrack[]; isStale: boolean; cachedAt: number } | null {
   const normalized = rawQuery.trim().toLowerCase();
   if (!normalized) return null;
   const entry = memoryCache.get(normalized);
+  if (!entry || entry.tracks.length === 0) return null;
+  const isStale = Date.now() - entry.cachedAt > SEARCH_CACHE_STALE_MS;
+  return {
+    tracks: entry.tracks,
+    isStale,
+    cachedAt: entry.cachedAt,
+  };
+}
+
+export function getCachedVideoSearchEntry(
+  rawQuery: string
+): { tracks: YouTubeTrack[]; isStale: boolean; cachedAt: number } | null {
+  const normalized = rawQuery.trim().toLowerCase();
+  if (!normalized) return null;
+  const entry = videoMemoryCache.get(normalized);
   if (!entry || entry.tracks.length === 0) return null;
   const isStale = Date.now() - entry.cachedAt > SEARCH_CACHE_STALE_MS;
   return {
@@ -143,6 +196,7 @@ export function saveUserLastPlayedTrack(
 export interface PersistedLastSearch {
   query: string;
   results: YouTubeTrack[];
+  videoResults?: YouTubeTrack[];
   timestamp: number;
 }
 
@@ -164,6 +218,13 @@ export function loadUserLastSearch(userId?: string | null): PersistedLastSearch 
           ...t,
           thumbnail: normalizeSquareThumbnail(t.thumbnail, t.videoId),
         })),
+        videoResults: Array.isArray(parsed.videoResults)
+          ? parsed.videoResults.map((t) => ({
+              ...t,
+              mediaType: 'video',
+              thumbnail: t.thumbnail || `https://i.ytimg.com/vi/${t.videoId}/mqdefault.jpg`,
+            }))
+          : [],
       };
     }
   } catch {}
@@ -173,19 +234,33 @@ export function loadUserLastSearch(userId?: string | null): PersistedLastSearch 
 export function saveUserLastSearch(
   userId: string | null | undefined,
   query: string,
-  results: YouTubeTrack[]
+  results: YouTubeTrack[],
+  videoResults?: YouTubeTrack[]
 ): void {
   try {
     if (typeof window === 'undefined' || !window.localStorage) return;
     const trimmed = query.trim();
     if (!trimmed) return;
+    const existing = loadUserLastSearch(userId);
+    const effectiveVideos =
+      videoResults !== undefined
+        ? videoResults
+        : existing && existing.query.toLowerCase() === trimmed.toLowerCase()
+          ? existing.videoResults || []
+          : [];
     const payload: PersistedLastSearch = {
       query: trimmed,
       results,
+      videoResults: effectiveVideos,
       timestamp: Date.now(),
     };
     window.localStorage.setItem(getLastSearchStorageKey(userId), JSON.stringify(payload));
-    saveToCache(trimmed.toLowerCase(), results);
+    if (results.length > 0) {
+      saveToCache(trimmed.toLowerCase(), results);
+    }
+    if (effectiveVideos.length > 0) {
+      saveToVideoCache(trimmed.toLowerCase(), effectiveVideos);
+    }
   } catch {}
 }
 
@@ -288,7 +363,7 @@ async function searchViaBackendYTMusicApi(
   refresh = false,
   signal?: AbortSignal
 ): Promise<YouTubeTrack[]> {
-  const endpoint = `/api/ytmusic/search?q=${encodeURIComponent(query)}${refresh ? '&refresh=1' : ''}`;
+  const endpoint = `/api/ytmusic/search?q=${encodeURIComponent(query)}&type=songs${refresh ? '&refresh=1' : ''}`;
   const res = await fetchWithTimeout(endpoint, signal, 4500);
   if (!res.ok) {
     let errDetail = `HTTP ${res.status}`;
@@ -304,6 +379,41 @@ async function searchViaBackendYTMusicApi(
     throw new Error(`No YouTube Music catalog tracks returned for "${query}"`);
   }
   return tracks;
+}
+
+/**
+ * Primary YouTube Videos search via backend `/api/ytmusic/search?type=videos`
+ * (combines YouTube Music Videos + standard YouTube WEB video search).
+ */
+async function searchVideosViaBackendApi(
+  query: string,
+  refresh = false,
+  signal?: AbortSignal
+): Promise<YouTubeTrack[]> {
+  const endpoint = `/api/ytmusic/search?q=${encodeURIComponent(query)}&type=videos${refresh ? '&refresh=1' : ''}`;
+  const res = await fetchWithTimeout(endpoint, signal, 5000);
+  if (!res.ok) {
+    let errDetail = `HTTP ${res.status}`;
+    try {
+      const errBody = await res.json();
+      if (errBody?.error) errDetail = errBody.error;
+    } catch {}
+    throw new Error(`video search backend error: ${errDetail}`);
+  }
+  const data = await res.json();
+  const videos: YouTubeTrack[] = Array.isArray(data?.videos)
+    ? data.videos
+    : Array.isArray(data?.tracks)
+      ? data.tracks
+      : [];
+  if (videos.length === 0) {
+    throw new Error(`No YouTube videos returned for "${query}"`);
+  }
+  return videos.map((v) => ({
+    ...v,
+    mediaType: 'video',
+    thumbnail: `https://i.ytimg.com/vi/${v.videoId}/mqdefault.jpg`,
+  }));
 }
 
 /**
@@ -339,6 +449,7 @@ async function searchViaPipedMusicSongsOnly(
       thumbnail: normalizeSquareThumbnail(item.thumbnail, videoId),
       durationText: formatDuration(durSec),
       durationSeconds: durSec,
+      mediaType: 'song',
       catalogSource: 'youtube_music',
     });
   }
@@ -368,6 +479,7 @@ async function searchViaPipedMusicSongsOnly(
             thumbnail: normalizeSquareThumbnail(item.thumbnail, videoId),
             durationText: formatDuration(durSec),
             durationSeconds: durSec,
+            mediaType: 'song',
             catalogSource: 'youtube_music',
           });
         }
@@ -383,29 +495,98 @@ async function searchViaPipedMusicSongsOnly(
   return tracks;
 }
 
-async function resolveDirectVideoId(videoId: string, signal?: AbortSignal): Promise<YouTubeTrack> {
+/**
+ * Secondary Piped video search (`filter=videos` + `filter=music_videos`) for standalone APK/WebViews.
+ */
+async function searchViaPipedVideos(
+  baseUrl: string,
+  query: string,
+  signal?: AbortSignal
+): Promise<YouTubeTrack[]> {
+  const [musicVideosOutcome, generalVideosOutcome] = await Promise.allSettled([
+    fetchWithTimeout(`${baseUrl}/search?q=${encodeURIComponent(query)}&filter=music_videos`, signal, 4200).then(
+      (r) => (r.ok ? r.json() : null)
+    ),
+    fetchWithTimeout(`${baseUrl}/search?q=${encodeURIComponent(query)}&filter=videos`, signal, 4200).then(
+      (r) => (r.ok ? r.json() : null)
+    ),
+  ]);
+
+  const combinedItems: any[] = [];
+  if (musicVideosOutcome.status === 'fulfilled' && Array.isArray(musicVideosOutcome.value?.items)) {
+    combinedItems.push(...musicVideosOutcome.value.items);
+  }
+  if (generalVideosOutcome.status === 'fulfilled' && Array.isArray(generalVideosOutcome.value?.items)) {
+    combinedItems.push(...generalVideosOutcome.value.items);
+  }
+
+  const videos: YouTubeTrack[] = [];
+  const seen = new Set<string>();
+
+  for (const item of combinedItems) {
+    const rawUrl: string = item?.url || '';
+    const idMatch =
+      rawUrl.match(/[?&]v=([a-zA-Z0-9_-]{11})/) || rawUrl.match(/\/([a-zA-Z0-9_-]{11})$/);
+    const videoId = item?.id || (idMatch ? idMatch[1] : '');
+    if (!videoId || seen.has(videoId)) continue;
+    seen.add(videoId);
+
+    const durSec = typeof item.duration === 'number' ? item.duration : 0;
+    const views =
+      typeof item.views === 'number' && item.views > 0
+        ? item.views >= 1_000_000
+          ? `${(item.views / 1_000_000).toFixed(1)}M views`
+          : item.views >= 1_000
+            ? `${Math.round(item.views / 1_000)}K views`
+            : `${item.views} views`
+        : undefined;
+
+    videos.push({
+      videoId,
+      title: item.title || 'Untitled Video',
+      artist: item.uploaderName?.replace(/ - Topic$/i, '') || 'YouTube Video',
+      thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+      durationText: formatDuration(durSec),
+      durationSeconds: durSec,
+      viewsText: views,
+      mediaType: 'video',
+      catalogSource: 'youtube_video',
+    });
+  }
+
+  if (videos.length === 0) {
+    throw new Error(`No YouTube videos found on ${baseUrl}`);
+  }
+  return videos;
+}
+
+async function resolveDirectVideoId(
+  videoId: string,
+  signal?: AbortSignal,
+  mediaType: 'song' | 'video' = 'song'
+): Promise<YouTubeTrack> {
   const res = await fetchWithTimeout(
     `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`,
     signal,
     3000
   );
   if (!res.ok) {
-    throw new Error(`Invalid or unembeddable YouTube Music track ID (${videoId}): HTTP ${res.status}`);
+    throw new Error(`Invalid or unembeddable YouTube track ID (${videoId}): HTTP ${res.status}`);
   }
   const info = await res.json();
   return {
     videoId,
     title: info?.title || `Track ${videoId}`,
-    artist: info?.author_name?.replace(/ - Topic$/i, '') || 'YouTube Music Artist',
+    artist: info?.author_name?.replace(/ - Topic$/i, '') || 'YouTube Artist',
     thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
     durationText: 'Direct',
-    catalogSource: 'youtube_music',
+    mediaType,
+    catalogSource: mediaType === 'video' ? 'youtube_video' : 'youtube_music',
   };
 }
 
 /**
  * Searches the genuine YouTube Music Song Catalog (`WEB_REMIX` InnerTube / `filter=music_songs`).
- * Never silently reverts to generic YouTube video search.
  */
 export async function searchYouTubeSongs(
   rawQuery: string,
@@ -418,7 +599,7 @@ export async function searchYouTubeSongs(
   // 1. Direct YouTube Music / YouTube video ID or URL
   const directId = extractYouTubeId(query);
   if (directId) {
-    const track = await resolveDirectVideoId(directId, signal);
+    const track = await resolveDirectVideoId(directId, signal, 'song');
     return [track];
   }
 
@@ -462,6 +643,7 @@ export async function searchYouTubeSongs(
         }
         return parsed.map((t: any) => ({
           ...t,
+          mediaType: 'song' as const,
           thumbnail: normalizeSquareThumbnail(t.thumbnail, t.videoId),
         }));
       };
@@ -490,6 +672,7 @@ export async function searchYouTubeSongs(
 
       const winner = (await Promise.any(catalogProviders)).map((t) => ({
         ...t,
+        mediaType: 'song' as const,
         thumbnail: normalizeSquareThumbnail(t.thumbnail, t.videoId),
       }));
       raceController.abort();
@@ -516,18 +699,116 @@ export async function searchYouTubeSongs(
 }
 
 /**
- * Revalidates a stale cached search query in the background without blocking UI.
+ * Searches YouTube Music Videos AND general YouTube Videos so any song that is missing
+ * from the YouTube Music audio catalog still appears in the Videos section.
  */
-export async function refreshSearchInBackground(rawQuery: string): Promise<YouTubeTrack[] | null> {
-  try {
-    return await searchYouTubeSongs(rawQuery, undefined, { bypassCache: true });
-  } catch {
-    return null;
+export async function searchYouTubeVideos(
+  rawQuery: string,
+  signal?: AbortSignal,
+  options?: { bypassCache?: boolean }
+): Promise<YouTubeTrack[]> {
+  const query = rawQuery.trim();
+  if (!query) return [];
+
+  const directId = extractYouTubeId(query);
+  if (directId) {
+    const track = await resolveDirectVideoId(directId, signal, 'video');
+    return [track];
   }
+
+  const normalizedKey = query.toLowerCase();
+
+  if (!options?.bypassCache) {
+    const cached = videoMemoryCache.get(normalizedKey);
+    if (cached && cached.tracks.length > 0) {
+      return cached.tracks;
+    }
+  }
+
+  const existingInFlight = inFlightVideoSearches.get(normalizedKey);
+  if (existingInFlight && !signal?.aborted && !options?.bypassCache) {
+    return existingInFlight;
+  }
+
+  const raceController = new AbortController();
+  const onAbort = () => raceController.abort();
+  if (signal) {
+    if (signal.aborted) {
+      raceController.abort();
+      throw new DOMException('Aborted', 'AbortError');
+    }
+    signal.addEventListener('abort', onAbort, { once: true });
+  }
+
+  const videoSearchPromise = (async () => {
+    try {
+      const delayedPipedVideoFallback = (baseUrl: string) =>
+        new Promise<YouTubeTrack[]>((resolve, reject) => {
+          const timer = globalThis.setTimeout(() => {
+            searchViaPipedVideos(baseUrl, query, raceController.signal).then(resolve, reject);
+          }, 900);
+          raceController.signal.addEventListener(
+            'abort',
+            () => {
+              globalThis.clearTimeout(timer);
+              reject(new DOMException('Aborted', 'AbortError'));
+            },
+            { once: true }
+          );
+        });
+
+      const videoProviders: Promise<YouTubeTrack[]>[] = [
+        searchVideosViaBackendApi(query, Boolean(options?.bypassCache), raceController.signal),
+        delayedPipedVideoFallback('https://pipedapi.ducks.party'),
+        delayedPipedVideoFallback('https://api.piped.private.coffee'),
+      ];
+
+      const winner = (await Promise.any(videoProviders)).map((t) => ({
+        ...t,
+        mediaType: 'video' as const,
+        thumbnail: `https://i.ytimg.com/vi/${t.videoId}/mqdefault.jpg`,
+      }));
+      raceController.abort();
+      saveToVideoCache(normalizedKey, winner);
+      return winner;
+    } catch (err: any) {
+      if (signal?.aborted) {
+        throw new DOMException('Aborted', 'AbortError');
+      }
+      const subErrors: string[] = Array.isArray(err?.errors)
+        ? err.errors.map((e: any) => e?.message || String(e))
+        : [err?.message || 'Unknown YouTube Video search error'];
+      throw new Error(`YouTube Video search failed: ${subErrors[0]}`);
+    } finally {
+      inFlightVideoSearches.delete(normalizedKey);
+      if (signal) {
+        signal.removeEventListener('abort', onAbort);
+      }
+    }
+  })();
+
+  inFlightVideoSearches.set(normalizedKey, videoSearchPromise);
+  return videoSearchPromise;
 }
 
 /**
- * Finds an embeddable YouTube Music song alternative if the primary track has
+ * Revalidates a stale cached search query in the background without blocking UI.
+ */
+export async function refreshSearchInBackground(
+  rawQuery: string
+): Promise<{ songs: YouTubeTrack[] | null; videos: YouTubeTrack[] | null }> {
+  const [songsRes, videosRes] = await Promise.allSettled([
+    searchYouTubeSongs(rawQuery, undefined, { bypassCache: true }),
+    searchYouTubeVideos(rawQuery, undefined, { bypassCache: true }),
+  ]);
+  return {
+    songs: songsRes.status === 'fulfilled' ? songsRes.value : null,
+    videos: videosRes.status === 'fulfilled' ? videosRes.value : null,
+  };
+}
+
+/**
+ * Finds an embeddable YouTube Music song or video alternative if the primary track has
  * third-party embedding disabled by the uploader (YouTube Error 101 / 150).
  */
 export async function findEmbeddableAlternative(
@@ -541,8 +822,15 @@ export async function findEmbeddableAlternative(
       .replace(/official video|full video|music video/gi, '')
       .trim();
     const altQuery = `${cleanTitle} ${track.artist}`;
-    const results = await searchYouTubeSongs(altQuery);
-    for (const candidate of results) {
+    const [songsRes, videosRes] = await Promise.allSettled([
+      searchYouTubeSongs(altQuery),
+      searchYouTubeVideos(altQuery),
+    ]);
+    const candidates: YouTubeTrack[] = [];
+    if (songsRes.status === 'fulfilled') candidates.push(...songsRes.value);
+    if (videosRes.status === 'fulfilled') candidates.push(...videosRes.value);
+
+    for (const candidate of candidates) {
       if (!triedVideoIds.has(candidate.videoId)) {
         return candidate;
       }

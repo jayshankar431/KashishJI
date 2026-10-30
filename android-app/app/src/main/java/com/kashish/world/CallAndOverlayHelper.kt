@@ -672,14 +672,75 @@ object CallAndOverlayHelper {
     var isMusicSessionActive: Boolean = false
 
     private var mediaSession: android.media.session.MediaSession? = null
+    private var audioFocusRequestObj: Any? = null
     private var cachedAlbumArtUrl: String = ""
     private var cachedAlbumArtBitmap: Bitmap? = null
     private val mediaArtExecutor = Executors.newSingleThreadExecutor()
+
+    private val audioFocusChangeListener = android.media.AudioManager.OnAudioFocusChangeListener { focusChange ->
+        when (focusChange) {
+            android.media.AudioManager.AUDIOFOCUS_LOSS,
+            android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                MainActivity.dispatchMediaAction("pause")
+            }
+        }
+    }
+
+    fun requestAudioFocus(context: Context) {
+        try {
+            val am = context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager ?: return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val attrs = android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build()
+                val req = (audioFocusRequestObj as? android.media.AudioFocusRequest)
+                    ?: android.media.AudioFocusRequest.Builder(android.media.AudioManager.AUDIOFOCUS_GAIN)
+                        .setAudioAttributes(attrs)
+                        .setAcceptsDelayedFocusGain(true)
+                        .setOnAudioFocusChangeListener(audioFocusChangeListener)
+                        .build()
+                        .also { audioFocusRequestObj = it }
+                am.requestAudioFocus(req)
+            } else {
+                @Suppress("DEPRECATION")
+                am.requestAudioFocus(
+                    audioFocusChangeListener,
+                    android.media.AudioManager.STREAM_MUSIC,
+                    android.media.AudioManager.AUDIOFOCUS_GAIN
+                )
+            }
+        } catch (_: Exception) {}
+    }
+
+    fun abandonAudioFocus(context: Context) {
+        try {
+            val am = context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager ?: return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val req = audioFocusRequestObj as? android.media.AudioFocusRequest
+                if (req != null) {
+                    am.abandonAudioFocusRequest(req)
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                am.abandonAudioFocus(audioFocusChangeListener)
+            }
+        } catch (_: Exception) {}
+    }
 
     private fun ensureMediaSession(context: Context): android.media.session.MediaSession {
         val existing = mediaSession
         if (existing != null) return existing
         val session = android.media.session.MediaSession(context.applicationContext, "KashishMusicSession")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            try {
+                val attrs = android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build()
+                session.setPlaybackToLocal(attrs)
+            } catch (_: Exception) {}
+        }
         session.setCallback(object : android.media.session.MediaSession.Callback() {
             override fun onPlay() {
                 MainActivity.dispatchMediaAction("play")
@@ -747,18 +808,24 @@ object CallAndOverlayHelper {
 
     /**
      * Posts or updates a native Android MediaStyle notification with 1:1 square artwork,
-     * lock-screen MediaSession integration, and Previous / Play-Pause / Next controls.
+     * lock-screen MediaSession integration, AudioFocus, Foreground Service promotion,
+     * and Previous / Play-Pause / Next / Seek controls.
      */
     fun updateMusicNotification(
         context: Context,
         title: String,
         artist: String,
         thumbnailUrl: String,
-        isPlaying: Boolean
+        isPlaying: Boolean,
+        positionSec: Long = 0L,
+        durationSec: Long = 0L
     ) {
         val appCtx = context.applicationContext
         isMusicSessionActive = true
         SoundCacheManager.ensureDefaultChannels(appCtx)
+        if (isPlaying) {
+            requestAudioFocus(appCtx)
+        }
 
         mediaArtExecutor.execute {
             val artBitmap = loadSquareAlbumArtBitmap(appCtx, thumbnailUrl)
@@ -767,6 +834,9 @@ object CallAndOverlayHelper {
                     val session = ensureMediaSession(appCtx)
                     session.isActive = true
 
+                    val posMs = (positionSec.coerceAtLeast(0L)) * 1000L
+                    val durMs = (durationSec.coerceAtLeast(0L)) * 1000L
+
                     val stateBuilder = android.media.session.PlaybackState.Builder()
                         .setActions(
                             android.media.session.PlaybackState.ACTION_PLAY or
@@ -774,12 +844,13 @@ object CallAndOverlayHelper {
                                 android.media.session.PlaybackState.ACTION_PLAY_PAUSE or
                                 android.media.session.PlaybackState.ACTION_SKIP_TO_NEXT or
                                 android.media.session.PlaybackState.ACTION_SKIP_TO_PREVIOUS or
-                                android.media.session.PlaybackState.ACTION_SEEK_TO
+                                android.media.session.PlaybackState.ACTION_SEEK_TO or
+                                android.media.session.PlaybackState.ACTION_STOP
                         )
                         .setState(
                             if (isPlaying) android.media.session.PlaybackState.STATE_PLAYING
                             else android.media.session.PlaybackState.STATE_PAUSED,
-                            android.media.session.PlaybackState.PLAYBACK_POSITION_UNKNOWN,
+                            posMs,
                             if (isPlaying) 1.0f else 0f
                         )
                     session.setPlaybackState(stateBuilder.build())
@@ -788,9 +859,13 @@ object CallAndOverlayHelper {
                         .putString(android.media.MediaMetadata.METADATA_KEY_TITLE, title.ifBlank { "Melodies for Kashish ♡" })
                         .putString(android.media.MediaMetadata.METADATA_KEY_ARTIST, artist.ifBlank { "Jay's Heart" })
                         .putString(android.media.MediaMetadata.METADATA_KEY_ALBUM, "Kashish's World 💖")
+                    if (durMs > 0L) {
+                        metaBuilder.putLong(android.media.MediaMetadata.METADATA_KEY_DURATION, durMs)
+                    }
                     if (artBitmap != null) {
                         metaBuilder.putBitmap(android.media.MediaMetadata.METADATA_KEY_ALBUM_ART, artBitmap)
                         metaBuilder.putBitmap(android.media.MediaMetadata.METADATA_KEY_ART, artBitmap)
+                        metaBuilder.putBitmap(android.media.MediaMetadata.METADATA_KEY_DISPLAY_ICON, artBitmap)
                     }
                     session.setMetadata(metaBuilder.build())
 
@@ -861,8 +936,10 @@ object CallAndOverlayHelper {
                         .addAction(nextAction)
                         .setStyle(mediaStyle)
 
+                    val builtNotification = builder.build()
+                    FirestoreOverlayBackgroundService.promoteForMusicNotification(appCtx, builtNotification)
                     val nm = appCtx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                    nm.notify(MUSIC_NOTIFICATION_ID, builder.build())
+                    nm.notify(MUSIC_NOTIFICATION_ID, builtNotification)
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to update music notification: ${e.message}")
                 }
@@ -872,6 +949,8 @@ object CallAndOverlayHelper {
 
     fun dismissMusicNotification(context: Context) {
         isMusicSessionActive = false
+        abandonAudioFocus(context)
+        FirestoreOverlayBackgroundService.demoteMusicNotification(context)
         try {
             val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             nm.cancel(MUSIC_NOTIFICATION_ID)

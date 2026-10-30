@@ -8,7 +8,9 @@ export interface YTMusicSongResult {
   thumbnail: string;
   durationText: string;
   durationSeconds?: number;
-  catalogSource: 'youtube_music';
+  viewsText?: string;
+  mediaType?: 'song' | 'video';
+  catalogSource: 'youtube_music' | 'youtube_video';
 }
 
 interface ServerCacheEntry {
@@ -16,11 +18,26 @@ interface ServerCacheEntry {
   cachedAt: number;
 }
 
+export interface ResolvedAudioStream {
+  videoId: string;
+  url: string;
+  mimeType: string;
+  bitrate: number;
+  contentLength?: number;
+  durationSeconds?: number;
+  expiresAt: number;
+}
+
 const serverCache = new Map<string, ServerCacheEntry>();
+const serverVideoCache = new Map<string, ServerCacheEntry>();
+const streamUrlCache = new Map<string, ResolvedAudioStream>();
 const SERVER_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const STREAM_CACHE_TTL_MS = 20 * 60 * 1000; // 20 minutes
 
 // Exact protobuf filter used by sigma67/ytmusicapi for filter="songs" (YouTube Music catalog songs)
 const YTMUSIC_SONGS_FILTER_PARAMS = 'EgWKAQIIAWoKEAkQBRAKEAMQBA==';
+// Exact protobuf filter used by sigma67/ytmusicapi for filter="videos" (YouTube Music catalog videos)
+const YTMUSIC_VIDEOS_FILTER_PARAMS = 'EgWKAQIQAWoKEAkQChAFEAMQBA==';
 
 function parseDurationToSeconds(text: string): number {
   const parts = text.trim().split(':').map(Number);
@@ -33,7 +50,8 @@ function parseDurationToSeconds(text: string): number {
 function parseShelfItems(
   items: any[],
   seen: Set<string>,
-  results: YTMusicSongResult[]
+  results: YTMusicSongResult[],
+  mediaType: 'song' | 'video' = 'song'
 ): void {
   for (const item of items) {
     const m = item?.musicResponsiveListItemRenderer;
@@ -60,6 +78,7 @@ function parseShelfItems(
     const artists: string[] = [];
     let album = '';
     let durationText = '';
+    let viewsText = '';
 
     for (const run of col1Runs) {
       const text = String(run?.text || '').trim();
@@ -78,17 +97,26 @@ function parseShelfItems(
         album = text;
       } else if (/^\d{1,2}:\d{2}(?::\d{2})?$/.test(text)) {
         durationText = text;
+      } else if (/views$/i.test(text)) {
+        viewsText = text;
       }
     }
 
-    // Fallback if artist runs didn't carry a browseEndpoint (e.g. unlinked artist credit)
+    // Fallback if artist runs didn't carry a browseEndpoint (e.g. unlinked artist credit or video channel)
     if (artists.length === 0 && col1Runs.length > 0) {
       const firstText = String(col1Runs[0]?.text || '').trim();
-      if (firstText && firstText !== 'Song' && !/^\d{1,2}:\d{2}$/.test(firstText)) {
+      if (
+        firstText &&
+        firstText !== 'Song' &&
+        firstText !== 'Video' &&
+        firstText !== 'Episode' &&
+        !/^\d{1,2}:\d{2}$/.test(firstText) &&
+        !/views$/i.test(firstText)
+      ) {
         artists.push(firstText);
       } else if (col1Runs.length >= 3) {
         const thirdText = String(col1Runs[2]?.text || '').trim();
-        if (thirdText && !/^\d{1,2}:\d{2}$/.test(thirdText)) {
+        if (thirdText && !/^\d{1,2}:\d{2}$/.test(thirdText) && !/views$/i.test(thirdText)) {
           artists.push(thirdText);
         }
       }
@@ -101,9 +129,10 @@ function parseShelfItems(
       thumbs[0]?.url ||
       `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`;
 
-    // Upgrade square YouTube Music album artwork to crisp 512x512 1:1, or use clean mqdefault (no 4:3 black bars)
+    // Upgrade square YouTube Music album artwork to crisp 512x512 1:1, or use clean mqdefault
     const thumbnail =
-      rawThumb.includes('googleusercontent.com') || rawThumb.includes('ggpht.com')
+      mediaType === 'song' &&
+      (rawThumb.includes('googleusercontent.com') || rawThumb.includes('ggpht.com'))
         ? rawThumb.replace(/=w\d+-h\d+[^&?]*/, '=w512-h512-l90-rj')
         : `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`;
     const durationSeconds = durationText ? parseDurationToSeconds(durationText) : undefined;
@@ -112,11 +141,13 @@ function parseShelfItems(
     results.push({
       videoId,
       title,
-      artist: artists.join(', ') || 'YouTube Music Artist',
+      artist: artists.join(', ') || (mediaType === 'video' ? 'YouTube Video' : 'YouTube Music Artist'),
       album: album || undefined,
       thumbnail,
       durationText,
       durationSeconds,
+      viewsText: viewsText || undefined,
+      mediaType,
       catalogSource: 'youtube_music',
     });
   }
@@ -150,7 +181,8 @@ function extractContinuationToken(data: any): string | null {
 export function parseYTMusicSearchResponse(
   data: any,
   seen: Set<string> = new Set<string>(),
-  results: YTMusicSongResult[] = []
+  results: YTMusicSongResult[] = [],
+  mediaType: 'song' | 'video' = 'song'
 ): YTMusicSongResult[] {
   const tabs = data?.contents?.tabbedSearchResultsRenderer?.tabs || [];
   const sections =
@@ -161,15 +193,85 @@ export function parseYTMusicSearchResponse(
   for (const section of sections) {
     const shelf = section?.musicShelfRenderer;
     if (!shelf || !Array.isArray(shelf.contents)) continue;
-    parseShelfItems(shelf.contents, seen, results);
+    parseShelfItems(shelf.contents, seen, results, mediaType);
   }
 
   const continuationContents = data?.continuationContents?.musicShelfContinuation?.contents;
   if (Array.isArray(continuationContents)) {
-    parseShelfItems(continuationContents, seen, results);
+    parseShelfItems(continuationContents, seen, results, mediaType);
   }
 
   return results;
+}
+
+/**
+ * Parses standard YouTube WEB InnerTube search results (`videoRenderer`) so songs/videos
+ * that are not indexed in YouTube Music at all still appear in the Videos section.
+ */
+function parseStandardYouTubeWebVideos(
+  data: any,
+  seen: Set<string>,
+  results: YTMusicSongResult[]
+): void {
+  const sections =
+    data?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer
+      ?.contents || [];
+
+  for (const section of sections) {
+    const items = section?.itemSectionRenderer?.contents || [];
+    for (const item of items) {
+      const v = item?.videoRenderer;
+      if (!v) continue;
+
+      const videoId = String(v?.videoId || '').trim();
+      if (!videoId || seen.has(videoId)) continue;
+
+      const title =
+        (Array.isArray(v?.title?.runs)
+          ? v.title.runs.map((r: any) => r?.text || '').join('')
+          : v?.title?.simpleText) || '';
+      const cleanTitle = String(title).trim();
+      if (!cleanTitle) continue;
+
+      const artist =
+        v?.ownerText?.runs?.[0]?.text ||
+        v?.longBylineText?.runs?.[0]?.text ||
+        v?.shortBylineText?.runs?.[0]?.text ||
+        'YouTube';
+
+      const durationText = String(
+        v?.lengthText?.simpleText ||
+          (Array.isArray(v?.lengthText?.runs)
+            ? v.lengthText.runs.map((r: any) => r?.text || '').join('')
+            : '') ||
+          ''
+      ).trim();
+
+      const viewsText = String(
+        v?.shortViewCountText?.simpleText ||
+          (Array.isArray(v?.shortViewCountText?.runs)
+            ? v.shortViewCountText.runs.map((r: any) => r?.text || '').join('')
+            : '') ||
+          v?.viewCountText?.simpleText ||
+          ''
+      ).trim();
+
+      const durationSeconds = durationText ? parseDurationToSeconds(durationText) : undefined;
+
+      seen.add(videoId);
+      results.push({
+        videoId,
+        title: cleanTitle,
+        artist: String(artist).trim().replace(/ - Topic$/i, '') || 'YouTube',
+        thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+        durationText,
+        durationSeconds,
+        viewsText: viewsText || undefined,
+        mediaType: 'video',
+        catalogSource: 'youtube_video',
+      });
+    }
+  }
 }
 
 /**
@@ -233,7 +335,7 @@ export async function queryYouTubeMusicCatalog(
     const data = await response.json();
     const seen = new Set<string>();
     const tracks: YTMusicSongResult[] = [];
-    parseYTMusicSearchResponse(data, seen, tracks);
+    parseYTMusicSearchResponse(data, seen, tracks, 'song');
 
     // Fetch up to 2 continuation pages from YouTube Music so search returns 50-60+ songs
     let nextContinuation = extractContinuationToken(data);
@@ -251,7 +353,7 @@ export async function queryYouTubeMusicCatalog(
         if (!contRes.ok) break;
         const contData = await contRes.json();
         const prevCount = tracks.length;
-        parseYTMusicSearchResponse(contData, seen, tracks);
+        parseYTMusicSearchResponse(contData, seen, tracks, 'song');
         if (tracks.length === prevCount) break;
         nextContinuation = extractContinuationToken(contData);
       } catch {
@@ -275,8 +377,277 @@ export async function queryYouTubeMusicCatalog(
   }
 }
 
+/**
+ * Queries both YouTube Music Videos (`filter="videos"`) AND standard YouTube Videos (`WEB` InnerTube)
+ * so that any song not available as an audio track in YouTube Music is guaranteed to appear in Videos.
+ */
+export async function queryYouTubeVideosCatalog(
+  rawQuery: string,
+  bypassCache = false
+): Promise<{ videos: YTMusicSongResult[]; cached: boolean }> {
+  const query = rawQuery.trim();
+  if (!query) {
+    return { videos: [], cached: false };
+  }
+
+  const key = query.toLowerCase();
+  if (!bypassCache) {
+    const hit = serverVideoCache.get(key);
+    if (hit && Date.now() - hit.cachedAt < SERVER_CACHE_TTL_MS && hit.tracks.length > 0) {
+      return { videos: hit.tracks, cached: true };
+    }
+  }
+
+  const controller = new AbortController();
+  const timeout = globalThis.setTimeout(() => controller.abort(), 6500);
+
+  const ytmClientContext = {
+    client: {
+      clientName: 'WEB_REMIX',
+      clientVersion: '1.20250120.01.00',
+      hl: 'en',
+      gl: 'IN',
+    },
+  };
+
+  const ytWebClientContext = {
+    client: {
+      clientName: 'WEB',
+      clientVersion: '2.20250120.00.00',
+      hl: 'en',
+      gl: 'IN',
+    },
+  };
+
+  const ytmHeaders = {
+    'Content-Type': 'application/json',
+    'User-Agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0',
+    Origin: 'https://music.youtube.com',
+    Referer: 'https://music.youtube.com/',
+  };
+
+  const ytWebHeaders = {
+    'Content-Type': 'application/json',
+    'User-Agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0',
+    Origin: 'https://www.youtube.com',
+    Referer: 'https://www.youtube.com/',
+  };
+
+  try {
+    const fetchYTMusicVideos = async (): Promise<YTMusicSongResult[]> => {
+      const res = await fetch('https://music.youtube.com/youtubei/v1/search?prettyPrint=false', {
+        method: 'POST',
+        headers: ytmHeaders,
+        body: JSON.stringify({
+          context: ytmClientContext,
+          query,
+          params: YTMUSIC_VIDEOS_FILTER_PARAMS,
+        }),
+        signal: controller.signal,
+      });
+      if (!res.ok) return [];
+      const data = await res.json();
+      const localSeen = new Set<string>();
+      const list: YTMusicSongResult[] = [];
+      parseYTMusicSearchResponse(data, localSeen, list, 'video');
+
+      const nextContinuation = extractContinuationToken(data);
+      if (nextContinuation) {
+        try {
+          const contUrl = `https://music.youtube.com/youtubei/v1/search?ctoken=${encodeURIComponent(
+            nextContinuation
+          )}&continuation=${encodeURIComponent(nextContinuation)}&type=next&prettyPrint=false`;
+          const contRes = await fetch(contUrl, {
+            method: 'POST',
+            headers: ytmHeaders,
+            body: JSON.stringify({ context: ytmClientContext }),
+            signal: controller.signal,
+          });
+          if (contRes.ok) {
+            const contData = await contRes.json();
+            parseYTMusicSearchResponse(contData, localSeen, list, 'video');
+          }
+        } catch {}
+      }
+      return list;
+    };
+
+    const fetchStandardYouTubeVideos = async (): Promise<YTMusicSongResult[]> => {
+      const res = await fetch('https://www.youtube.com/youtubei/v1/search?prettyPrint=false', {
+        method: 'POST',
+        headers: ytWebHeaders,
+        body: JSON.stringify({
+          context: ytWebClientContext,
+          query,
+        }),
+        signal: controller.signal,
+      });
+      if (!res.ok) return [];
+      const data = await res.json();
+      const localSeen = new Set<string>();
+      const list: YTMusicSongResult[] = [];
+      parseStandardYouTubeWebVideos(data, localSeen, list);
+      return list;
+    };
+
+    const [ytmOutcome, ytWebOutcome] = await Promise.allSettled([
+      fetchYTMusicVideos(),
+      fetchStandardYouTubeVideos(),
+    ]);
+
+    const seen = new Set<string>();
+    const videos: YTMusicSongResult[] = [];
+
+    if (ytmOutcome.status === 'fulfilled') {
+      for (const item of ytmOutcome.value) {
+        if (!seen.has(item.videoId)) {
+          seen.add(item.videoId);
+          videos.push(item);
+        }
+      }
+    }
+
+    if (ytWebOutcome.status === 'fulfilled') {
+      for (const item of ytWebOutcome.value) {
+        if (!seen.has(item.videoId)) {
+          seen.add(item.videoId);
+          videos.push(item);
+        }
+      }
+    }
+
+    if (videos.length === 0) {
+      throw new Error(`No YouTube videos found for "${query}"`);
+    }
+
+    if (serverVideoCache.size > 150) {
+      const oldestKey = serverVideoCache.keys().next().value;
+      if (oldestKey) serverVideoCache.delete(oldestKey);
+    }
+    serverVideoCache.set(key, { tracks: videos, cachedAt: Date.now() });
+
+    return { videos, cached: false };
+  } finally {
+    globalThis.clearTimeout(timeout);
+  }
+}
+
 function YTMIC_SONGS_PARAM_SAFE(): string {
   return YTMUSIC_SONGS_FILTER_PARAMS;
+}
+
+/**
+ * Resolves a direct audio stream URL (audio/mp4 m4a or audio/webm opus) for a YouTube videoId
+ * using the YouTube InnerTube ANDROID_VR player API.
+ */
+export async function resolveYouTubeAudioStream(
+  rawVideoId: string,
+  bypassCache = false
+): Promise<ResolvedAudioStream> {
+  const videoId = rawVideoId.trim();
+  if (!/^[a-zA-Z0-9_-]{6,20}$/.test(videoId)) {
+    throw new Error('Invalid YouTube videoId');
+  }
+
+  if (!bypassCache) {
+    const cached = streamUrlCache.get(videoId);
+    if (cached && Date.now() < cached.expiresAt) {
+      return cached;
+    }
+  }
+
+  const controller = new AbortController();
+  const timeout = globalThis.setTimeout(() => controller.abort(), 6500);
+
+  try {
+    const response = await fetch('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent':
+          'com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 14; en_US; Quest 3; Build/UP1A.231005.007.A1; Cronet/132.0.6808.3)',
+        'X-Goog-Api-Format-Version': '2',
+      },
+      body: JSON.stringify({
+        context: {
+          client: {
+            clientName: 'ANDROID_VR',
+            clientVersion: '1.60.19',
+            androidSdkVersion: 34,
+            osName: 'Android',
+            osVersion: '14',
+            hl: 'en',
+            gl: 'IN',
+          },
+        },
+        videoId,
+        contentCheckOk: true,
+        racyCheckOk: true,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error(`InnerTube player HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    const adaptiveFormats: any[] = Array.isArray(data?.streamingData?.adaptiveFormats)
+      ? data.streamingData.adaptiveFormats
+      : [];
+    const standardFormats: any[] = Array.isArray(data?.streamingData?.formats)
+      ? data.streamingData.formats
+      : [];
+
+    const audioFormats = [...adaptiveFormats, ...standardFormats].filter(
+      (f) => typeof f?.url === 'string' && f.url.startsWith('http') && String(f?.mimeType || '').startsWith('audio/')
+    );
+
+    if (audioFormats.length === 0) {
+      throw new Error(
+        data?.playabilityStatus?.reason || 'No direct audio formats returned for this track'
+      );
+    }
+
+    // Prefer audio/mp4 (itag 140 / m4a) for universal compatibility across Android WebView, Chrome, and iOS Safari,
+    // then sort by highest bitrate.
+    audioFormats.sort((a, b) => {
+      const aIsMp4 = String(a.mimeType || '').includes('audio/mp4') ? 1 : 0;
+      const bIsMp4 = String(b.mimeType || '').includes('audio/mp4') ? 1 : 0;
+      if (aIsMp4 !== bIsMp4) return bIsMp4 - aIsMp4;
+      return (Number(b.bitrate) || 0) - (Number(a.bitrate) || 0);
+    });
+
+    const chosen = audioFormats[0];
+    const cleanMime = String(chosen.mimeType || 'audio/mp4').split(';')[0].trim() || 'audio/mp4';
+    const contentLength = chosen.contentLength ? Number(chosen.contentLength) : undefined;
+    const durationSeconds = data?.videoDetails?.lengthSeconds
+      ? Number(data.videoDetails.lengthSeconds)
+      : chosen.approxDurationMs
+      ? Math.round(Number(chosen.approxDurationMs) / 1000)
+      : undefined;
+
+    const resolved: ResolvedAudioStream = {
+      videoId,
+      url: chosen.url,
+      mimeType: cleanMime,
+      bitrate: Number(chosen.bitrate) || 128000,
+      contentLength: Number.isFinite(contentLength) ? contentLength : undefined,
+      durationSeconds: Number.isFinite(durationSeconds) ? durationSeconds : undefined,
+      expiresAt: Date.now() + STREAM_CACHE_TTL_MS,
+    };
+
+    if (streamUrlCache.size > 200) {
+      const oldestKey = streamUrlCache.keys().next().value;
+      if (oldestKey) streamUrlCache.delete(oldestKey);
+    }
+    streamUrlCache.set(videoId, resolved);
+    return resolved;
+  } finally {
+    globalThis.clearTimeout(timeout);
+  }
 }
 
 export interface CloudinaryFolderResource {
@@ -428,7 +799,7 @@ async function fetchCloudinaryFolderResources(
 }
 
 /**
- * Connect/Vite HTTP middleware handler for `/api/ytmusic/search?q=...` and `/api/cloudinary-folder`
+ * Connect/Vite HTTP middleware handler for `/api/ytmusic/search`, `/api/ytmusic/stream`, and `/api/cloudinary-folder`
  */
 export function createYTMusicSearchMiddleware() {
   return async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
@@ -501,6 +872,145 @@ export function createYTMusicSearchMiddleware() {
       return;
     }
 
+    // Direct Audio Stream metadata endpoint (`/api/ytmusic/stream-info?videoId=...`)
+    if (req.url.startsWith('/api/ytmusic/stream-info')) {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range');
+
+      if (req.method === 'OPTIONS') {
+        res.statusCode = 204;
+        res.end();
+        return;
+      }
+
+      try {
+        const parsedUrl = new URL(req.url, 'http://localhost');
+        const videoId = (parsedUrl.searchParams.get('videoId') || '').trim();
+        const stream = await resolveYouTubeAudioStream(videoId);
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(
+          JSON.stringify({
+            videoId: stream.videoId,
+            mimeType: stream.mimeType,
+            bitrate: stream.bitrate,
+            contentLength: stream.contentLength,
+            durationSeconds: stream.durationSeconds,
+            streamProxyUrl: `/api/ytmusic/stream?videoId=${encodeURIComponent(stream.videoId)}`,
+          })
+        );
+      } catch (err: any) {
+        res.statusCode = 502;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: err?.message || 'Failed to resolve audio stream' }));
+      }
+      return;
+    }
+
+    // Direct Audio Stream byte-range proxy (`/api/ytmusic/stream?videoId=...`)
+    // Plays directly in a top-level HTML5 <audio> element so background / minimized playback
+    // never cuts out and Android Chrome / WebView immediately displays the system Media Notification controller.
+    if (req.url.startsWith('/api/ytmusic/stream')) {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range');
+      res.setHeader('Accept-Ranges', 'bytes');
+
+      if (req.method === 'OPTIONS') {
+        res.statusCode = 204;
+        res.end();
+        return;
+      }
+
+      try {
+        const parsedUrl = new URL(req.url, 'http://localhost');
+        const videoId = (parsedUrl.searchParams.get('videoId') || '').trim();
+        let streamInfo = await resolveYouTubeAudioStream(videoId, false);
+
+        const fetchUpstream = async (targetUrl: string) => {
+          const upstreamHeaders: Record<string, string> = {
+            'User-Agent':
+              'com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 14; en_US; Quest 3; Build/UP1A.231005.007.A1; Cronet/132.0.6808.3)',
+          };
+          const rangeHeader = req.headers['range'];
+          if (typeof rangeHeader === 'string' && rangeHeader.trim()) {
+            upstreamHeaders['Range'] = rangeHeader.trim();
+          } else {
+            upstreamHeaders['Range'] = 'bytes=0-';
+          }
+          return fetch(targetUrl, {
+            method: req.method === 'HEAD' ? 'HEAD' : 'GET',
+            headers: upstreamHeaders,
+          });
+        };
+
+        let upstreamRes = await fetchUpstream(streamInfo.url);
+        if (upstreamRes.status === 403 || upstreamRes.status === 401 || upstreamRes.status === 410) {
+          streamInfo = await resolveYouTubeAudioStream(videoId, true);
+          upstreamRes = await fetchUpstream(streamInfo.url);
+        }
+
+        if (!upstreamRes.ok && upstreamRes.status !== 206) {
+          res.statusCode = 502;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: `Upstream audio HTTP ${upstreamRes.status}` }));
+          return;
+        }
+
+        res.statusCode = upstreamRes.status;
+        res.setHeader('Content-Type', streamInfo.mimeType || 'audio/mp4');
+        res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('Cache-Control', 'public, max-age=3600');
+
+        const contentRange = upstreamRes.headers.get('content-range');
+        if (contentRange) {
+          res.setHeader('Content-Range', contentRange);
+        }
+        const contentLen = upstreamRes.headers.get('content-length');
+        if (contentLen) {
+          res.setHeader('Content-Length', contentLen);
+        }
+
+        if (req.method === 'HEAD' || !upstreamRes.body) {
+          res.end();
+          return;
+        }
+
+        const reader = upstreamRes.body.getReader();
+        let closed = false;
+        req.on('close', () => {
+          closed = true;
+          reader.cancel().catch(() => {});
+        });
+
+        while (!closed) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value && !closed) {
+            const canContinue = res.write(Buffer.from(value));
+            if (!canContinue) {
+              await new Promise<void>((resolve) => res.once('drain', resolve));
+            }
+          }
+        }
+        if (!closed) {
+          res.end();
+        }
+      } catch (err: any) {
+        if (!res.headersSent) {
+          res.statusCode = 502;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: err?.message || 'Audio stream proxy error' }));
+        } else {
+          try {
+            res.end();
+          } catch {}
+        }
+      }
+      return;
+    }
+
     if (!req.url.startsWith('/api/ytmusic/search')) {
       next();
       return;
@@ -521,6 +1031,7 @@ export function createYTMusicSearchMiddleware() {
       const parsedUrl = new URL(req.url, 'http://localhost');
       const q = (parsedUrl.searchParams.get('q') || '').trim();
       const refresh = parsedUrl.searchParams.get('refresh') === '1';
+      const searchType = (parsedUrl.searchParams.get('type') || 'songs').toLowerCase();
 
       if (!q) {
         res.statusCode = 400;
@@ -530,6 +1041,60 @@ export function createYTMusicSearchMiddleware() {
       }
 
       const t0 = performance.now();
+
+      if (searchType === 'videos') {
+        const { videos, cached } = await queryYouTubeVideosCatalog(q, refresh);
+        const elapsedMs = Math.round(performance.now() - t0);
+
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Cache-Control', 'public, max-age=120, stale-while-revalidate=600');
+        res.end(
+          JSON.stringify({
+            query: q,
+            type: 'videos',
+            source: 'ytmusic_and_youtube_videos',
+            serverCached: cached,
+            serverLatencyMs: elapsedMs,
+            videos,
+            tracks: videos,
+          })
+        );
+        return;
+      }
+
+      if (searchType === 'all') {
+        const [songsOutcome, videosOutcome] = await Promise.allSettled([
+          queryYouTubeMusicCatalog(q, refresh),
+          queryYouTubeVideosCatalog(q, refresh),
+        ]);
+
+        const tracks =
+          songsOutcome.status === 'fulfilled' ? songsOutcome.value.tracks : [];
+        const videos =
+          videosOutcome.status === 'fulfilled' ? videosOutcome.value.videos : [];
+        const cached =
+          (songsOutcome.status === 'fulfilled' && songsOutcome.value.cached) ||
+          (videosOutcome.status === 'fulfilled' && videosOutcome.value.cached);
+        const elapsedMs = Math.round(performance.now() - t0);
+
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Cache-Control', 'public, max-age=120, stale-while-revalidate=600');
+        res.end(
+          JSON.stringify({
+            query: q,
+            type: 'all',
+            source: 'ytmusic_songs_and_videos',
+            serverCached: cached,
+            serverLatencyMs: elapsedMs,
+            tracks,
+            videos,
+          })
+        );
+        return;
+      }
+
       const { tracks, cached } = await queryYouTubeMusicCatalog(q, refresh);
       const elapsedMs = Math.round(performance.now() - t0);
 
@@ -539,6 +1104,7 @@ export function createYTMusicSearchMiddleware() {
       res.end(
         JSON.stringify({
           query: q,
+          type: 'songs',
           source: 'ytmusicapi_web_remix',
           serverCached: cached,
           serverLatencyMs: elapsedMs,
