@@ -717,7 +717,7 @@ export const MusicDiscoveryView: React.FC<MusicDiscoveryViewProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 w-full max-w-full">
+          <div className="flex items-center gap-2.5 overflow-x-auto overflow-y-hidden no-scrollbar touch-pan-x pb-1 w-full max-w-full">
             {recentPlayedTracks.map((song) => {
               const isCurrent = currentTrack?.videoId === song.videoId;
               return (
@@ -731,9 +731,9 @@ export const MusicDiscoveryView: React.FC<MusicDiscoveryViewProps> = ({
                     backgroundColor: isCurrent ? activePalette.subBg : 'transparent',
                     borderColor: isCurrent ? activePalette.accent : activePalette.deckBorder,
                   }}
-                  className="flex items-center gap-2 p-1.5 rounded-2xl border shrink-0 max-w-[160px] active:scale-95 transition-all cursor-pointer group hover:border-white/20"
+                  className="flex items-center gap-2.5 p-2 rounded-2xl border shrink-0 w-[164px] min-w-[164px] max-w-[164px] active:scale-95 transition-all cursor-pointer group hover:border-white/20 overflow-hidden"
                 >
-                  <div className="relative w-8 h-8 rounded-xl overflow-hidden shrink-0 bg-black/40 border border-white/10">
+                  <div className="relative w-9 h-9 rounded-xl overflow-hidden shrink-0 bg-black/40 border border-white/10">
                     <HighResThumbnailComponent
                       videoId={song.videoId}
                       rawThumbnail={song.thumbnail}
@@ -741,18 +741,18 @@ export const MusicDiscoveryView: React.FC<MusicDiscoveryViewProps> = ({
                       aspect="square"
                     />
                   </div>
-                  <div className="min-w-0 text-left">
+                  <div className="min-w-0 flex-1 text-left overflow-hidden">
                     <p
                       style={{
                         color: isCurrent ? activePalette.accent : activePalette.textPrimary,
                       }}
-                      className="text-[10px] font-bold truncate max-w-[100px]"
+                      className="block text-[11px] font-bold truncate whitespace-nowrap"
                     >
                       {song.title}
                     </p>
                     <p
                       style={{ color: activePalette.textSecondary }}
-                      className="text-[8px] truncate max-w-[100px]"
+                      className="block text-[9px] truncate whitespace-nowrap mt-0.5"
                     >
                       {song.artist}
                     </p>

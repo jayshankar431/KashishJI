@@ -1083,15 +1083,22 @@ export function getInstantSuggestions(
   recentSearches: string[] = [],
   limit = 6
 ): string[] {
-  const q = rawQuery.trim().toLowerCase();
+  const q = rawQuery.replace(/\s+/g, ' ').trim().toLowerCase();
   const seen = new Set<string>();
   const results: string[] = [];
 
+  const normalizeKey = (str: string) =>
+    str
+      .replace(/\s+/g, ' ')
+      .replace(/\s*-\s*/g, ' - ')
+      .trim()
+      .toLowerCase();
+
   const pushUnique = (text: string) => {
-    const clean = text.trim();
+    const clean = text.replace(/\s+/g, ' ').trim();
     if (!clean) return;
-    const key = clean.toLowerCase();
-    if (seen.has(key)) return;
+    const key = normalizeKey(clean);
+    if (!key || seen.has(key)) return;
     seen.add(key);
     results.push(clean);
   };
@@ -1108,9 +1115,10 @@ export function getInstantSuggestions(
     return results;
   }
 
-  // 1. Prefix matches in recent searches
+  // 1. Prefix matches in recent searches (excluding short partial substrings identical to current typing)
   for (const r of recentSearches) {
-    if (r.toLowerCase().includes(q)) {
+    const rKey = normalizeKey(r);
+    if (rKey.includes(q) && (rKey !== q || q.length >= 4)) {
       pushUnique(r);
       if (results.length >= limit) return results;
     }
@@ -1162,7 +1170,7 @@ export async function fetchYouTubeSuggestions(
   signal?: AbortSignal,
   limit = 6
 ): Promise<string[]> {
-  const query = rawQuery.trim();
+  const query = rawQuery.replace(/\s+/g, ' ').trim();
   const instant = getInstantSuggestions(query, recentSearches, limit);
   if (!query) return instant;
 
@@ -1195,17 +1203,25 @@ export async function fetchYouTubeSuggestions(
     suggestionMemoryCache.set(key, liveList);
     const merged: string[] = [];
     const seen = new Set<string>();
+    const normalizeKey = (str: string) =>
+      str
+        .replace(/\s+/g, ' ')
+        .replace(/\s*-\s*/g, ' - ')
+        .trim()
+        .toLowerCase();
+
     const add = (val: string) => {
-      const clean = val.trim();
+      const clean = val.replace(/\s+/g, ' ').trim();
       if (!clean) return;
-      const k = clean.toLowerCase();
-      if (seen.has(k)) return;
+      const k = normalizeKey(clean);
+      if (!k || seen.has(k)) return;
       seen.add(k);
       merged.push(clean);
     };
 
     for (const r of recentSearches) {
-      if (r.toLowerCase().includes(key)) add(r);
+      const rKey = normalizeKey(r);
+      if (rKey.includes(key) && (rKey !== key || key.length >= 4)) add(r);
     }
     for (const s of liveList) {
       add(s);

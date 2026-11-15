@@ -695,10 +695,17 @@ object CallAndOverlayHelper {
         } catch (_: Exception) {}
     }
 
+    @Suppress("DEPRECATION")
     private fun ensureMediaSession(context: Context): android.media.session.MediaSession {
         val existing = mediaSession
         if (existing != null) return existing
         val session = android.media.session.MediaSession(context.applicationContext, "KashishMusicSession")
+        try {
+            session.setFlags(
+                android.media.session.MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or
+                    android.media.session.MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS
+            )
+        } catch (_: Exception) {}
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             try {
                 val attrs = android.media.AudioAttributes.Builder()
@@ -773,6 +780,130 @@ object CallAndOverlayHelper {
         return loadNotificationAvatarBitmap(context, "")
     }
 
+    private fun postMediaSessionAndNotificationOnMain(
+        appCtx: Context,
+        title: String,
+        artist: String,
+        isPlaying: Boolean,
+        positionSec: Long,
+        durationSec: Long,
+        artBitmap: Bitmap?
+    ) {
+        try {
+            val session = ensureMediaSession(appCtx)
+            session.isActive = true
+
+            val posMs = (positionSec.coerceAtLeast(0L)) * 1000L
+            val durMs = if (durationSec > 0L) durationSec * 1000L else 215_000L
+
+            val stateBuilder = android.media.session.PlaybackState.Builder()
+                .setActions(
+                    android.media.session.PlaybackState.ACTION_PLAY or
+                        android.media.session.PlaybackState.ACTION_PAUSE or
+                        android.media.session.PlaybackState.ACTION_PLAY_PAUSE or
+                        android.media.session.PlaybackState.ACTION_SKIP_TO_NEXT or
+                        android.media.session.PlaybackState.ACTION_SKIP_TO_PREVIOUS or
+                        android.media.session.PlaybackState.ACTION_SEEK_TO or
+                        android.media.session.PlaybackState.ACTION_STOP
+                )
+                .setState(
+                    if (isPlaying) android.media.session.PlaybackState.STATE_PLAYING
+                    else android.media.session.PlaybackState.STATE_PAUSED,
+                    posMs,
+                    if (isPlaying) 1.0f else 0f,
+                    android.os.SystemClock.elapsedRealtime()
+                )
+            session.setPlaybackState(stateBuilder.build())
+
+            val metaBuilder = android.media.MediaMetadata.Builder()
+                .putString(android.media.MediaMetadata.METADATA_KEY_TITLE, title.ifBlank { "Melodies for Kashish ♡" })
+                .putString(android.media.MediaMetadata.METADATA_KEY_ARTIST, artist.ifBlank { "Jay's Heart" })
+                .putString(android.media.MediaMetadata.METADATA_KEY_ALBUM, "Kashish's World 💖")
+                .putLong(android.media.MediaMetadata.METADATA_KEY_DURATION, durMs)
+            if (artBitmap != null) {
+                metaBuilder.putBitmap(android.media.MediaMetadata.METADATA_KEY_ALBUM_ART, artBitmap)
+                metaBuilder.putBitmap(android.media.MediaMetadata.METADATA_KEY_ART, artBitmap)
+                metaBuilder.putBitmap(android.media.MediaMetadata.METADATA_KEY_DISPLAY_ICON, artBitmap)
+            }
+            session.setMetadata(metaBuilder.build())
+
+            val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+
+            val openAppIntent = Intent(appCtx, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            val contentPendingIntent = PendingIntent.getActivity(appCtx, 9410, openAppIntent, pendingFlags)
+
+            fun buildMediaActionIntent(reqCode: Int, mediaAction: String): PendingIntent {
+                val i = Intent(appCtx, NotificationActionReceiver::class.java).apply {
+                    setPackage(appCtx.packageName)
+                    action = "com.kashish.world.MEDIA_ACTION_$mediaAction"
+                    putExtra("button_action", mediaAction)
+                    putExtra("notification_id", MUSIC_NOTIFICATION_ID)
+                }
+                return PendingIntent.getBroadcast(appCtx, reqCode, i, pendingFlags)
+            }
+
+            val prevPi = buildMediaActionIntent(9411, "media_prev")
+            val togglePi = buildMediaActionIntent(9412, if (isPlaying) "media_pause" else "media_play")
+            val nextPi = buildMediaActionIntent(9413, "media_next")
+
+            val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                android.app.Notification.Builder(appCtx, SoundCacheManager.MUSIC_CHANNEL_ID)
+            } else {
+                @Suppress("DEPRECATION")
+                android.app.Notification.Builder(appCtx)
+            }
+
+            val prevAction = android.app.Notification.Action.Builder(
+                android.R.drawable.ic_media_previous,
+                "Previous",
+                prevPi
+            ).build()
+
+            val playPauseAction = android.app.Notification.Action.Builder(
+                if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
+                if (isPlaying) "Pause" else "Play",
+                togglePi
+            ).build()
+
+            val nextAction = android.app.Notification.Action.Builder(
+                android.R.drawable.ic_media_next,
+                "Next",
+                nextPi
+            ).build()
+
+            val mediaStyle = android.app.Notification.MediaStyle()
+                .setMediaSession(session.sessionToken)
+                .setShowActionsInCompactView(0, 1, 2)
+
+            builder
+                .setSmallIcon(R.drawable.ic_stat_heart)
+                .setLargeIcon(artBitmap)
+                .setContentTitle(title.ifBlank { "Melodies for Kashish ♡" })
+                .setContentText(artist.ifBlank { "Jay's Heart" })
+                .setSubText("Kashish's Music ♡")
+                .setColor(0xFFE11D48.toInt())
+                .setVisibility(android.app.Notification.VISIBILITY_PUBLIC)
+                .setCategory(android.app.Notification.CATEGORY_TRANSPORT)
+                .setOngoing(isPlaying)
+                .setOnlyAlertOnce(true)
+                .setContentIntent(contentPendingIntent)
+                .addAction(prevAction)
+                .addAction(playPauseAction)
+                .addAction(nextAction)
+                .setStyle(mediaStyle)
+
+            val builtNotification = builder.build()
+            FirestoreOverlayBackgroundService.promoteForMusicNotification(appCtx, builtNotification)
+            val nm = appCtx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.notify(MUSIC_NOTIFICATION_ID, builtNotification)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to update music notification: ${e.message}")
+        }
+    }
+
     /**
      * Posts or updates a native Android MediaStyle notification with 1:1 square artwork,
      * lock-screen MediaSession integration, AudioFocus, Foreground Service promotion,
@@ -794,121 +925,44 @@ object CallAndOverlayHelper {
             requestAudioFocus(appCtx)
         }
 
-        mediaArtExecutor.execute {
-            val artBitmap = loadSquareAlbumArtBitmap(appCtx, thumbnailUrl)
-            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                try {
-                    val session = ensureMediaSession(appCtx)
-                    session.isActive = true
+        val immediateArt = if (thumbnailUrl.isNotBlank() && thumbnailUrl == cachedAlbumArtUrl && cachedAlbumArtBitmap != null) {
+            cachedAlbumArtBitmap
+        } else {
+            cachedAlbumArtBitmap ?: loadNotificationAvatarBitmap(appCtx, "")
+        }
 
-                    val posMs = (positionSec.coerceAtLeast(0L)) * 1000L
-                    val durMs = (durationSec.coerceAtLeast(0L)) * 1000L
+        // Immediately post/update MediaSession + Notification on main thread so transport controls
+        // (Previous, Play/Pause, Next, Seekbar) never wait on network artwork download.
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            postMediaSessionAndNotificationOnMain(
+                appCtx = appCtx,
+                title = title,
+                artist = artist,
+                isPlaying = isPlaying,
+                positionSec = positionSec,
+                durationSec = durationSec,
+                artBitmap = immediateArt
+            )
+        }
 
-                    val stateBuilder = android.media.session.PlaybackState.Builder()
-                        .setActions(
-                            android.media.session.PlaybackState.ACTION_PLAY or
-                                android.media.session.PlaybackState.ACTION_PAUSE or
-                                android.media.session.PlaybackState.ACTION_PLAY_PAUSE or
-                                android.media.session.PlaybackState.ACTION_SKIP_TO_NEXT or
-                                android.media.session.PlaybackState.ACTION_SKIP_TO_PREVIOUS or
-                                android.media.session.PlaybackState.ACTION_SEEK_TO or
-                                android.media.session.PlaybackState.ACTION_STOP
+        // If new remote artwork is needed, download it asynchronously and refresh the notification art.
+        if (thumbnailUrl.isNotBlank() && thumbnailUrl != cachedAlbumArtUrl &&
+            (thumbnailUrl.startsWith("http://") || thumbnailUrl.startsWith("https://"))
+        ) {
+            mediaArtExecutor.execute {
+                val downloadedArt = loadSquareAlbumArtBitmap(appCtx, thumbnailUrl)
+                if (downloadedArt != null && isMusicSessionActive) {
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        postMediaSessionAndNotificationOnMain(
+                            appCtx = appCtx,
+                            title = title,
+                            artist = artist,
+                            isPlaying = isPlaying,
+                            positionSec = positionSec,
+                            durationSec = durationSec,
+                            artBitmap = downloadedArt
                         )
-                        .setState(
-                            if (isPlaying) android.media.session.PlaybackState.STATE_PLAYING
-                            else android.media.session.PlaybackState.STATE_PAUSED,
-                            posMs,
-                            if (isPlaying) 1.0f else 0f
-                        )
-                    session.setPlaybackState(stateBuilder.build())
-
-                    val metaBuilder = android.media.MediaMetadata.Builder()
-                        .putString(android.media.MediaMetadata.METADATA_KEY_TITLE, title.ifBlank { "Melodies for Kashish ♡" })
-                        .putString(android.media.MediaMetadata.METADATA_KEY_ARTIST, artist.ifBlank { "Jay's Heart" })
-                        .putString(android.media.MediaMetadata.METADATA_KEY_ALBUM, "Kashish's World 💖")
-                    if (durMs > 0L) {
-                        metaBuilder.putLong(android.media.MediaMetadata.METADATA_KEY_DURATION, durMs)
                     }
-                    if (artBitmap != null) {
-                        metaBuilder.putBitmap(android.media.MediaMetadata.METADATA_KEY_ALBUM_ART, artBitmap)
-                        metaBuilder.putBitmap(android.media.MediaMetadata.METADATA_KEY_ART, artBitmap)
-                        metaBuilder.putBitmap(android.media.MediaMetadata.METADATA_KEY_DISPLAY_ICON, artBitmap)
-                    }
-                    session.setMetadata(metaBuilder.build())
-
-                    val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
-
-                    val openAppIntent = Intent(appCtx, MainActivity::class.java).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                    }
-                    val contentPendingIntent = PendingIntent.getActivity(appCtx, 9410, openAppIntent, pendingFlags)
-
-                    fun buildMediaActionIntent(reqCode: Int, mediaAction: String): PendingIntent {
-                        val i = Intent(appCtx, NotificationActionReceiver::class.java).apply {
-                            action = "com.kashish.world.MEDIA_ACTION_$mediaAction"
-                            putExtra("button_action", mediaAction)
-                            putExtra("notification_id", MUSIC_NOTIFICATION_ID)
-                        }
-                        return PendingIntent.getBroadcast(appCtx, reqCode, i, pendingFlags)
-                    }
-
-                    val prevPi = buildMediaActionIntent(9411, "media_prev")
-                    val togglePi = buildMediaActionIntent(9412, if (isPlaying) "media_pause" else "media_play")
-                    val nextPi = buildMediaActionIntent(9413, "media_next")
-
-                    val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        android.app.Notification.Builder(appCtx, SoundCacheManager.MUSIC_CHANNEL_ID)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        android.app.Notification.Builder(appCtx)
-                    }
-
-                    val prevAction = android.app.Notification.Action.Builder(
-                        android.R.drawable.ic_media_previous,
-                        "Previous",
-                        prevPi
-                    ).build()
-
-                    val playPauseAction = android.app.Notification.Action.Builder(
-                        if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
-                        if (isPlaying) "Pause" else "Play",
-                        togglePi
-                    ).build()
-
-                    val nextAction = android.app.Notification.Action.Builder(
-                        android.R.drawable.ic_media_next,
-                        "Next",
-                        nextPi
-                    ).build()
-
-                    val mediaStyle = android.app.Notification.MediaStyle()
-                        .setMediaSession(session.sessionToken)
-                        .setShowActionsInCompactView(0, 1, 2)
-
-                    builder
-                        .setSmallIcon(R.drawable.ic_stat_heart)
-                        .setLargeIcon(artBitmap)
-                        .setContentTitle(title.ifBlank { "Melodies for Kashish ♡" })
-                        .setContentText(artist.ifBlank { "Jay's Heart" })
-                        .setSubText("Kashish's Music ♡")
-                        .setColor(0xFFE11D48.toInt())
-                        .setVisibility(android.app.Notification.VISIBILITY_PUBLIC)
-                        .setCategory(android.app.Notification.CATEGORY_TRANSPORT)
-                        .setOngoing(isPlaying)
-                        .setOnlyAlertOnce(true)
-                        .setContentIntent(contentPendingIntent)
-                        .addAction(prevAction)
-                        .addAction(playPauseAction)
-                        .addAction(nextAction)
-                        .setStyle(mediaStyle)
-
-                    val builtNotification = builder.build()
-                    FirestoreOverlayBackgroundService.promoteForMusicNotification(appCtx, builtNotification)
-                    val nm = appCtx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                    nm.notify(MUSIC_NOTIFICATION_ID, builtNotification)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to update music notification: ${e.message}")
                 }
             }
         }

@@ -108,11 +108,19 @@
             </intent-filter>
         </service>
 
-        <!-- Notification Action Button Receiver ("Call Right Now", "Call Later", etc.) -->
+        <!-- Notification Action Button Receiver ("Call Right Now", "Call Later", Media Controls, etc.) -->
         <receiver
             android:name=".NotificationActionReceiver"
             android:enabled="true"
-            android:exported="false" />
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.kashish.world.MEDIA_ACTION_media_prev" />
+                <action android:name="com.kashish.world.MEDIA_ACTION_media_play" />
+                <action android:name="com.kashish.world.MEDIA_ACTION_media_pause" />
+                <action android:name="com.kashish.world.MEDIA_ACTION_media_next" />
+                <action android:name="com.kashish.world.MEDIA_ACTION_media_toggle" />
+            </intent-filter>
+        </receiver>
 
         <!-- Default FCM channel & icon metadata -->
         <meta-data

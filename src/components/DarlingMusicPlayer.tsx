@@ -8,6 +8,7 @@ import {
   SkipBack,
   SkipForward,
   Volume2,
+  Volume1,
   VolumeX,
   X,
   Loader2,
@@ -31,6 +32,17 @@ import {
   Sparkles,
   ListMusic,
   Zap,
+  Menu,
+  Home,
+  Library,
+  Plus,
+  Trash2,
+  FileText,
+  User,
+  FolderPlus,
+  Moon,
+  RotateCcw,
+  Repeat1,
 } from 'lucide-react';
 import { MusicDiscoveryView } from './MusicDiscoveryView';
 import {
@@ -156,40 +168,56 @@ function updateMediaSessionPosition(positionSec: number, durationSec: number, pl
 function buildMediaArtworkList(rawThumbnail: string | undefined, videoId: string): MediaImage[] {
   const primary = normalizeSquareThumbnail(rawThumbnail, videoId);
   const sizes = [96, 128, 192, 256, 384, 512];
+  const toAbsolute = (url: string) => {
+    try {
+      if (typeof window !== 'undefined' && !url.startsWith('http://') && !url.startsWith('https://')) {
+        return new URL(url, window.location.href).href;
+      }
+    } catch {}
+    return url;
+  };
+  const absPrimary = toAbsolute(primary);
 
   if (
-    primary.includes('googleusercontent.com') ||
-    primary.includes('ggpht.com')
+    absPrimary.includes('googleusercontent.com') ||
+    absPrimary.includes('ggpht.com')
   ) {
     return sizes.map((sz) => ({
-      src: primary.replace(/=w\d+-h\d+[^&?]*/i, `=w${sz}-h${sz}-l90-rj`),
+      src: absPrimary.replace(/=w\d+-h\d+[^&?]*/i, `=w${sz}-h${sz}-l90-rj`),
       sizes: `${sz}x${sz}`,
       type: 'image/jpeg',
     }));
   }
 
   return sizes.map((sz) => ({
-    src: primary,
+    src: absPrimary,
     sizes: `${sz}x${sz}`,
     type: 'image/jpeg',
   }));
 }
 
 /**
- * Generates a 180-second looping 19 Hz sub-audible PCM WAV Blob URL in the top-level document
- * with -42.7 dBFS energy (well above Chromium's -72 dBFS AudioPowerMonitor silence threshold,
- * while remaining physically inaudible <20 Hz).
- * Used when playing video via the cross-origin YouTube iframe so Chromium's MediaSessionImpl
- * still registers an active audible top-level <audio> element and publishes `navigator.mediaSession`
- * controls to the Android notification panel and lock screen.
+ * Top-level HTML5 carrier <audio> element.
+ * Playing continuous audible-frequency audio with micro-amplitude (~ -74 dBFS) in the top-level
+ * browsing context ensures Android OS AudioFlinger, MediaSessionCompat, and Chromium MediaSessionImpl
+ * register active playback and publish the media notification panel with lock-screen playback controls.
+ * CRITICAL: The audio element must have an active DOM layout geometry (not display: none),
+ * and must be unlocked synchronously within user touch/click gestures.
  */
 let sharedCarrierAudio: HTMLAudioElement | null = null;
 function getTopLevelAudioCarrier(): HTMLAudioElement | null {
   if (typeof window === 'undefined' || typeof document === 'undefined') return null;
   if (sharedCarrierAudio) return sharedCarrierAudio;
   try {
-    const sampleRate = 44100;
-    const durationSeconds = 60;
+    // CRITICAL FOR ANDROID CHROME / WEBVIEW MEDIASESSION CONTROLS:
+    // 1. Chromium's MediaSessionImpl::IsControllable() strictly requires duration >= 5.0 seconds
+    //    (kMinimumDurationForControllableMedia = 5s). Any <audio> shorter than 5s is treated as an
+    //    uncontrollable sound effect and hides Play/Pause/Next/Prev controls in the Android notification!
+    // 2. Chromium's AudioPowerMonitor requires signal power > -72 dBFS or it marks the stream silent.
+    //    A 28 Hz sub-bass wave with 16-bit amplitude 80 (~ -52 dBFS) is completely inaudible on phone
+    //    speakers/earpieces while keeping Android AudioFlinger & Chromium MediaSession 100% active.
+    const sampleRate = 8000;
+    const durationSeconds = 30; // 30 seconds (> 5s Chromium controllable media requirement)
     const numSamples = sampleRate * durationSeconds;
     const buffer = new ArrayBuffer(44 + numSamples * 2);
     const view = new DataView(buffer);
@@ -211,22 +239,25 @@ function getTopLevelAudioCarrier(): HTMLAudioElement | null {
     view.setUint16(34, 16, true);
     writeStr(36, 'data');
     view.setUint32(40, numSamples * 2, true);
-    // 19 Hz sub-audible wave with 16-bit amplitude 240 (-42.7 dBFS > -72 dBFS Chromium threshold)
-    // and volume = 1.0 so Chromium AudioPowerMonitor always marks is_silent = false.
-    const twoPiF = (2 * Math.PI * 19) / sampleRate;
+
+    const twoPiF = (2 * Math.PI * 28) / sampleRate;
     for (let i = 0; i < numSamples; i++) {
-      const sample = Math.round(Math.sin(i * twoPiF) * 240);
+      const sample = Math.round(Math.sin(i * twoPiF) * 80);
       view.setInt16(44 + i * 2, sample, true);
     }
     const blob = new Blob([buffer], { type: 'audio/wav' });
     const url = URL.createObjectURL(blob);
     const audio = document.createElement('audio');
+    audio.id = 'kashish-media-session-carrier';
     audio.src = url;
     audio.loop = true;
     audio.preload = 'auto';
     audio.volume = 1.0;
     audio.setAttribute('playsinline', 'true');
-    audio.style.display = 'none';
+    audio.setAttribute('aria-hidden', 'true');
+    // Note: Must not use display: none because Chromium skips media notifications for display:none elements
+    audio.style.cssText =
+      'position: fixed; left: 0px; bottom: 0px; width: 2px; height: 2px; opacity: 0.001; pointer-events: none; z-index: -9999;';
     document.body.appendChild(audio);
     sharedCarrierAudio = audio;
     return audio;
@@ -236,10 +267,41 @@ function getTopLevelAudioCarrier(): HTMLAudioElement | null {
 }
 
 /**
+ * Synchronously triggers carrier audio playback during a user tap or gesture.
+ */
+function primeAndPlayAudioCarrier(): void {
+  try {
+    const carrier = getTopLevelAudioCarrier();
+    if (carrier && carrier.paused) {
+      const p = carrier.play();
+      if (p && typeof p.catch === 'function') {
+        p.catch(() => {});
+      }
+    }
+  } catch {}
+}
+
+/**
+ * Re-asserts top-level HTML5 <audio> carrier ownership of Chromium's MediaSessionService
+ * AFTER the cross-origin YouTube <iframe> begins playing so Android shows the top-level
+ * document's Previous / Play-Pause / Next / Seek controls in the system notification.
+ */
+function reclaimTopLevelAudioCarrier(): void {
+  try {
+    const carrier = getTopLevelAudioCarrier();
+    if (!carrier) return;
+    if (!carrier.paused) {
+      carrier.pause();
+    }
+    const p = carrier.play();
+    if (p && typeof p.catch === 'function') {
+      p.catch(() => {});
+    }
+  } catch {}
+}
+
+/**
  * Singleton top-level HTML5 <audio> element for direct YouTube Music audio stream playback.
- * Playing audio directly in the top-level document guarantees:
- * 1) Zero audio cutout/stutter when minimizing the app or locking the phone screen (no video surface detach).
- * 2) Instant Android System Media Notification controller via `navigator.mediaSession`.
  */
 let sharedNativeAudio: HTMLAudioElement | null = null;
 function getTopLevelNativeAudioElement(): HTMLAudioElement | null {
@@ -252,7 +314,9 @@ function getTopLevelNativeAudioElement(): HTMLAudioElement | null {
     audio.crossOrigin = 'anonymous';
     audio.setAttribute('playsinline', 'true');
     audio.setAttribute('referrerpolicy', 'no-referrer');
-    audio.style.display = 'none';
+    audio.setAttribute('aria-hidden', 'true');
+    audio.style.cssText =
+      'position: fixed; left: 0px; bottom: 0px; width: 2px; height: 2px; opacity: 0.001; pointer-events: none; z-index: -9999;';
     document.body.appendChild(audio);
     sharedNativeAudio = audio;
     return audio;
@@ -385,6 +449,7 @@ interface ProgressBarProps {
   accentGradient?: string;
   trackBg?: string;
   textColor?: string;
+  variant?: 'standard' | 'top-edge' | 'apple';
 }
 
 /**
@@ -400,10 +465,11 @@ const PlayerProgressBar = memo(
     isPlaying,
     trackId,
     fallbackDurationSec = 0,
-    accentColor = 'var(--accent)',
+    accentColor = '#ff0033',
     accentGradient,
-    trackBg = 'var(--card-border)',
-    textColor = 'var(--text-soft)',
+    trackBg = 'rgba(255,255,255,0.18)',
+    textColor = '#a3a3a3',
+    variant = 'standard',
   }: ProgressBarProps) => {
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(fallbackDurationSec);
@@ -415,10 +481,15 @@ const PlayerProgressBar = memo(
     const seekTargetRef = useRef<number | null>(null);
     const seekCommitTimestampRef = useRef<number>(0);
 
+    const lastMediaSessionSyncRef = useRef<number>(0);
+    const lastSyncedPosRef = useRef<number>(-1);
+
     useEffect(() => {
       isDraggingRef.current = false;
       seekTargetRef.current = null;
       seekCommitTimestampRef.current = 0;
+      lastMediaSessionSyncRef.current = 0;
+      lastSyncedPosRef.current = -1;
       setIsSeeking(false);
       setCurrentTime(0);
       setDuration(fallbackDurationSec || 0);
@@ -448,10 +519,18 @@ const PlayerProgressBar = memo(
 
           if (effectiveDur > 0) {
             setDuration(effectiveDur);
-            updateMediaSessionPosition(
-              seekTargetRef.current !== null ? seekTargetRef.current : cur,
-              effectiveDur
-            );
+            // Throttle mediaSession position updates to once every 4 seconds or when drift > 2.5s
+            // to avoid spamming the Android OS MediaSession Binder and crashing notification
+            const now = performance.now();
+            const pos = seekTargetRef.current !== null ? seekTargetRef.current : cur;
+            if (
+              now - lastMediaSessionSyncRef.current > 4000 ||
+              Math.abs(pos - lastSyncedPosRef.current) > 2.5
+            ) {
+              lastMediaSessionSyncRef.current = now;
+              lastSyncedPosRef.current = pos;
+              updateMediaSessionPosition(pos, effectiveDur);
+            }
           }
         } catch {
           // Ignore transient player state errors
@@ -478,6 +557,7 @@ const PlayerProgressBar = memo(
     );
 
     const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+      e.stopPropagation();
       const effectiveDur = duration > 0 ? duration : fallbackDurationSec;
       if (!trackId || effectiveDur <= 0) return;
       try {
@@ -492,6 +572,7 @@ const PlayerProgressBar = memo(
 
     const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
       if (!isDraggingRef.current) return;
+      e.stopPropagation();
       const nextSec = computeSecondsFromClientX(e.clientX);
       seekTargetRef.current = nextSec;
       setCurrentTime(nextSec);
@@ -499,6 +580,7 @@ const PlayerProgressBar = memo(
 
     const commitPointerSeek = (e: React.PointerEvent<HTMLDivElement>) => {
       if (!isDraggingRef.current) return;
+      e.stopPropagation();
       try {
         if (e.currentTarget.hasPointerCapture?.(e.pointerId)) {
           e.currentTarget.releasePointerCapture(e.pointerId);
@@ -535,11 +617,111 @@ const PlayerProgressBar = memo(
     const effectiveDur = duration > 0 ? duration : fallbackDurationSec;
     const progressPercent = effectiveDur > 0 ? Math.min(100, (currentTime / effectiveDur) * 100) : 0;
 
+    if (variant === 'top-edge') {
+      return (
+        <div
+          ref={barContainerRef}
+          role="slider"
+          tabIndex={!trackId || effectiveDur <= 0 ? -1 : 0}
+          aria-label="Seek song playback position"
+          aria-valuemin={0}
+          aria-valuemax={Math.round(effectiveDur || 100)}
+          aria-valuenow={Math.round(currentTime)}
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={commitPointerSeek}
+          onPointerCancel={commitPointerSeek}
+          onKeyDown={handleKeyDown}
+          className={`absolute left-0 right-0 -top-2 h-4 flex items-center z-30 select-none touch-none ${
+            !trackId || effectiveDur <= 0 ? 'cursor-default' : 'cursor-pointer group'
+          }`}
+        >
+          <div
+            style={{ backgroundColor: trackBg }}
+            className="w-full h-[3px] group-hover:h-[5px] transition-all overflow-hidden relative"
+          >
+            <div
+              style={{
+                width: `${progressPercent}%`,
+                background: accentGradient || accentColor,
+              }}
+              className={`h-full ${isSeeking ? '' : 'transition-all duration-150'}`}
+            />
+          </div>
+          {trackId && effectiveDur > 0 && (
+            <div
+              style={{
+                left: `calc(${progressPercent}% - 6px)`,
+                background: accentGradient || accentColor,
+              }}
+              className={`absolute w-3 h-3 rounded-full shadow-md pointer-events-none transition-transform ${
+                isSeeking
+                  ? 'scale-125 opacity-100'
+                  : 'scale-0 opacity-0 group-hover:scale-100 group-hover:opacity-100'
+              }`}
+            />
+          )}
+        </div>
+      );
+    }
+
+    if (variant === 'apple') {
+      const remainingSec = Math.max(0, effectiveDur - currentTime);
+      return (
+        <div className="w-full flex flex-col gap-1.5 select-none">
+          <div
+            ref={barContainerRef}
+            role="slider"
+            tabIndex={!trackId || effectiveDur <= 0 ? -1 : 0}
+            aria-label="Seek song playback position"
+            aria-valuemin={0}
+            aria-valuemax={Math.round(effectiveDur || 100)}
+            aria-valuenow={Math.round(currentTime)}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={commitPointerSeek}
+            onPointerCancel={commitPointerSeek}
+            onKeyDown={handleKeyDown}
+            className={`relative w-full flex items-center h-5 select-none touch-none ${
+              !trackId || effectiveDur <= 0 ? 'cursor-default opacity-60' : 'cursor-pointer group'
+            }`}
+          >
+            <div
+              style={{ backgroundColor: trackBg }}
+              className={`w-full rounded-full overflow-hidden transition-all duration-200 ${
+                isSeeking ? 'h-2.5' : 'h-[6px] group-hover:h-2'
+              }`}
+            >
+              <div
+                style={{
+                  width: `${progressPercent}%`,
+                  background: accentGradient || accentColor,
+                }}
+                className={`h-full rounded-full ${isSeeking ? '' : 'transition-all duration-150'}`}
+              />
+            </div>
+          </div>
+          <div className="flex items-center justify-between text-[11px] font-semibold tracking-tight tabular-nums px-0.5">
+            <span style={{ color: textColor }}>
+              {formatDuration(currentTime) || '0:00'}
+            </span>
+            <span className="px-2 py-0.5 rounded-[5px] bg-white/12 text-white/80 text-[9px] font-bold tracking-wider uppercase">
+              Lossless
+            </span>
+            <span style={{ color: textColor }}>
+              {effectiveDur > 0 ? `-${formatDuration(remainingSec) || '0:00'}` : '--:--'}
+            </span>
+          </div>
+        </div>
+      );
+    }
+
     return (
-      <div className="flex items-center gap-2 w-full">
+      <div className="flex items-center gap-2.5 w-full">
         <span
           style={{ color: textColor }}
-          className="text-[10px] font-mono tabular-nums w-8 text-right shrink-0"
+          className="text-[11px] font-mono tabular-nums w-9 text-right shrink-0"
         >
           {formatDuration(currentTime) || '0:00'}
         </span>
@@ -562,7 +744,7 @@ const PlayerProgressBar = memo(
         >
           <div
             style={{ backgroundColor: trackBg }}
-            className="w-full h-1.5 group-hover:h-2 rounded-full overflow-hidden transition-all"
+            className="w-full h-1 group-hover:h-1.5 rounded-full overflow-hidden transition-all"
           >
             <div
               style={{
@@ -586,7 +768,7 @@ const PlayerProgressBar = memo(
         </div>
         <span
           style={{ color: textColor }}
-          className="text-[10px] font-mono tabular-nums w-8 shrink-0"
+          className="text-[11px] font-mono tabular-nums w-9 shrink-0"
         >
           {effectiveDur > 0 ? formatDuration(effectiveDur) : '--:--'}
         </span>
@@ -594,6 +776,310 @@ const PlayerProgressBar = memo(
     );
   }
 );
+
+/**
+ * Isolated time readout (`1:24 / 3:45`) for the bottom player bar left controls
+ * so 1-second ticks never re-render the rest of the player tree.
+ */
+const PlayerTimeReadout = memo(
+  ({
+    getPlaybackMetrics,
+    isPlaying,
+    trackId,
+    fallbackDurationSec = 0,
+  }: {
+    getPlaybackMetrics: () => { currentTime: number; duration: number };
+    isPlaying: boolean;
+    trackId: string | null;
+    fallbackDurationSec?: number;
+  }) => {
+    const [currentTime, setCurrentTime] = useState(0);
+    const [duration, setDuration] = useState(fallbackDurationSec);
+
+    useEffect(() => {
+      setCurrentTime(0);
+      setDuration(fallbackDurationSec || 0);
+    }, [trackId, fallbackDurationSec]);
+
+    useEffect(() => {
+      const tick = () => {
+        try {
+          const { currentTime: cur, duration: dur } = getPlaybackMetrics();
+          setCurrentTime(cur);
+          if (dur > 0) setDuration(dur);
+        } catch {}
+      };
+      tick();
+      if (!isPlaying) return;
+      const id = window.setInterval(tick, 500);
+      return () => window.clearInterval(id);
+    }, [isPlaying, getPlaybackMetrics]);
+
+    const effectiveDur = duration > 0 ? duration : fallbackDurationSec;
+    return (
+      <span className="hidden sm:inline-block text-xs font-mono tabular-nums text-neutral-400 whitespace-nowrap select-none">
+        {formatDuration(currentTime) || '0:00'} /{' '}
+        {effectiveDur > 0 ? formatDuration(effectiveDur) : '--:--'}
+      </span>
+    );
+  }
+);
+
+export interface UserPlaylist {
+  id: string;
+  name: string;
+  createdAt: number;
+  tracks: YouTubeTrack[];
+}
+
+function loadUserPlaylists(userId: string): UserPlaylist[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw =
+      window.localStorage.getItem(`kashish_ytm_playlists_v1_${userId || 'guest'}`) ||
+      window.localStorage.getItem('kashish_ytm_playlists_v1');
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (p) => p && typeof p.id === 'string' && typeof p.name === 'string' && Array.isArray(p.tracks)
+    );
+  } catch {
+    return [];
+  }
+}
+
+function saveUserPlaylists(userId: string, playlists: UserPlaylist[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const json = JSON.stringify(playlists);
+    window.localStorage.setItem(`kashish_ytm_playlists_v1_${userId || 'guest'}`, json);
+    window.localStorage.setItem('kashish_ytm_playlists_v1', json);
+  } catch {}
+}
+
+export interface ParsedLyricLine {
+  timeSec: number;
+  text: string;
+}
+
+export interface TrackLyricsData {
+  videoId: string;
+  syncedLines: ParsedLyricLine[];
+  plainLyrics: string | null;
+  source: string;
+}
+
+const lyricsCache = new Map<string, TrackLyricsData>();
+
+function parseLrcLyrics(lrc: string): ParsedLyricLine[] {
+  const lines = lrc.split(/\r?\n/);
+  const parsed: ParsedLyricLine[] = [];
+  const timeRegex = /\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]/;
+  for (const rawLine of lines) {
+    const match = rawLine.match(timeRegex);
+    if (!match) continue;
+    const mins = parseInt(match[1], 10) || 0;
+    const secs = parseInt(match[2], 10) || 0;
+    const msStr = match[3] || '0';
+    const ms = parseInt(msStr.padEnd(3, '0').slice(0, 3), 10) || 0;
+    const text = rawLine.replace(/\[.*?\]/g, '').trim();
+    if (text) {
+      parsed.push({
+        timeSec: mins * 60 + secs + ms / 1000,
+        text,
+      });
+    }
+  }
+  return parsed;
+}
+
+async function fetchTrackLyrics(
+  track: YouTubeTrack,
+  signal?: AbortSignal
+): Promise<TrackLyricsData> {
+  const cached = lyricsCache.get(track.videoId);
+  if (cached) return cached;
+
+  const cleanTitle = track.title
+    .replace(/\(.*?\)|\[.*?\]/g, '')
+    .replace(/official\s*(video|audio|music\s*video|lyric\s*video)/gi, '')
+    .replace(/full\s*video|lyrical\s*video/gi, '')
+    .split('|')[0]
+    .split('-')[0]
+    .trim();
+  const primaryArtist = (track.artist || '').split(',')[0].split('&')[0].trim();
+
+  try {
+    const searchUrl = `https://lrclib.net/api/search?track_name=${encodeURIComponent(
+      cleanTitle || track.title
+    )}&artist_name=${encodeURIComponent(primaryArtist)}`;
+    const res = await fetch(searchUrl, { signal });
+    if (res.ok) {
+      const list = await res.json();
+      if (Array.isArray(list) && list.length > 0) {
+        const best =
+          list.find((item: any) => item?.syncedLyrics || item?.plainLyrics) || list[0];
+        if (best && (best.syncedLyrics || best.plainLyrics)) {
+          const syncedLines =
+            typeof best.syncedLyrics === 'string' ? parseLrcLyrics(best.syncedLyrics) : [];
+          const plainLyrics =
+            typeof best.plainLyrics === 'string' && best.plainLyrics.trim()
+              ? best.plainLyrics.trim()
+              : syncedLines.map((l) => l.text).join('\n');
+          const result: TrackLyricsData = {
+            videoId: track.videoId,
+            syncedLines,
+            plainLyrics: plainLyrics || null,
+            source: 'LRCLIB Music Catalog',
+          };
+          lyricsCache.set(track.videoId, result);
+          return result;
+        }
+      }
+    }
+
+    // Secondary query by combined q parameter
+    const fallbackRes = await fetch(
+      `https://lrclib.net/api/search?q=${encodeURIComponent(`${cleanTitle} ${primaryArtist}`.trim())}`,
+      { signal }
+    );
+    if (fallbackRes.ok) {
+      const list = await fallbackRes.json();
+      if (Array.isArray(list) && list.length > 0) {
+        const best =
+          list.find((item: any) => item?.syncedLyrics || item?.plainLyrics) || list[0];
+        if (best && (best.syncedLyrics || best.plainLyrics)) {
+          const syncedLines =
+            typeof best.syncedLyrics === 'string' ? parseLrcLyrics(best.syncedLyrics) : [];
+          const plainLyrics =
+            typeof best.plainLyrics === 'string' && best.plainLyrics.trim()
+              ? best.plainLyrics.trim()
+              : syncedLines.map((l) => l.text).join('\n');
+          const result: TrackLyricsData = {
+            videoId: track.videoId,
+            syncedLines,
+            plainLyrics: plainLyrics || null,
+            source: 'LRCLIB Music Catalog',
+          };
+          lyricsCache.set(track.videoId, result);
+          return result;
+        }
+      }
+    }
+  } catch {
+    // Fall through to structured fallback
+  }
+
+  const fallbackResult: TrackLyricsData = {
+    videoId: track.videoId,
+    syncedLines: [],
+    plainLyrics: [
+      `♪ ${track.title} ♪`,
+      `Artist: ${track.artist}`,
+      track.album ? `Album: ${track.album}` : '',
+      '',
+      ' Immerse in the melody — studio audio stream active.',
+      'Synced word-by-word lyrics for this specific recording are not yet indexed,',
+      'so enjoy the pure vocal & instrumental mix or switch to the Video view on the left.',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+    source: 'YouTube Music Studio Metadata',
+  };
+  lyricsCache.set(track.videoId, fallbackResult);
+  return fallbackResult;
+}
+
+const coverColorCache = new Map<string, string>();
+const FALLBACK_AMBIENT_COLORS = [
+  '225, 29, 72',   // Crimson Rose
+  '190, 18, 60',   // Deep Ruby
+  '124, 58, 237',  // Royal Violet
+  '37, 99, 235',   // Cobalt Blue
+  '13, 148, 136',  // Deep Teal
+  '217, 119, 6',   // Warm Amber
+  '220, 38, 38',   // YouTube Red
+  '147, 51, 234',  // Velvet Purple
+];
+
+function getDeterministicRgbForTrack(videoId: string): string {
+  let hash = 0;
+  for (let i = 0; i < videoId.length; i++) {
+    hash = (hash * 31 + videoId.charCodeAt(i)) | 0;
+  }
+  return FALLBACK_AMBIENT_COLORS[Math.abs(hash) % FALLBACK_AMBIENT_COLORS.length];
+}
+
+function extractDominantCoverColor(
+  videoId: string,
+  thumbnailUrl: string,
+  onColor: (rgbString: string) => void
+): void {
+  if (!videoId) {
+    onColor('255, 0, 51');
+    return;
+  }
+  const cached = coverColorCache.get(videoId);
+  if (cached) {
+    onColor(cached);
+    return;
+  }
+  const fallbackRgb = getDeterministicRgbForTrack(videoId);
+  onColor(fallbackRgb);
+
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  try {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.referrerPolicy = 'no-referrer';
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 24;
+        canvas.height = 24;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.drawImage(img, 0, 0, 24, 24);
+        const data = ctx.getImageData(0, 0, 24, 24).data;
+        let rSum = 0;
+        let gSum = 0;
+        let bSum = 0;
+        let count = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          const r = data[i];
+          const g = data[i + 1];
+          const b = data[i + 2];
+          const brightness = (r + g + b) / 3;
+          // Ignore near-black and near-white pixels for richer ambient color
+          if (brightness > 28 && brightness < 235) {
+            rSum += r;
+            gSum += g;
+            bSum += b;
+            count++;
+          }
+        }
+        if (count > 10) {
+          const rAvg = Math.min(255, Math.round((rSum / count) * 1.15));
+          const gAvg = Math.min(255, Math.round((gSum / count) * 1.15));
+          const bAvg = Math.min(255, Math.round((bSum / count) * 1.15));
+          const rgb = `${rAvg}, ${gAvg}, ${bAvg}`;
+          coverColorCache.set(videoId, rgb);
+          onColor(rgb);
+        }
+      } catch {
+        // Canvas tainted by cross-origin policy — keep deterministic fallbackRgb
+        coverColorCache.set(videoId, fallbackRgb);
+      }
+    };
+    img.onerror = () => {
+      coverColorCache.set(videoId, fallbackRgb);
+    };
+    img.src = normalizeSquareThumbnail(thumbnailUrl, videoId);
+  } catch {
+    coverColorCache.set(videoId, fallbackRgb);
+  }
+}
 
 const verifiedThumbnailCache = new Map<string, string>();
 
@@ -1300,10 +1786,23 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
         return;
       }
 
-      const thumbUrl = normalizeSquareThumbnail(track.thumbnail, track.videoId);
+      const toAbsolute = (url: string) => {
+        try {
+          if (typeof window !== 'undefined' && !url.startsWith('http://') && !url.startsWith('https://')) {
+            return new URL(url, window.location.href).href;
+          }
+        } catch {}
+        return url;
+      };
+      const thumbUrl = toAbsolute(normalizeSquareThumbnail(track.thumbnail, track.videoId));
       const artworkList = buildMediaArtworkList(track.thumbnail, track.videoId);
       const { currentTime, duration } = getPlaybackMetrics();
-      const effectiveDur = duration > 0 ? duration : track.durationSeconds || 0;
+      const effectiveDur =
+        duration > 0
+          ? duration
+          : track.durationSeconds && track.durationSeconds > 0
+          ? track.durationSeconds
+          : 215;
 
       if (
         typeof navigator !== 'undefined' &&
@@ -1312,6 +1811,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
         typeof (window as any).MediaMetadata !== 'undefined'
       ) {
         try {
+          bindMediaSessionHandlersRef.current();
           navigator.mediaSession.metadata = new window.MediaMetadata({
             title: track.title,
             artist: track.artist,
@@ -1319,23 +1819,11 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
             artwork: artworkList,
           });
           navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
-          bindMediaSessionHandlersRef.current();
-
-          if (effectiveDur > 0) {
-            updateMediaSessionPosition(currentTime, effectiveDur);
-          }
+          updateMediaSessionPosition(currentTime, effectiveDur);
         } catch {}
       }
 
-      // IMPORTANT FOR APK:
-      // In older APK builds, `CallAndOverlayHelper.updateMusicNotification(..., isPlaying = true)`
-      // calls `AudioManager.requestAudioFocus()`, which steals Android AudioFocus away from
-      // Chromium WebView if called repeatedly while WebView is already playing!
-      // Therefore:
-      // 1) Only post the native `playing = true` notification once per track start/resume
-      //    (before WebView playback begins), and IMMEDIATELY call `abandonAudioFocus()` on the
-      //    next synchronous line so Chromium WebView's AudioFocusDelegate owns AudioFocus 100%.
-      // 2) Always post `playing = false` on pause (which never requests AudioFocus).
+      // Keep native Android notification panel and lock-screen media controls active
       try {
         if (!playing) {
           nativeNotifiedPlayingKeyRef.current = null;
@@ -1346,7 +1834,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
               thumbUrl,
               false,
               Math.max(0, Math.floor(currentTime || 0)),
-              Math.max(0, Math.floor(effectiveDur || 0))
+              Math.max(1, Math.floor(effectiveDur))
             );
           } else {
             window.AndroidApp?.updateMusicNotification?.(
@@ -1357,7 +1845,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
             );
           }
           window.AndroidApp?.abandonAudioFocus?.();
-        } else if (nativeNotifiedPlayingKeyRef.current !== track.videoId) {
+        } else {
           nativeNotifiedPlayingKeyRef.current = track.videoId;
           if (typeof window.AndroidApp?.updateMusicNotificationWithPosition === 'function') {
             window.AndroidApp.updateMusicNotificationWithPosition(
@@ -1366,7 +1854,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
               thumbUrl,
               true,
               Math.max(0, Math.floor(currentTime || 0)),
-              Math.max(0, Math.floor(effectiveDur || 0))
+              Math.max(1, Math.floor(effectiveDur))
             );
           } else {
             window.AndroidApp?.updateMusicNotification?.(
@@ -1376,7 +1864,6 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
               true
             );
           }
-          window.AndroidApp?.abandonAudioFocus?.();
         }
       } catch {}
     },
@@ -1387,6 +1874,42 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
   useEffect(() => {
     applyMediaMetadata(currentTrack, isPlaying);
   }, [currentTrack, isPlaying, applyMediaMetadata]);
+
+  // Continuous background MediaSession & Native Android Notification position/controls sync
+  // (Runs even when PlayerProgressBar is unmounted while viewing Lyrics/Up Next or other tabs)
+  useEffect(() => {
+    if (!isPlaying || !currentTrack) return;
+    let lastNativePushMs = 0;
+    let lastKnownDur = 0;
+
+    const syncTick = () => {
+      const tr = currentTrackRef.current;
+      if (!tr || !userWantPlayingRef.current) return;
+      const { currentTime, duration } = getPlaybackMetrics();
+      const effectiveDur =
+        duration > 0
+          ? duration
+          : tr.durationSeconds && tr.durationSeconds > 0
+          ? tr.durationSeconds
+          : 215;
+
+      bindMediaSessionHandlersRef.current();
+      updateMediaSessionPosition(currentTime, effectiveDur);
+
+      const now = performance.now();
+      const durJustResolved = duration > 0 && lastKnownDur === 0;
+      if (durJustResolved) {
+        lastKnownDur = duration;
+      }
+      if (durJustResolved || now - lastNativePushMs > 4000) {
+        lastNativePushMs = now;
+        applyMediaMetadata(tr, true);
+      }
+    };
+
+    const timerId = window.setInterval(syncTick, 1000);
+    return () => window.clearInterval(timerId);
+  }, [isPlaying, currentTrack, getPlaybackMetrics, applyMediaMetadata]);
 
   // Pause helper (used by UI, Media Session, and voice note recording event)
   const pausePlayback = useCallback(() => {
@@ -1585,15 +2108,21 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   : 'small';
                 event.target?.setPlaybackQuality?.(targetQuality);
               } catch {}
-              const carrier = getTopLevelAudioCarrier();
-              if (carrier && carrier.paused) {
-                carrier.play().catch(() => {});
-              }
+              reclaimTopLevelAudioCarrier();
               setIsPlaying(true);
               setIsBuffering(false);
               setStatusNotice(null);
               if (currentTrackRef.current) {
                 applyMediaMetadata(currentTrackRef.current, true);
+              }
+              // Re-assert top-level MediaSession ownership after YouTube iframe claims internal focus
+              for (const delay of [150, 550, 1200]) {
+                window.setTimeout(() => {
+                  if (userWantPlayingRef.current && currentTrackRef.current) {
+                    reclaimTopLevelAudioCarrier();
+                    applyMediaMetadata(currentTrackRef.current, true);
+                  }
+                }, delay);
               }
             } else if (state === 2) {
               // If the user still wants music playing and the video viewport is hidden (or app is minimized/backgrounded),
@@ -1798,20 +2327,12 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
         } catch {}
       }, 4500);
 
-      // If an older APK's Java updateMusicNotification briefly stole Android AudioFocus at t=0ms,
-      // re-assert WebView playback at 90ms and 320ms after Java AudioFocus was abandoned.
       for (const delayMs of [90, 320]) {
         window.setTimeout(() => {
           if (!userWantPlayingRef.current || currentTrackRef.current?.videoId !== track.videoId) {
             return;
           }
-          try {
-            window.AndroidApp?.abandonAudioFocus?.();
-          } catch {}
-          const c = getTopLevelAudioCarrier();
-          if (c && c.paused) {
-            c.play().catch(() => {});
-          }
+          primeAndPlayAudioCarrier();
           if (playerRef.current && isPlayerReadyRef.current) {
             try {
               const st = playerRef.current.getPlayerState?.();
@@ -1924,6 +2445,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       lastPlayInitiatedAtRef.current = tapStartPerf;
       triggerHaptic(25);
       userWantPlayingRef.current = true;
+      primeAndPlayAudioCarrier();
 
       // Resolve against canonical registry first so any known Discovery track has 100% verified metadata & videoId
       const canonicalTrack = resolveCanonicalTrack(incomingTrack);
@@ -2069,10 +2591,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     nativeNotifiedPlayingKeyRef.current = null;
     applyMediaMetadata(cur, true);
 
-    const carrier = getTopLevelAudioCarrier();
-    if (carrier && carrier.paused) {
-      carrier.play().catch(() => {});
-    }
+    primeAndPlayAudioCarrier();
 
     const playableId = getKnownPlayableVideoId(cur.videoId);
     if (
@@ -2311,10 +2830,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
         return;
       }
 
-      const carrier = getTopLevelAudioCarrier();
-      if (carrier && carrier.paused) {
-        carrier.play().catch(() => {});
-      }
+      primeAndPlayAudioCarrier();
 
       if (playerRef.current && isPlayerReadyRef.current) {
         try {
@@ -2330,6 +2846,21 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
+
+  // Guarantee that any initial user tap or touch synchronously unlocks the top-level carrier audio element
+  useEffect(() => {
+    const unlockOnGesture = () => {
+      if (userWantPlayingRef.current) {
+        primeAndPlayAudioCarrier();
+      }
+    };
+    window.addEventListener('touchstart', unlockOnGesture, { passive: true });
+    window.addEventListener('click', unlockOnGesture, { passive: true });
+    return () => {
+      window.removeEventListener('touchstart', unlockOnGesture);
+      window.removeEventListener('click', unlockOnGesture);
+    };
   }, []);
 
   const handleTogglePlayPause = useCallback(() => {
@@ -2352,6 +2883,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     if (isPlaying) {
       pausePlayback();
     } else {
+      primeAndPlayAudioCarrier();
       resumePlayback();
     }
   }, [activeResultSection, currentTrack, handleSelectTrack, isPlaying, pausePlayback, resumePlayback, tracks, videoTracks]);
@@ -2501,7 +3033,161 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     }
   };
 
-  // Keyboard Shortcuts (Space, Arrow keys, N, P, M) with input protection
+  // ==================== YOUTUBE MUSIC NAVIGATION, PLAYLISTS, MOODS & NOW PLAYING STATE ====================
+  const [ytmView, setYtmView] = useState<'home' | 'explore' | 'library' | 'liked' | 'playlist' | 'search'>('home');
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
+  const [isNowPlayingOpen, setIsNowPlayingOpen] = useState<boolean>(false);
+  const [nowPlayingTab, setNowPlayingTab] = useState<'upnext' | 'lyrics' | 'related'>('upnext');
+  const [isAppleSheetDrawerOpen, setIsAppleSheetDrawerOpen] = useState<boolean>(false);
+
+  // Home Mood Chips state (Relax, Workout, Focus, Party + All, Romantic, Lo-Fi, Punjabi)
+  const [homeMood, setHomeMood] = useState<string>('All');
+  const [moodTracksCache, setMoodTracksCache] = useState<Record<string, YouTubeTrack[]>>({});
+  const [isLoadingMood, setIsLoadingMood] = useState<boolean>(false);
+
+  // User Playlists state persisted in localStorage
+  const [playlists, setPlaylists] = useState<UserPlaylist[]>(() => loadUserPlaylists(userId));
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
+  const [isCreatePlaylistOpen, setIsCreatePlaylistOpen] = useState<boolean>(false);
+  const [newPlaylistName, setNewPlaylistName] = useState<string>('');
+  const [trackForPlaylistModal, setTrackForPlaylistModal] = useState<YouTubeTrack | null>(null);
+
+  useEffect(() => {
+    setPlaylists(loadUserPlaylists(userId));
+  }, [userId]);
+
+  const handleCreatePlaylist = useCallback(
+    (e?: React.FormEvent) => {
+      if (e) e.preventDefault();
+      const trimmed = newPlaylistName.trim();
+      if (!trimmed) return;
+      triggerHaptic(20);
+      const newPl: UserPlaylist = {
+        id: `pl_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        name: trimmed,
+        createdAt: Date.now(),
+        tracks: trackForPlaylistModal ? [resolveCanonicalTrack(trackForPlaylistModal)] : [],
+      };
+      setPlaylists((prev) => {
+        const next = [newPl, ...prev];
+        saveUserPlaylists(userId, next);
+        return next;
+      });
+      setNewPlaylistName('');
+      setIsCreatePlaylistOpen(false);
+      if (trackForPlaylistModal) {
+        showNativeToast(`Added "${trackForPlaylistModal.title}" to "${trimmed}"`);
+        setTrackForPlaylistModal(null);
+      } else {
+        showNativeToast(`Playlist "${trimmed}" created`);
+        setSelectedPlaylistId(newPl.id);
+        setYtmView('playlist');
+      }
+    },
+    [newPlaylistName, trackForPlaylistModal, userId]
+  );
+
+  const handleDeletePlaylist = useCallback(
+    (playlistId: string) => {
+      triggerHaptic(20);
+      setPlaylists((prev) => {
+        const target = prev.find((p) => p.id === playlistId);
+        const next = prev.filter((p) => p.id !== playlistId);
+        saveUserPlaylists(userId, next);
+        if (target) showNativeToast(`Deleted playlist "${target.name}"`);
+        return next;
+      });
+      if (selectedPlaylistId === playlistId) {
+        setSelectedPlaylistId(null);
+        setYtmView('library');
+      }
+    },
+    [selectedPlaylistId, userId]
+  );
+
+  const handleAddTrackToPlaylist = useCallback(
+    (playlistId: string, track: YouTubeTrack) => {
+      triggerHaptic(15);
+      const canonical = resolveCanonicalTrack(track);
+      setPlaylists((prev) => {
+        const next = prev.map((pl) => {
+          if (pl.id !== playlistId) return pl;
+          if (pl.tracks.some((t) => t.videoId === canonical.videoId)) {
+            showNativeToast(`Already in "${pl.name}"`);
+            return pl;
+          }
+          showNativeToast(`Added to "${pl.name}"`);
+          return { ...pl, tracks: [...pl.tracks, canonical] };
+        });
+        saveUserPlaylists(userId, next);
+        return next;
+      });
+      setTrackForPlaylistModal(null);
+    },
+    [userId]
+  );
+
+  const handleRemoveTrackFromPlaylist = useCallback(
+    (playlistId: string, videoId: string) => {
+      triggerHaptic(15);
+      setPlaylists((prev) => {
+        const next = prev.map((pl) => {
+          if (pl.id !== playlistId) return pl;
+          return { ...pl, tracks: pl.tracks.filter((t) => t.videoId !== videoId) };
+        });
+        saveUserPlaylists(userId, next);
+        return next;
+      });
+    },
+    [userId]
+  );
+
+  // Queue Reorder & Remove Handlers (Up Next tab)
+  const handleRemoveFromQueue = useCallback(
+    (videoIdToRemove: string) => {
+      triggerHaptic(15);
+      const currentList = getActivePlaybackQueue();
+      const nextList = currentList.filter((t) => t.videoId !== videoIdToRemove);
+      customQueueRef.current = nextList;
+      setCustomQueue(nextList);
+      showNativeToast('Removed from queue');
+    },
+    [getActivePlaybackQueue]
+  );
+
+  const handleMoveQueueItem = useCallback(
+    (index: number, direction: 'up' | 'down') => {
+      triggerHaptic(10);
+      const currentList = [...getActivePlaybackQueue()];
+      const targetIndex = direction === 'up' ? index - 1 : index + 1;
+      if (targetIndex < 0 || targetIndex >= currentList.length) return;
+      const temp = currentList[index];
+      currentList[index] = currentList[targetIndex];
+      currentList[targetIndex] = temp;
+      customQueueRef.current = currentList;
+      setCustomQueue(currentList);
+    },
+    [getActivePlaybackQueue]
+  );
+
+  const handleAddTrackToQueue = useCallback(
+    (track: YouTubeTrack) => {
+      triggerHaptic(15);
+      const canonical = resolveCanonicalTrack(track);
+      const currentList = getActivePlaybackQueue();
+      if (currentList.some((t) => t.videoId === canonical.videoId)) {
+        showNativeToast(`"${canonical.title}" is already in Up Next`);
+        return;
+      }
+      const nextList = [...currentList, canonical];
+      customQueueRef.current = nextList;
+      setCustomQueue(nextList);
+      showNativeToast(`Added "${canonical.title}" to Up Next`);
+    },
+    [getActivePlaybackQueue]
+  );
+
+  // Keyboard Shortcuts (Space = play/pause, Left/Right arrows = prev/next or Shift+arrows = seek)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const activeEl = document.activeElement;
@@ -2520,6 +3206,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
         if (userWantPlayingRef.current) {
           pausePlayback();
         } else {
+          primeAndPlayAudioCarrier();
           resumePlayback();
         }
       } else if (key === 'n') {
@@ -2531,14 +3218,35 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       } else if (key === 'm') {
         e.preventDefault();
         handleToggleMute();
+      } else if (key === 'l') {
+        e.preventDefault();
+        if (currentTrackRef.current) {
+          handleToggleFavorite(currentTrackRef.current);
+        }
+      } else if (key === 'escape') {
+        if (trackForPlaylistModal) {
+          setTrackForPlaylistModal(null);
+        } else if (isCreatePlaylistOpen) {
+          setIsCreatePlaylistOpen(false);
+        } else if (isNowPlayingOpen) {
+          setIsNowPlayingOpen(false);
+        }
       } else if (key === 'arrowright') {
         e.preventDefault();
-        const { currentTime, duration } = getPlaybackMetrics();
-        handleSeekTo(duration > 0 ? Math.min(duration, currentTime + 5) : currentTime + 5);
+        if (e.shiftKey) {
+          const { currentTime, duration } = getPlaybackMetrics();
+          handleSeekTo(duration > 0 ? Math.min(duration, currentTime + 5) : currentTime + 5);
+        } else {
+          playNextTrack();
+        }
       } else if (key === 'arrowleft') {
         e.preventDefault();
-        const { currentTime } = getPlaybackMetrics();
-        handleSeekTo(Math.max(0, currentTime - 5));
+        if (e.shiftKey) {
+          const { currentTime } = getPlaybackMetrics();
+          handleSeekTo(Math.max(0, currentTime - 5));
+        } else {
+          playPrevTrack();
+        }
       } else if (key === 'arrowup') {
         e.preventDefault();
         setVolume((v) => {
@@ -2576,10 +3284,14 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     getActivePlaybackQueue,
     getPlaybackMetrics,
     handleSeekTo,
+    handleToggleFavorite,
+    isCreatePlaylistOpen,
+    isNowPlayingOpen,
     pausePlayback,
     playNextTrack,
     playPrevTrack,
     resumePlayback,
+    trackForPlaylistModal,
   ]);
 
   const runSearch = useCallback(async (queryText: string, saveToRecent = true) => {
@@ -2595,7 +3307,9 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
 
     const normalized = trimmed.toLowerCase();
 
-    // Always open Songs section by default whenever a search is performed
+    // Always open Search view & Songs section by default whenever a search is performed
+    setYtmView('search');
+    setIsNowPlayingOpen(false);
     setActiveResultSection('songs');
     activeResultSectionRef.current = 'songs';
     setShowVideoViewport(false);
@@ -2792,7 +3506,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       return;
     }
 
-    // Always open Songs section by default whenever the user searches
+    setYtmView('search');
     setActiveResultSection('songs');
     activeResultSectionRef.current = 'songs';
     setShowVideoViewport(false);
@@ -2820,7 +3534,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     }
 
     debounceTimerRef.current = window.setTimeout(() => {
-      void runSearch(val, true);
+      void runSearch(val, false);
     }, 260);
   };
 
@@ -2874,6 +3588,8 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     triggerHaptic(20);
     setSearchQuery(suggestionText);
     setIsSearchFocused(false);
+    setYtmView('search');
+    setIsNowPlayingOpen(false);
     setActiveResultSection('songs');
     activeResultSectionRef.current = 'songs';
     setShowVideoViewport(false);
@@ -2889,6 +3605,8 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setIsSearchFocused(false);
+    setYtmView('search');
+    setIsNowPlayingOpen(false);
     setActiveResultSection('songs');
     activeResultSectionRef.current = 'songs';
     setShowVideoViewport(false);
@@ -2905,6 +3623,8 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     triggerHaptic(20);
     setSearchQuery(recentQuery);
     setIsSearchFocused(false);
+    setYtmView('search');
+    setIsNowPlayingOpen(false);
     setActiveResultSection('songs');
     activeResultSectionRef.current = 'songs';
     setShowVideoViewport(false);
@@ -2924,26 +3644,96 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     setRecentSearches(next);
   };
 
-  const totalResultsCount = tracks.length + videoTracks.length;
+  // Mood Chips Filtering & Dynamic YouTube Music Catalog Fetch for Home Page
+  const HOME_MOOD_CHIPS = [
+    { id: 'All', label: 'All', query: '' },
+    { id: 'Relax', label: 'Relax', query: 'Relaxing chill hindi acoustic lofi songs' },
+    { id: 'Workout', label: 'Workout', query: 'Energetic bollywood punjabi workout gym hits' },
+    { id: 'Focus', label: 'Focus', query: 'Deep focus study instrumental lofi chill beats' },
+    { id: 'Party', label: 'Party', query: 'Bollywood punjabi party dance hits songs' },
+    { id: 'Romantic', label: 'Romantic', query: 'Romantic bollywood love songs Arijit Singh' },
+    { id: 'Lo-Fi', label: 'Lo-Fi', query: 'Bollywood lofi chill slowed reverb songs' },
+    { id: 'Punjabi', label: 'Punjabi', query: 'Top punjabi hits Diljit Dosanjh AP Dhillon Karan Aujla' },
+  ];
 
-  // Synced with standard application theme CSS variables from index.css
-  const activePalette = {
-    shellBg: 'var(--bg)',
-    shellBgImage: 'var(--bg-gradient)',
-    shellBorder: 'var(--card-border)',
-    shellShadow: 'var(--glass-shadow, 0 14px 38px var(--shadow-color))',
-    deckBg: 'var(--card)',
-    deckBorder: 'var(--card-border)',
-    subBg: 'var(--card-subtle)',
-    inputBg: 'var(--input-bg)',
-    accent: 'var(--accent)',
-    accentHover: 'var(--accent-hover)',
-    accentText: 'var(--accent-text)',
-    accentGradient: 'linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%)',
-    accentGlow: 'var(--shadow-color)',
-    textPrimary: 'var(--text)',
-    textSecondary: 'var(--text-soft)',
-  };
+  useEffect(() => {
+    if (homeMood === 'All') {
+      setIsLoadingMood(false);
+      return;
+    }
+    if (moodTracksCache[homeMood] && moodTracksCache[homeMood].length > 0) {
+      setIsLoadingMood(false);
+      return;
+    }
+    const chip = HOME_MOOD_CHIPS.find((c) => c.id === homeMood);
+    if (!chip || !chip.query) return;
+
+    const controller = new AbortController();
+    setIsLoadingMood(true);
+    void searchYouTubeSongs(chip.query, controller.signal)
+      .then((res) => {
+        if (!controller.signal.aborted && res.length > 0) {
+          setMoodTracksCache((prev) => ({ ...prev, [homeMood]: res }));
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setIsLoadingMood(false);
+        }
+      });
+
+    return () => controller.abort();
+  }, [homeMood, moodTracksCache]);
+
+  const getFilteredHomePools = useCallback((): {
+    listenAgain: YouTubeTrack[];
+    quickPicks: YouTubeTrack[];
+  } => {
+    if (homeMood === 'All') {
+      const baseListenAgain =
+        recentPlayedTracks.length > 0
+          ? recentPlayedTracks
+          : QUICK_PICKS_TRACKS.slice(0, 12);
+      return {
+        listenAgain: baseListenAgain,
+        quickPicks: ALL_DISCOVERY_TRACKS.slice(0, 20),
+      };
+    }
+
+    const fetched = moodTracksCache[homeMood] || [];
+    const moodLower = homeMood.toLowerCase();
+    const localMatches = ALL_DISCOVERY_TRACKS.filter((t) => {
+      const hay = `${t.title} ${t.artist} ${t.album || ''}`.toLowerCase();
+      if (moodLower === 'relax') {
+        return /apna|kesariya|tum hi ho|heeriye|raataan|satranga|agar tum|kabira|shayad|tera yaar|channa|hawayein/i.test(hay);
+      }
+      if (moodLower === 'workout' || moodLower === 'party') {
+        return /chaleya|lover|diljit|ap dhillon|karan|badshah|brown munde|excuses|softly|tauba|illuminati|kala chashma/i.test(hay);
+      }
+      if (moodLower === 'focus' || moodLower === 'lo-fi') {
+        return /pehle bhi|tu hai kahan|husn|anuv|prateek|local train|pasoori|iraaday|faasle|gul/i.test(hay);
+      }
+      if (moodLower === 'punjabi') {
+        return /diljit|ap dhillon|karan|shubh|sidhu|punjabi|lover|softly|excuses|with you|hass hass/i.test(hay);
+      }
+      return true;
+    });
+
+    const combined: YouTubeTrack[] = [];
+    const seen = new Set<string>();
+    for (const item of [...fetched, ...localMatches, ...QUICK_PICKS_TRACKS]) {
+      if (!seen.has(item.videoId)) {
+        seen.add(item.videoId);
+        combined.push(item);
+      }
+    }
+
+    return {
+      listenAgain: combined.slice(0, 10),
+      quickPicks: combined.slice(2, 22),
+    };
+  }, [homeMood, moodTracksCache, recentPlayedTracks]);
 
   const isMelodiesPage = activeTab === 'melodies';
   const filteredPool =
@@ -2956,6 +3746,46 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     currentTrack ||
     filteredPool[0] ||
     QUICK_PICKS_TRACKS[0];
+
+  // Dynamic Now Playing Cover Ambient Color
+  const [coverAmbientRgb, setCoverAmbientRgb] = useState<string>(() =>
+    getDeterministicRgbForTrack(displayTrack.videoId)
+  );
+  useEffect(() => {
+    extractDominantCoverColor(
+      displayTrack.videoId,
+      displayTrack.thumbnail,
+      setCoverAmbientRgb
+    );
+  }, [displayTrack.videoId, displayTrack.thumbnail]);
+
+  // Real Lyrics Fetcher for Now Playing Lyrics Tab
+  const [lyricsData, setLyricsData] = useState<TrackLyricsData | null>(null);
+  const [isLoadingLyrics, setIsLoadingLyrics] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!displayTrack?.videoId) return;
+    const cached = lyricsCache.get(displayTrack.videoId);
+    if (cached) {
+      setLyricsData(cached);
+      setIsLoadingLyrics(false);
+      return;
+    }
+    const controller = new AbortController();
+    setIsLoadingLyrics(true);
+    void fetchTrackLyrics(displayTrack, controller.signal)
+      .then((res) => {
+        if (!controller.signal.aborted) {
+          setLyricsData(res);
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setIsLoadingLyrics(false);
+        }
+      });
+    return () => controller.abort();
+  }, [displayTrack.videoId, displayTrack.title, displayTrack.artist]);
 
   // ==================== DYNAMIC "MORE LIKE THIS" RELATED SONGS STATE ====================
   const [relatedMoodFilter, setRelatedMoodFilter] = useState<string>('context');
@@ -2986,7 +3816,6 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
   }, [displayTrack]);
 
   // Helper to merge newly loaded related tracks into the active RELATED queue
-  // without resetting the user's current queue position when stepping via Next/Prev
   const syncRelatedTracksToActiveQueue = useCallback(
     (seedTrack: YouTubeTrack, incomingRelated: YouTubeTrack[]) => {
       if (!incomingRelated.length) return;
@@ -3037,7 +3866,6 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       syncRelatedTracksToActiveQueue(contextTrack, cached.tracks);
     }
 
-    // If we already fetched at least one network batch for this track + mood, no need to re-fetch until user scrolls
     if (cached.cursorIndex > 0 && cached.tracks.length >= 12) {
       setIsLoadingRelated(false);
       return;
@@ -3135,29 +3963,6 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     [loadMoreRelatedTracks]
   );
 
-  // Continuous loading IntersectionObserver when the expanded "More Like This" view is open
-  useEffect(() => {
-    if (!isMoreLikeThisOpen) return;
-    const sentinel = relatedSentinelRef.current;
-    const root = relatedScrollContainerRef.current;
-    if (!sentinel || typeof IntersectionObserver === 'undefined') return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting) {
-          void loadMoreRelatedTracks();
-        }
-      },
-      {
-        root,
-        rootMargin: '280px',
-        threshold: 0.01,
-      }
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [isMoreLikeThisOpen, relatedTracks.length, loadMoreRelatedTracks]);
-
   // ==================== PHASE 7: INTELLIGENT NEXT-TRACK PRELOADING ====================
   useEffect(() => {
     if (!isPlaying || !currentTrack) return;
@@ -3210,12 +4015,12 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     if (typeof window === 'undefined') return;
     window.__kashishConsumeMusicPlayerBack = () => {
       if (activeTab !== 'melodies') return false;
-      if (isMoreLikeThisOpen) {
-        setIsMoreLikeThisOpen(false);
+      if (trackForPlaylistModal) {
+        setTrackForPlaylistModal(null);
         return true;
       }
-      if (isLibraryQueueOpen) {
-        setIsLibraryQueueOpen(false);
+      if (isCreatePlaylistOpen) {
+        setIsCreatePlaylistOpen(false);
         return true;
       }
       if (isEqMenuOpen) {
@@ -3230,18 +4035,25 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
         setIsVideoFullscreen(false);
         return true;
       }
-      if (showVideoViewport) {
-        setShowVideoViewport(false);
-        showVideoViewportRef.current = false;
+      if (isNowPlayingOpen) {
+        setIsNowPlayingOpen(false);
         return true;
       }
-      if (isListExpanded) {
-        setIsListExpanded(false);
+      if (isMoreLikeThisOpen) {
+        setIsMoreLikeThisOpen(false);
+        return true;
+      }
+      if (isLibraryQueueOpen) {
+        setIsLibraryQueueOpen(false);
         return true;
       }
       if (isSearchFocused) {
         setIsSearchFocused(false);
         searchInputRef.current?.blur();
+        return true;
+      }
+      if (ytmView !== 'home') {
+        setYtmView('home');
         return true;
       }
       return false;
@@ -3251,78 +4063,242 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     };
   }, [
     activeTab,
-    isMoreLikeThisOpen,
-    isLibraryQueueOpen,
+    isCreatePlaylistOpen,
     isEqMenuOpen,
+    isLibraryQueueOpen,
+    isMoreLikeThisOpen,
+    isNowPlayingOpen,
+    isSearchFocused,
     isSleepMenuOpen,
     isVideoFullscreen,
-    showVideoViewport,
-    isListExpanded,
-    isSearchFocused,
+    trackForPlaylistModal,
+    ytmView,
   ]);
+
+  const { listenAgain: homeListenAgain, quickPicks: homeQuickPicks } = getFilteredHomePools();
+  const activeQueueList = getActivePlaybackQueue();
+  const selectedPlaylist = playlists.find((p) => p.id === selectedPlaylistId) || null;
+
+  const ytmPalette = {
+    shellBg: '#000000',
+    shellBgImage: 'none',
+    shellBorder: 'rgba(255,255,255,0.1)',
+    shellShadow: '0 14px 38px rgba(0,0,0,0.8)',
+    deckBg: '#121212',
+    deckBorder: 'rgba(255,255,255,0.1)',
+    subBg: '#181818',
+    inputBg: '#121212',
+    accent: '#ff0033',
+    accentHover: '#e6002e',
+    accentText: '#ffffff',
+    accentGradient: 'linear-gradient(135deg, #ff0033 0%, #cc0029 100%)',
+    accentGlow: 'rgba(255, 0, 51, 0.35)',
+    textPrimary: '#ffffff',
+    textSecondary: '#a3a3a3',
+  };
+
+  const renderSongRow = (
+    song: YouTubeTrack,
+    idx: number,
+    queueContext: YouTubeTrack[],
+    queueLabel: string,
+    options?: {
+      showPlaylistRemoveId?: string;
+      showQueueControls?: boolean;
+      totalInQueue?: number;
+    }
+  ) => {
+    const isCurrent = displayTrack.videoId === song.videoId;
+    const isFav = favoriteIds.has(song.videoId);
+    return (
+      <div
+        key={`${queueLabel}-${song.videoId}-${idx}`}
+        onMouseEnter={() => handlePreCueTrack(song)}
+        onTouchStart={() => handlePreCueTrack(song)}
+        onClick={() =>
+          handleSelectTrack(
+            song,
+            queueContext,
+            queueLabel,
+            Boolean(options?.showQueueControls)
+          )
+        }
+        className={`group flex items-center gap-3 px-2.5 sm:px-3 py-2 rounded-xl transition-colors cursor-pointer select-none ${
+          isCurrent
+            ? 'bg-[#1f1f1f] border border-[#ff0033]/40'
+            : 'hover:bg-[#141414] border border-transparent'
+        }`}
+      >
+        {/* Thumbnail with play overlay */}
+        <div className="relative w-11 h-11 sm:w-12 sm:h-12 rounded-lg overflow-hidden bg-[#181818] shrink-0">
+          <HighResThumbnail
+            videoId={song.videoId}
+            rawThumbnail={song.thumbnail}
+            alt={song.title}
+            aspect="square"
+            className="w-full h-full object-cover"
+          />
+          <div
+            className={`absolute inset-0 bg-black/55 flex items-center justify-center transition-opacity ${
+              isCurrent ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+            }`}
+          >
+            {isCurrent && isPlaying ? (
+              <div className="flex items-end gap-0.5 h-3.5">
+                <span className="w-0.5 h-2 bg-[#ff0033] rounded-full animate-pulse" />
+                <span className="w-0.5 h-3.5 bg-[#ff0033] rounded-full animate-bounce" />
+                <span className="w-0.5 h-2.5 bg-[#ff0033] rounded-full animate-pulse" />
+              </div>
+            ) : (
+              <Play className="w-4 h-4 text-white fill-white ml-0.5" />
+            )}
+          </div>
+        </div>
+
+        {/* Title & Artist */}
+        <div className="min-w-0 flex-1">
+          <p
+            className={`text-xs sm:text-sm font-semibold truncate ${
+              isCurrent ? 'text-[#ff0033]' : 'text-white'
+            }`}
+          >
+            {song.title}
+          </p>
+          <p className="text-[11px] sm:text-xs text-neutral-400 truncate">
+            {song.artist}
+            {song.album ? ` • ${song.album}` : ''}
+          </p>
+        </div>
+
+        {/* Duration */}
+        {song.durationText && !options?.showQueueControls && (
+          <span className="hidden sm:inline-block text-xs font-mono tabular-nums text-neutral-400 shrink-0">
+            {song.durationText}
+          </span>
+        )}
+
+        {/* Action Buttons */}
+        <div
+          className="flex items-center gap-0.5 sm:gap-1 shrink-0"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Like Button */}
+          <button
+            type="button"
+            onClick={() => handleToggleFavorite(song)}
+            className="p-1.5 rounded-full text-neutral-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+            title={isFav ? 'Remove from Liked songs' : 'Add to Liked songs'}
+            aria-label="Like song"
+          >
+            <Heart
+              className={`w-4 h-4 ${
+                isFav ? 'fill-[#ff0033] text-[#ff0033]' : 'text-neutral-400'
+              }`}
+            />
+          </button>
+
+          {/* Add to Playlist Button */}
+          <button
+            type="button"
+            onClick={() => {
+              triggerHaptic(10);
+              setTrackForPlaylistModal(song);
+            }}
+            className="p-1.5 rounded-full text-neutral-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+            title="Save to playlist"
+            aria-label="Save to playlist"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+
+          {/* Add to Queue Button */}
+          {!options?.showQueueControls && (
+            <button
+              type="button"
+              onClick={() => handleAddTrackToQueue(song)}
+              className="hidden sm:inline-flex p-1.5 rounded-full text-neutral-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+              title="Add to Up Next queue"
+              aria-label="Add to Up Next queue"
+            >
+              <ListMusic className="w-4 h-4" />
+            </button>
+          )}
+
+          {/* Remove from Playlist button if inside custom playlist */}
+          {options?.showPlaylistRemoveId && (
+            <button
+              type="button"
+              onClick={() =>
+                handleRemoveTrackFromPlaylist(options.showPlaylistRemoveId!, song.videoId)
+              }
+              className="p-1.5 rounded-full text-neutral-400 hover:text-[#ff0033] hover:bg-white/10 transition-colors cursor-pointer"
+              title="Remove from playlist"
+              aria-label="Remove from playlist"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
+
+          {/* Queue Reorder & Remove Controls */}
+          {options?.showQueueControls && (
+            <>
+              <button
+                type="button"
+                disabled={idx === 0}
+                onClick={() => handleMoveQueueItem(idx, 'up')}
+                className="p-1 rounded-lg text-neutral-400 hover:text-white hover:bg-white/10 disabled:opacity-25 cursor-pointer"
+                title="Move up"
+                aria-label="Move track up"
+              >
+                <ChevronUp className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                disabled={idx === (options.totalInQueue || 1) - 1}
+                onClick={() => handleMoveQueueItem(idx, 'down')}
+                className="p-1 rounded-lg text-neutral-400 hover:text-white hover:bg-white/10 disabled:opacity-25 cursor-pointer"
+                title="Move down"
+                aria-label="Move track down"
+              >
+                <ChevronDown className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => handleRemoveFromQueue(song.videoId)}
+                className="p-1 rounded-lg text-neutral-400 hover:text-[#ff0033] hover:bg-white/10 cursor-pointer"
+                title="Remove from queue"
+                aria-label="Remove track from queue"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div
-      style={
-        isMelodiesPage
-          ? {
-              backgroundColor: activePalette.shellBg,
-              backgroundImage: activePalette.shellBgImage,
-              color: activePalette.textPrimary,
-            }
-          : undefined
-      }
       className={
         isMelodiesPage
-          ? `fixed inset-0 top-14 z-30 w-full h-[calc(100dvh-3.5rem)] overflow-hidden px-3 sm:px-6 pt-2.5 ${
-              isSearchFocused ? 'pb-2' : 'pb-[82px]'
-            } flex flex-col justify-between transition-colors duration-300 select-none`
-          : ''
+          ? 'fixed inset-0 top-14 z-30 w-full h-[calc(var(--stable-vh,100dvh)-3.5rem)] pb-[calc(3.25rem+env(safe-area-inset-bottom,0px))] bg-black text-white flex flex-col overflow-hidden select-none'
+          : 'fixed -top-[9999px] -left-[9999px] w-px h-px overflow-hidden opacity-0 pointer-events-none'
       }
     >
-      {/* Dynamic Album Art Ambient Glow synced with Main App Theme */}
-      {isMelodiesPage && displayTrack && (
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute top-6 right-1/2 translate-x-1/2 w-72 h-72 rounded-full opacity-20 blur-3xl transition-all duration-700"
-          style={{
-            backgroundImage: `url(${normalizeSquareThumbnail(
-              displayTrack.thumbnail,
-              displayTrack.videoId
-            )})`,
-            backgroundSize: 'cover',
-            backgroundPosition: 'center',
-          }}
-        />
-      )}
-
-      <div
-        className={
-          isMelodiesPage
-            ? 'relative z-10 max-w-xl lg:max-w-6xl xl:max-w-7xl w-full mx-auto h-full flex flex-col justify-between gap-2 lg:gap-3.5 overflow-hidden'
-            : ''
-        }
-      >
-        {/* ==================== 1. TOP SECTION: PERSISTENT SEARCH BAR & SONGS / VIDEOS FILTER TOGGLE ==================== */}
-        {isMelodiesPage && (
-          <div ref={searchContainerRef} className="relative z-40 shrink-0 space-y-2">
-            {/* Persistent Search Bar at the Very Top */}
-            <form onSubmit={handleSearchSubmit} className="relative flex items-center gap-2">
-              <div className="relative flex-1">
-                <Search
-                  style={{ color: activePalette.textSecondary }}
-                  className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
-                />
+      {/* ==================== 1. YOUTUBE MUSIC TOP BAR + IN-FLOW LIVE SUGGESTIONS ==================== */}
+      {isMelodiesPage && (
+        <div ref={searchContainerRef} className="shrink-0 z-40 bg-black border-b border-white/10">
+          <header className="h-14 sm:h-16 px-2.5 sm:px-5 bg-black flex items-center justify-between gap-2 sm:gap-3">
+            {/* Full-Width Search Bar filling the space */}
+            <div className="relative flex-1 min-w-0">
+              <form onSubmit={handleSearchSubmit} className="relative flex items-center">
+                <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none z-10" />
                 <input
                   ref={searchInputRef}
                   type="text"
                   value={searchQuery}
                   onFocus={() => setIsSearchFocused(true)}
-                  onBlur={() => {
-                    window.setTimeout(() => {
-                      setIsSearchFocused(false);
-                    }, 140);
-                  }}
                   onChange={(e) => {
                     setIsSearchFocused(true);
                     handleSearchInputChange(e);
@@ -3338,18 +4314,21 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   autoCapitalize="off"
                   spellCheck={false}
                   enterKeyHint="search"
-                  placeholder="Search songs, singers, or videos..."
-                  style={{
-                    backgroundColor: activePalette.inputBg,
-                    borderColor: isSearchFocused ? activePalette.accent : activePalette.deckBorder,
-                    color: activePalette.textPrimary,
-                  }}
-                  className="w-full pl-9 pr-8 py-2.5 rounded-2xl border text-xs sm:text-sm outline-none transition-colors shadow-xs touch-manipulation"
+                  placeholder="Search songs, artists..."
+                  className={`ytm-search-input w-full pl-8 sm:pl-10 pr-8 sm:pr-9 py-2 sm:py-2.5 rounded-full bg-[#161616] text-sm text-white placeholder-neutral-400 border transition-colors outline-none ${
+                    isSearchFocused
+                      ? 'border-[#ff0033] bg-[#1c1c1c]'
+                      : 'border-white/15 hover:border-white/25'
+                  }`}
                 />
+                {(isSearching || isSearchingVideos) && (
+                  <Loader2 className="w-4 h-4 text-[#ff0033] animate-spin absolute right-8 sm:right-9 top-1/2 -translate-y-1/2" />
+                )}
                 {searchQuery && (
                   <button
                     type="button"
                     tabIndex={-1}
+                    onMouseDown={(e) => e.preventDefault()}
                     onClick={() => {
                       if (debounceTimerRef.current) window.clearTimeout(debounceTimerRef.current);
                       if (searchAbortRef.current) searchAbortRef.current.abort();
@@ -3358,64 +4337,102 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                       setIsSearching(false);
                       setIsSearchingVideos(false);
                       setSearchError(null);
+                      setYtmView('home');
+                      searchInputRef.current?.focus();
                     }}
-                    style={{ color: activePalette.textSecondary }}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 cursor-pointer touch-manipulation"
-                    aria-label="Clear search input"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-full text-neutral-300 hover:text-white cursor-pointer"
+                    aria-label="Clear search"
                   >
-                    <X className="w-3.5 h-3.5" />
+                    <X className="w-4 h-4" />
                   </button>
                 )}
-              </div>
+              </form>
+            </div>
+
+            {/* Right: Equalizer, HD Quality, Sleep Timer & Profile Avatar */}
+            <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+              {/* Equalizer Button */}
               <button
-                type="submit"
-                disabled={(isSearching && isSearchingVideos) || !searchQuery.trim()}
-                style={{
-                  background: activePalette.accentGradient,
-                  color: activePalette.accentText,
-                  boxShadow: `0 4px 12px ${activePalette.accentGlow}`,
+                type="button"
+                onClick={() => {
+                  triggerHaptic(15);
+                  setIsEqMenuOpen((prev) => !prev);
+                  setIsSleepMenuOpen(false);
                 }}
-                className="px-3.5 lg:px-5 py-2.5 rounded-2xl text-xs font-bold shrink-0 flex items-center gap-1.5 cursor-pointer active:scale-95 transition-transform disabled:opacity-60 touch-manipulation"
+                className={`p-2 rounded-full transition-colors cursor-pointer ${
+                  isEqMenuOpen || activeEqPreset !== 'Flat'
+                    ? 'bg-[#ff0033]/20 text-[#ff0033]'
+                    : 'text-neutral-300 hover:text-white hover:bg-white/10'
+                }`}
+                title={`Equalizer (${activeEqPreset})`}
+                aria-label="Equalizer"
               >
-                {isSearching || isSearchingVideos ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Search className="w-4 h-4" />
-                )}
-                <span>Search</span>
+                <Sliders className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
               </button>
 
-              {/* Non-Hover, Non-Focus-Trapping Search Suggestions Dropdown */}
-              {isSearchFocused && searchSuggestions.length > 0 && (
-                <div
-                  aria-label="Search suggestions"
-                  style={{
-                    backgroundColor: 'var(--card-solid, var(--card))',
-                    borderColor: activePalette.deckBorder,
-                    boxShadow: activePalette.shellShadow,
-                  }}
-                  className="absolute left-0 right-0 top-full mt-1.5 z-50 rounded-2xl border p-1.5 space-y-0.5 overflow-hidden backdrop-blur-xl touch-manipulation"
-                >
-                  <div className="flex items-center justify-between px-2.5 py-1">
-                    <span
-                      style={{ color: activePalette.textSecondary }}
-                      className="text-[10px] font-bold uppercase tracking-wider"
-                    >
-                      {searchQuery.trim() ? 'Search Suggestions' : 'Suggested & Recent'}
-                    </span>
-                    <button
-                      type="button"
-                      tabIndex={-1}
-                      onClick={() => {
-                        setIsSearchFocused(false);
-                        searchInputRef.current?.blur();
-                      }}
-                      style={{ color: activePalette.textSecondary }}
-                      className="text-[10px] font-semibold cursor-pointer touch-manipulation"
-                    >
-                      Close
-                    </button>
-                  </div>
+              {/* Sleep Timer Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  triggerHaptic(15);
+                  setIsSleepMenuOpen((prev) => !prev);
+                  setIsEqMenuOpen(false);
+                }}
+                className={`p-2 rounded-full transition-colors cursor-pointer flex items-center gap-1 ${
+                  sleepRemainingSec !== null
+                    ? 'bg-[#ff0033]/20 text-[#ff0033]'
+                    : 'text-neutral-300 hover:text-white hover:bg-white/10'
+                }`}
+                title="Sleep Timer"
+                aria-label="Sleep Timer"
+              >
+                <Moon className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
+                {sleepRemainingSec !== null && (
+                  <span className="hidden sm:inline text-[10px] font-mono font-bold">
+                    {Math.ceil(sleepRemainingSec / 60)}m
+                  </span>
+                )}
+              </button>
+
+              {/* HD Audio/Video Quality Toggle */}
+              <button
+                type="button"
+                onClick={handleToggleHighQuality}
+                className={`hidden sm:inline-flex px-2 py-1 rounded-md text-[10px] font-extrabold tracking-wider uppercase border transition-all cursor-pointer ${
+                  isHighQuality
+                    ? 'bg-[#ff0033] text-white border-[#ff0033] shadow-[0_0_12px_rgba(255,0,51,0.5)]'
+                    : 'bg-[#121212] text-neutral-400 border-white/15 hover:text-white'
+                }`}
+                title={isHighQuality ? 'HD Quality Active' : 'Enable HD Quality'}
+              >
+                HD
+              </button>
+            </div>
+          </header>
+
+          {/* In-Flow Live Search Suggestions Panel (anchored directly below search input, pushes results heading down cleanly) */}
+          {isSearchFocused && searchSuggestions.length > 0 && (
+            <div className="px-2.5 sm:px-5 pb-2.5 pt-0.5 bg-black/95 border-t border-white/10">
+              <div
+                aria-label="Search suggestions"
+                className="max-w-xl mx-auto rounded-xl bg-[#161616] border border-white/15 shadow-lg overflow-hidden"
+              >
+                <div className="flex items-center justify-between px-3.5 py-1.5 bg-[#1c1c1c] border-b border-white/10 text-[10px] font-bold uppercase tracking-wider text-neutral-400">
+                  <span>{searchQuery.trim() ? 'Live Suggestions' : 'Recent & Trending'}</span>
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      setIsSearchFocused(false);
+                      searchInputRef.current?.blur();
+                    }}
+                    className="text-neutral-300 hover:text-white cursor-pointer"
+                  >
+                    Close
+                  </button>
+                </div>
+                <div className="max-h-[28vh] overflow-y-auto overscroll-contain divide-y divide-white/5">
                   {searchSuggestions.slice(0, 6).map((suggestion) => {
                     const isRecentItem = recentSearches.some(
                       (r) => r.toLowerCase() === suggestion.toLowerCase()
@@ -3424,27 +4441,15 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                       <div
                         key={suggestion}
                         tabIndex={-1}
+                        onMouseDown={(e) => e.preventDefault()}
                         onClick={() => handleSelectSuggestion(suggestion)}
-                        style={{
-                          color: activePalette.textPrimary,
-                          backgroundColor:
-                            searchQuery.trim().toLowerCase() === suggestion.toLowerCase()
-                              ? activePalette.subBg
-                              : 'transparent',
-                        }}
-                        className="w-full px-2.5 py-2 rounded-xl flex items-center justify-between gap-2 text-xs font-semibold active:opacity-80 cursor-pointer touch-manipulation"
+                        className="px-3.5 py-2 flex items-center justify-between gap-2 text-xs sm:text-sm text-white hover:bg-white/10 cursor-pointer transition-colors"
                       >
                         <div className="flex items-center gap-2.5 min-w-0 flex-1">
                           {isRecentItem ? (
-                            <Clock
-                              className="w-3.5 h-3.5 shrink-0"
-                              style={{ color: activePalette.accent }}
-                            />
+                            <Clock className="w-3.5 h-3.5 text-[#ff0033] shrink-0" />
                           ) : (
-                            <Search
-                              className="w-3.5 h-3.5 shrink-0"
-                              style={{ color: activePalette.textSecondary }}
-                            />
+                            <Search className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
                           )}
                           <span className="truncate">{suggestion}</span>
                         </div>
@@ -3455,11 +4460,10 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                               tabIndex={-1}
                               onMouseDown={(e) => e.preventDefault()}
                               onClick={(e) => handleRemoveRecentQuery(e, suggestion)}
-                              style={{ color: activePalette.textSecondary }}
-                              className="p-1 rounded-lg opacity-75 cursor-pointer touch-manipulation"
+                              className="p-1 rounded-full text-neutral-400 hover:text-white"
                               aria-label={`Remove ${suggestion}`}
                             >
-                              <X className="w-3 h-3" />
+                              <X className="w-3.5 h-3.5" />
                             </button>
                           )}
                           <button
@@ -3470,11 +4474,10 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                               e.stopPropagation();
                               triggerHaptic(10);
                               setSearchQuery(suggestion);
+                              searchInputRef.current?.focus();
                             }}
-                            style={{ color: activePalette.textSecondary }}
-                            className="p-1 rounded-lg opacity-75 cursor-pointer touch-manipulation"
+                            className="p-1 rounded-full text-neutral-400 hover:text-white"
                             title="Fill search bar"
-                            aria-label={`Fill search bar with ${suggestion}`}
                           >
                             <ArrowUpLeft className="w-3.5 h-3.5" />
                           </button>
@@ -3483,260 +4486,445 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     );
                   })}
                 </div>
-              )}
-            </form>
-
-            {/* Segmented Toggle Switch / Button Group for 'Songs', 'Videos', and 'Discover' Immediately Below Search Bar */}
-            <div
-              role="tablist"
-              aria-label="Filter between Songs, Videos, and Discover"
-              style={{
-                backgroundColor: activePalette.deckBg,
-                borderColor: activePalette.deckBorder,
-              }}
-              className="grid grid-cols-3 gap-1.5 sm:gap-2 p-1.5 rounded-2xl border shadow-xs"
-            >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeResultSection === 'songs'}
-                onClick={() => {
-                  triggerHaptic(15);
-                  if (activeResultSection === 'songs' && isListExpanded) {
-                    setIsListExpanded(false);
-                  } else {
-                    setActiveResultSection('songs');
-                    setShowVideoViewport(false);
-                    showVideoViewportRef.current = false;
-                    if (!isListExpanded) pushSubViewHistoryEntry('list');
-                    setIsListExpanded(true);
-                  }
-                }}
-                style={{
-                  background:
-                    activeResultSection === 'songs'
-                      ? activePalette.accentGradient
-                      : activePalette.subBg,
-                  color:
-                    activeResultSection === 'songs'
-                      ? activePalette.accentText
-                      : activePalette.textPrimary,
-                  borderColor:
-                    activeResultSection === 'songs'
-                      ? activePalette.accent
-                      : activePalette.deckBorder,
-                  boxShadow:
-                    activeResultSection === 'songs'
-                      ? `0 4px 14px ${activePalette.accentGlow}`
-                      : 'none',
-                }}
-                className="py-2 px-2 sm:px-3 rounded-xl border text-[11px] sm:text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer active:scale-95"
-              >
-                <Music className="w-3.5 h-3.5" />
-                <span>Songs ({isSearching && tracks.length === 0 ? '...' : tracks.length})</span>
-              </button>
-
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeResultSection === 'videos'}
-                onClick={() => {
-                  triggerHaptic(15);
-                  if (activeResultSection === 'videos' && isListExpanded) {
-                    setIsListExpanded(false);
-                  } else {
-                    setActiveResultSection('videos');
-                    if (!isListExpanded) pushSubViewHistoryEntry('list');
-                    setIsListExpanded(true);
-                  }
-                }}
-                style={{
-                  background:
-                    activeResultSection === 'videos'
-                      ? activePalette.accentGradient
-                      : activePalette.subBg,
-                  color:
-                    activeResultSection === 'videos'
-                      ? activePalette.accentText
-                      : activePalette.textPrimary,
-                  borderColor:
-                    activeResultSection === 'videos'
-                      ? activePalette.accent
-                      : activePalette.deckBorder,
-                  boxShadow:
-                    activeResultSection === 'videos'
-                      ? `0 4px 14px ${activePalette.accentGlow}`
-                      : 'none',
-                }}
-                className="py-2 px-2 sm:px-3 rounded-xl border text-[11px] sm:text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer active:scale-95"
-              >
-                <Film className="w-3.5 h-3.5" />
-                <span>
-                  Videos ({isSearchingVideos && videoTracks.length === 0 ? '...' : videoTracks.length})
-                </span>
-              </button>
-
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeResultSection === 'discover'}
-                onClick={() => {
-                  triggerHaptic(15);
-                  if (activeResultSection === 'discover' && isListExpanded) {
-                    setIsListExpanded(false);
-                  } else {
-                    setActiveResultSection('discover');
-                    setShowVideoViewport(false);
-                    showVideoViewportRef.current = false;
-                    if (!isListExpanded) pushSubViewHistoryEntry('list');
-                    setIsListExpanded(true);
-                  }
-                }}
-                style={{
-                  background:
-                    activeResultSection === 'discover'
-                      ? activePalette.accentGradient
-                      : activePalette.subBg,
-                  color:
-                    activeResultSection === 'discover'
-                      ? activePalette.accentText
-                      : activePalette.textPrimary,
-                  borderColor:
-                    activeResultSection === 'discover'
-                      ? activePalette.accent
-                      : activePalette.deckBorder,
-                  boxShadow:
-                    activeResultSection === 'discover'
-                      ? `0 4px 14px ${activePalette.accentGlow}`
-                      : 'none',
-                }}
-                className="py-2 px-2 sm:px-3 rounded-xl border text-[11px] sm:text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer active:scale-95"
-              >
-                <Compass className="w-3.5 h-3.5" />
-                <span>Discover</span>
-              </button>
+              </div>
             </div>
-          </div>
+          )}
+        </div>
+      )}
+
+      {/* Status Notice Toast Banner */}
+      {isMelodiesPage && statusNotice && (
+        <div className="bg-[#181818] border-b border-white/10 px-4 py-1.5 flex items-center justify-between text-xs text-neutral-200 shrink-0 z-30">
+          <span className="truncate">{statusNotice}</span>
+          <button
+            type="button"
+            onClick={() => setStatusNotice(null)}
+            className="text-neutral-400 hover:text-white ml-2 cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* ==================== 2. MIDDLE WORKSPACE: MAIN PAGE CONTENT ==================== */}
+      <div className="relative flex-1 min-h-0 flex overflow-hidden">
+        {/* MAIN SCROLLABLE CONTENT AREA */}
+        {isMelodiesPage && (
+          <main className="flex-1 min-w-0 h-full overflow-y-auto overflow-x-hidden bg-black px-3 sm:px-6 lg:px-8 pt-3 sm:pt-5 pb-4 sm:pb-6 space-y-6">
+            {/* ==================== VIEW A: HOME PAGE ==================== */}
+            {ytmView !== 'search' && (
+              <div className="max-w-6xl mx-auto space-y-6 pb-2">
+                {/* 1. Mood Chips Row (Relax, Workout, Focus, Party, etc.) */}
+                <div className="flex items-center gap-2 overflow-x-auto overflow-y-hidden no-scrollbar touch-pan-x pb-1">
+                  {HOME_MOOD_CHIPS.map((chip) => {
+                    const isActive = homeMood === chip.id;
+                    return (
+                      <button
+                        key={chip.id}
+                        type="button"
+                        onClick={() => {
+                          triggerHaptic(12);
+                          setHomeMood(chip.id);
+                        }}
+                        style={{ whiteSpace: 'nowrap' }}
+                        className={`px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap transition-all cursor-pointer shrink-0 ${
+                          isActive
+                            ? 'bg-white text-black shadow-sm'
+                            : 'bg-[#181818] text-neutral-200 hover:bg-[#262626] border border-white/10'
+                        }`}
+                      >
+                        {chip.label}
+                      </button>
+                    );
+                  })}
+                  {isLoadingMood && (
+                    <div className="flex items-center gap-1.5 text-xs text-neutral-400 pl-2 shrink-0 whitespace-nowrap">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-[#ff0033] shrink-0" />
+                      <span className="whitespace-nowrap">Updating...</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* 2. "Listen again" Horizontal Scroll Row */}
+                <section className="space-y-3">
+                  <div className="flex items-end justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400 truncate">
+                        {homeMood === 'All' ? 'Jump back in' : `${homeMood} mix`}
+                      </p>
+                      <h2 className="text-lg sm:text-2xl font-extrabold tracking-tight text-white truncate">
+                        Listen again
+                      </h2>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (homeListenAgain.length > 0) {
+                          handleSelectTrack(
+                            homeListenAgain[0],
+                            homeListenAgain,
+                            `LISTEN_AGAIN_${homeMood.toUpperCase()}`
+                          );
+                        }
+                      }}
+                      className="px-3 py-1 rounded-full border border-white/15 hover:border-white/30 text-xs font-semibold text-white whitespace-nowrap shrink-0 hover:bg-white/5 transition-colors cursor-pointer"
+                    >
+                      Play all
+                    </button>
+                  </div>
+
+                  <div className="-mx-3 px-3 sm:mx-0 sm:px-0 flex items-stretch gap-3 sm:gap-4 overflow-x-auto overflow-y-hidden pb-2 no-scrollbar touch-pan-x snap-x snap-mandatory scroll-pl-3 sm:scroll-pl-0">
+                    {homeListenAgain.map((item) => {
+                      const isCurrent = displayTrack.videoId === item.videoId;
+                      const isFav = favoriteIds.has(item.videoId);
+                      return (
+                        <div
+                          key={`listen-again-${item.videoId}`}
+                          onMouseEnter={() => handlePreCueTrack(item)}
+                          onTouchStart={() => handlePreCueTrack(item)}
+                          onClick={() =>
+                            handleSelectTrack(
+                              item,
+                              homeListenAgain,
+                              `LISTEN_AGAIN_${homeMood.toUpperCase()}`
+                            )
+                          }
+                          className="snap-start group w-[142px] min-w-[142px] max-w-[142px] sm:w-[172px] sm:min-w-[172px] sm:max-w-[172px] shrink-0 rounded-2xl bg-[#121212] hover:bg-[#1a1a1a] p-2.5 sm:p-3 border border-white/5 hover:border-white/15 transition-all cursor-pointer flex flex-col justify-between overflow-hidden"
+                        >
+                          <div className="relative w-full aspect-square rounded-xl overflow-hidden bg-[#1f1f1f] mb-2.5 shadow-md shrink-0">
+                            <HighResThumbnail
+                              videoId={item.videoId}
+                              rawThumbnail={item.thumbnail}
+                              alt={item.title}
+                              aspect="square"
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                            />
+                            <div
+                              className={`absolute inset-0 bg-black/40 flex items-center justify-center transition-opacity ${
+                                isCurrent ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                              }`}
+                            >
+                              <div className="w-10 h-10 rounded-full bg-[#ff0033] text-white flex items-center justify-center shadow-lg transform group-hover:scale-105 transition-transform">
+                                {isCurrent && isPlaying ? (
+                                  <Pause className="w-5 h-5 fill-white" />
+                                ) : (
+                                  <Play className="w-5 h-5 fill-white ml-0.5" />
+                                )}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleToggleFavorite(item);
+                              }}
+                              className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/65 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:scale-110"
+                              aria-label="Like track"
+                            >
+                              <Heart
+                                className={`w-3.5 h-3.5 ${
+                                  isFav ? 'fill-[#ff0033] text-[#ff0033]' : 'text-white'
+                                }`}
+                              />
+                            </button>
+                          </div>
+                          <div className="min-w-0 w-full overflow-hidden">
+                            <p
+                              className={`block text-xs sm:text-sm font-bold truncate whitespace-nowrap ${
+                                isCurrent ? 'text-[#ff0033]' : 'text-white'
+                              }`}
+                            >
+                              {item.title}
+                            </p>
+                            <p className="block text-[11px] text-neutral-400 truncate whitespace-nowrap mt-0.5">
+                              {item.artist}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                {/* 3. "Quick picks" Vertical Song List */}
+                <section className="space-y-3">
+                  <div className="flex items-end justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400 truncate">
+                        Start radio from a song
+                      </p>
+                      <h2 className="text-lg sm:text-2xl font-extrabold tracking-tight text-white truncate">
+                        Quick picks
+                      </h2>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (homeQuickPicks.length > 0) {
+                          handleSelectTrack(
+                            homeQuickPicks[0],
+                            homeQuickPicks,
+                            `QUICK_PICKS_${homeMood.toUpperCase()}`
+                          );
+                        }
+                      }}
+                      className="px-3 py-1 rounded-full border border-white/15 hover:border-white/30 text-xs font-semibold text-white whitespace-nowrap shrink-0 hover:bg-white/5 transition-colors cursor-pointer"
+                    >
+                      Play all
+                    </button>
+                  </div>
+
+                  <div className="bg-[#121212] border border-white/10 rounded-2xl p-2 sm:p-3 divide-y divide-white/5">
+                    {homeQuickPicks.map((song, idx) =>
+                      renderSongRow(
+                        song,
+                        idx,
+                        homeQuickPicks,
+                        `QUICK_PICKS_${homeMood.toUpperCase()}`
+                      )
+                    )}
+                  </div>
+                </section>
+              </div>
+            )}
+
+            {/* ==================== VIEW D: SEARCH RESULTS (SONGS & VIDEOS) ==================== */}
+            {ytmView === 'search' && (
+              <div className="max-w-6xl mx-auto space-y-5 pb-6">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setYtmView('home')}
+                      className="px-3 py-1.5 rounded-full bg-white/10 hover:bg-white/15 text-xs font-bold text-white cursor-pointer transition-colors"
+                    >
+                      ← Back
+                    </button>
+                    <div>
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400">
+                        Music Catalog
+                      </p>
+                      <h2 className="text-lg sm:text-xl font-extrabold text-white">
+                        {searchQuery.trim()
+                          ? `Results for "${searchQuery.trim()}"`
+                          : 'Featured Search Results'}
+                      </h2>
+                    </div>
+                  </div>
+
+                  {/* Songs vs Videos Tab Switcher */}
+                  <div className="flex items-center gap-2 bg-[#121212] p-1 rounded-full border border-white/10">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveResultSection('songs');
+                        activeResultSectionRef.current = 'songs';
+                      }}
+                      className={`px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                        activeResultSection !== 'videos'
+                          ? 'bg-[#ff0033] text-white'
+                          : 'text-neutral-400 hover:text-white'
+                      }`}
+                    >
+                      <Music className="w-3.5 h-3.5" />
+                      <span>Songs ({tracks.length})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveResultSection('videos');
+                        activeResultSectionRef.current = 'videos';
+                      }}
+                      className={`px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                        activeResultSection === 'videos'
+                          ? 'bg-[#ff0033] text-white'
+                          : 'text-neutral-400 hover:text-white'
+                      }`}
+                    >
+                      <Film className="w-3.5 h-3.5" />
+                      <span>Videos ({videoTracks.length})</span>
+                    </button>
+                  </div>
+                </div>
+
+                {searchError && (
+                  <div className="p-4 rounded-2xl bg-[#181818] border border-[#ff0033]/40 flex items-center justify-between gap-3 text-xs text-neutral-200">
+                    <span>{searchError}</span>
+                    <button
+                      type="button"
+                      onClick={() => void runSearch(searchQuery || 'Bollywood hits', false)}
+                      className="px-3 py-1.5 rounded-full bg-[#ff0033] text-white font-bold flex items-center gap-1 cursor-pointer shrink-0"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      <span>Retry</span>
+                    </button>
+                  </div>
+                )}
+
+                {activeResultSection === 'videos' ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {videoTracks.map((vid) => {
+                      const isCurrent = displayTrack.videoId === vid.videoId;
+                      return (
+                        <div
+                          key={`vid-${vid.videoId}`}
+                          onClick={() => {
+                            setShowVideoViewport(true);
+                            showVideoViewportRef.current = true;
+                            setIsNowPlayingOpen(true);
+                            handleSelectTrack(vid, videoTracks, 'VIDEOS');
+                          }}
+                          className={`group rounded-2xl bg-[#121212] hover:bg-[#1a1a1a] border p-2.5 transition-all cursor-pointer ${
+                            isCurrent ? 'border-[#ff0033]' : 'border-white/10'
+                          }`}
+                        >
+                          <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black mb-2.5">
+                            <HighResThumbnail
+                              videoId={vid.videoId}
+                              rawThumbnail={vid.thumbnail}
+                              alt={vid.title}
+                              aspect="video"
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                            />
+                            <div className="absolute inset-0 bg-black/35 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                              <div className="w-10 h-10 rounded-full bg-[#ff0033] text-white flex items-center justify-center shadow-lg">
+                                <Play className="w-5 h-5 fill-white ml-0.5" />
+                              </div>
+                            </div>
+                            {vid.durationText && (
+                              <span className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded bg-black/80 text-[10px] font-mono text-white">
+                                {vid.durationText}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs sm:text-sm font-bold text-white truncate">
+                            {vid.title}
+                          </p>
+                          <p className="text-[11px] text-neutral-400 truncate mt-0.5">
+                            {vid.artist}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="bg-[#121212] border border-white/10 rounded-2xl p-2 sm:p-3 divide-y divide-white/5">
+                    {tracks.map((song, idx) =>
+                      renderSongRow(song, idx, tracks, 'SEARCH_RESULTS')
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </main>
         )}
 
-        {/* ==================== 2. MAIN STAGE: RESPONSIVE MOBILE SINGLE-DECK / DESKTOP 2-COLUMN STUDIO SPLIT ==================== */}
+        {/* ==================== 3. APPLE MUSIC UNIFIED EXPANDED PLAYER (ALWAYS MOUNTED SO YOUTUBE IFRAME NEVER RELOADS) ==================== */}
         <div
+          style={
+            isMelodiesPage && isNowPlayingOpen
+              ? {
+                  background: `radial-gradient(120% 90% at 50% 0%, rgba(${coverAmbientRgb}, 0.72) 0%, rgba(${coverAmbientRgb}, 0.36) 45%, rgba(12, 12, 16, 0.96) 100%), linear-gradient(180deg, rgba(${coverAmbientRgb}, 0.45) 0%, #09090c 100%)`,
+                }
+              : undefined
+          }
           className={
-            isMelodiesPage
-              ? 'relative z-10 flex-1 min-h-0 flex flex-col lg:grid lg:grid-cols-12 lg:gap-6 overflow-hidden'
-              : ''
+            isMelodiesPage && isNowPlayingOpen
+              ? 'absolute inset-0 z-30 flex flex-col overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] opacity-100 translate-y-0 pointer-events-auto bg-[#09090c] backdrop-blur-3xl will-change-[opacity,transform]'
+              : 'fixed -top-[9999px] -left-[9999px] w-px h-px opacity-0 translate-y-6 pointer-events-none overflow-hidden z-[-1] transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]'
           }
         >
-          {/* LEFT PANEL (Desktop Studio Deck + Singleton YouTube IFrame Host) */}
-          <div
-            style={
-              isMelodiesPage
-                ? {
-                    backgroundColor: activePalette.deckBg,
-                    borderColor: activePalette.deckBorder,
-                    boxShadow: activePalette.shellShadow,
-                  }
-                : undefined
-            }
-            className={
-              isMelodiesPage
-                ? `${
-                    isListExpanded
-                      ? 'contents lg:relative lg:z-10 lg:flex'
-                      : 'relative z-10 flex-1 min-h-0 flex'
-                  } rounded-3xl border px-4 py-3 lg:p-5 flex-col justify-between overflow-hidden backdrop-blur-md lg:col-span-5 lg:h-full lg:min-h-0`
-                : ''
-            }
-          >
-            {/* Desktop Studio Header with Interactive Volume Control */}
-            {isMelodiesPage && (
-              <div
-                style={{ borderColor: activePalette.deckBorder }}
-                className="hidden lg:flex items-center justify-between gap-3 pb-2.5 mb-1 border-b shrink-0"
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <Disc3
-                    className={`w-4 h-4 shrink-0 ${isPlaying ? 'animate-spin' : ''}`}
-                    style={{ color: activePalette.accent }}
-                  />
-                  <span
-                    style={{ color: activePalette.textPrimary }}
-                    className="text-xs font-bold tracking-tight truncate"
-                  >
-                    Cantus Studio Deck
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
+          {/* Single Continuous Unified Apple Music Player Container */}
+          <div className="w-full max-w-xl mx-auto flex-1 min-h-0 flex flex-col justify-between overflow-hidden px-5 sm:px-8 pt-2 pb-3">
+            {/* Top Grabber Pill + Song/Video Pill + Minimize Chevron */}
+            {isMelodiesPage && isNowPlayingOpen && (
+              <div className="w-full flex flex-col items-center shrink-0 pb-1">
+                {/* Apple Music iOS Sheet Grabber Handle */}
+                <button
+                  type="button"
+                  onClick={() => setIsNowPlayingOpen(false)}
+                  aria-label="Minimize Now Playing"
+                  className="py-1.5 px-6 cursor-pointer group focus:outline-none"
+                >
+                  <div className="w-10 h-1.5 rounded-full bg-white/35 group-hover:bg-white/60 transition-colors" />
+                </button>
+
+                <div className="w-full flex items-center justify-between gap-2 mt-0.5">
                   <button
                     type="button"
-                    onClick={handleToggleMute}
-                    style={{ color: activePalette.textSecondary }}
-                    className="p-1 rounded-lg hover:opacity-80 cursor-pointer"
-                    title={isMuted ? 'Unmute' : 'Mute'}
-                    aria-label={isMuted ? 'Unmute audio' : 'Mute audio'}
+                    onClick={() => setIsNowPlayingOpen(false)}
+                    className="w-8 h-8 rounded-full bg-white/12 hover:bg-white/20 text-white/90 flex items-center justify-center cursor-pointer transition-colors"
+                    title="Minimize player"
+                    aria-label="Minimize player"
                   >
-                    {isMuted || volume === 0 ? (
-                      <VolumeX className="w-3.5 h-3.5" />
-                    ) : (
-                      <Volume2 className="w-3.5 h-3.5" />
-                    )}
+                    <ChevronDown className="w-4 h-4" />
                   </button>
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    value={isMuted ? 0 : volume}
-                    onChange={handleVolumeChange}
-                    aria-label="Master volume"
-                    style={{ accentColor: activePalette.accent }}
-                    className="w-20 h-1 rounded-lg cursor-pointer"
-                  />
-                  <span
-                    style={{ color: activePalette.textSecondary }}
-                    className="text-[10px] font-mono tabular-nums w-7 text-right"
+
+                  {/* Apple Music Segmented Song | Video Pill */}
+                  <div className="flex items-center bg-black/25 backdrop-blur-md border border-white/10 rounded-full p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (showVideoViewport) handleToggleVideoViewport();
+                      }}
+                      className={`px-3.5 py-1 rounded-full text-[11px] font-bold transition-all cursor-pointer ${
+                        !showVideoViewport
+                          ? 'bg-white/20 text-white shadow-sm'
+                          : 'text-white/60 hover:text-white'
+                      }`}
+                    >
+                      Song
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!showVideoViewport) handleToggleVideoViewport();
+                      }}
+                      className={`px-3.5 py-1 rounded-full text-[11px] font-bold transition-all cursor-pointer ${
+                        showVideoViewport
+                          ? 'bg-white/20 text-white shadow-sm'
+                          : 'text-white/60 hover:text-white'
+                      }`}
+                    >
+                      Video
+                    </button>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setTrackForPlaylistModal(displayTrack)}
+                    className="w-8 h-8 rounded-full bg-white/12 hover:bg-white/20 text-white/90 flex items-center justify-center cursor-pointer transition-colors"
+                    title="Add to playlist"
+                    aria-label="Add to playlist"
                   >
-                    {isMuted ? 0 : volume}%
-                  </span>
+                    <Plus className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
             )}
 
-            {/* Persistent Singleton YouTube IFrame Host Container — never moves in DOM */}
+            {/* 1. PERSISTENT SINGLETON YOUTUBE IFRAME CONTAINER — NEVER UNMOUNTS */}
             <div
               ref={videoContainerRef}
               onMouseMove={resetVideoControlsTimer}
               onTouchStart={resetVideoControlsTimer}
               onClick={resetVideoControlsTimer}
-              style={
-                isMelodiesPage && showVideoViewport && displayTrack
-                  ? { borderColor: activePalette.deckBorder }
-                  : {
-                      position: 'fixed',
-                      top: '-9999px',
-                      left: '-9999px',
-                      width: '1px',
-                      height: '1px',
-                      opacity: 0,
-                      pointerEvents: 'none',
-                      zIndex: -1,
-                    }
-              }
               className={
-                isMelodiesPage && showVideoViewport && displayTrack
-                  ? !isListExpanded
-                    ? `relative w-full aspect-video ${
-                        isVideoFullscreen
-                          ? 'fixed inset-0 z-50 w-screen h-screen max-h-none rounded-none border-0'
-                          : 'max-h-[26dvh] lg:max-h-[25dvh] rounded-2xl border'
-                      } overflow-hidden bg-black shadow-lg shrink-0 mx-auto group select-none`
-                    : 'fixed -top-[9999px] -left-[9999px] w-[1px] h-[1px] opacity-0 pointer-events-none overflow-hidden z-[-1] lg:relative lg:top-auto lg:left-auto lg:w-full lg:h-auto lg:aspect-video lg:max-h-[25dvh] lg:opacity-100 lg:pointer-events-auto lg:rounded-2xl lg:border lg:bg-black lg:shadow-lg lg:shrink-0 lg:mx-auto lg:z-10 group select-none'
-                  : 'fixed -top-[9999px] -left-[9999px] w-[1px] h-[1px] opacity-0 pointer-events-none overflow-hidden z-[-1]'
+                isMelodiesPage && isNowPlayingOpen && showVideoViewport && displayTrack
+                  ? `relative w-full aspect-video ${
+                      isVideoFullscreen
+                        ? 'fixed inset-0 z-50 w-screen h-screen max-h-none rounded-none'
+                        : isAppleSheetDrawerOpen
+                        ? 'max-h-[16dvh] rounded-2xl shadow-xl my-1'
+                        : 'max-h-[30dvh] sm:max-h-[34dvh] rounded-2xl shadow-[0_24px_50px_rgba(0,0,0,0.65)] my-2'
+                    } overflow-hidden bg-black shrink-0 mx-auto group select-none transition-all duration-300`
+                  : 'fixed -top-[9999px] -left-[9999px] w-px h-px opacity-0 pointer-events-none overflow-hidden z-[-1]'
               }
             >
               <div
                 id="kashish-yt-iframe-wrapper"
                 style={
-                  isMelodiesPage && showVideoViewport && displayTrack
+                  isMelodiesPage && isNowPlayingOpen && showVideoViewport && displayTrack
                     ? {
                         position: 'absolute',
                         top: '-14%',
@@ -3753,218 +4941,41 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                 className="overflow-hidden pointer-events-none"
               />
 
-              {/* Transparent Click Interceptor: Taps on video toggle playback and reset control visibility, while blocking native YouTube title/share/watch later/more videos popups */}
-              {isMelodiesPage && showVideoViewport && displayTrack && (
-                <div
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    resetVideoControlsTimer();
-                    setIsVideoQualityOpen(false);
-                    handleTogglePlayPause();
-                  }}
-                  className="absolute inset-0 z-10 cursor-pointer"
-                  aria-label="Toggle video playback"
-                />
-              )}
-
-              {/* Minimal Custom Kashish Video Player Interface */}
-              {isMelodiesPage && showVideoViewport && displayTrack && (
+              {isMelodiesPage && isNowPlayingOpen && showVideoViewport && displayTrack && (
                 <>
-                  {/* Top-Right Audio Switcher Badge */}
                   <div
-                    className={`absolute top-2 right-2 z-20 transition-opacity duration-300 ${
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      resetVideoControlsTimer();
+                      setIsVideoQualityOpen(false);
+                      handleTogglePlayPause();
+                    }}
+                    className="absolute inset-0 z-10 cursor-pointer"
+                    aria-label="Toggle video playback"
+                  />
+                  {isBuffering && (
+                    <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 pointer-events-none">
+                      <Loader2 className="w-8 h-8 text-white animate-spin" />
+                    </div>
+                  )}
+                  <div
+                    className={`absolute bottom-3 right-3 z-20 flex items-center gap-2 transition-opacity ${
                       showVideoControls ? 'opacity-100' : 'opacity-0 pointer-events-none'
                     }`}
                   >
                     <button
                       type="button"
-                      onClick={() => handleToggleVideoViewport()}
-                      className="px-2.5 py-1 rounded-full bg-black/75 hover:bg-black/90 text-white text-[10px] font-bold flex items-center gap-1 cursor-pointer backdrop-blur-xs border border-white/10 active:scale-95 transition-transform"
-                      aria-label="Switch to audio artwork"
-                      title="Switch to Audio Artwork"
-                    >
-                      <X className="w-3 h-3" />
-                      <span>Audio View</span>
-                    </button>
-                  </div>
-
-                  {/* Buffering Indicator Overlay */}
-                  {isBuffering && (
-                    <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 pointer-events-none">
-                      <Loader2 className="w-7 h-7 text-white animate-spin" />
-                    </div>
-                  )}
-
-                  {/* Minimal Kashish Control Bar: ONLY Previous, Play/Pause, Next, Quality Selector Menu, Fullscreen */}
-                  <div
-                    className={`absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex items-center justify-center gap-2 sm:gap-3 px-3 py-1.5 rounded-full border backdrop-blur-md transition-all duration-300 pointer-events-auto ${
-                      showVideoControls
-                        ? 'opacity-100 translate-y-0'
-                        : 'opacity-0 translate-y-2 pointer-events-none'
-                    }`}
-                    style={{
-                      backgroundColor: 'rgba(10, 4, 18, 0.88)',
-                      borderColor: 'rgba(255, 255, 255, 0.16)',
-                      boxShadow: '0 8px 24px rgba(0, 0, 0, 0.65)',
-                    }}
-                  >
-                    {/* 1. Previous Video */}
-                    <button
-                      type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        triggerHaptic(15);
-                        resetVideoControlsTimer();
-                        setIsVideoQualityOpen(false);
-                        playPrevTrack();
-                      }}
-                      className="p-1.5 rounded-full text-white/90 hover:text-white hover:bg-white/10 active:scale-90 transition-all cursor-pointer"
-                      title="Previous Video"
-                      aria-label="Previous Video"
-                    >
-                      <SkipBack className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                    </button>
-
-                    {/* 2. Play / Pause (Kashish Custom - located cleanly in control bar, never in middle) */}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        triggerHaptic(20);
-                        resetVideoControlsTimer();
-                        setIsVideoQualityOpen(false);
-                        handleTogglePlayPause();
-                      }}
-                      style={{
-                        background: activePalette.accentGradient,
-                        color: '#ffffff',
-                        boxShadow: `0 4px 14px ${activePalette.accentGlow}`,
-                      }}
-                      className="w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center hover:scale-105 active:scale-95 transition-transform cursor-pointer"
-                      title={isPlaying ? 'Pause Video' : 'Play Video'}
-                      aria-label={isPlaying ? 'Pause Video' : 'Play Video'}
-                    >
-                      {isBuffering ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : isPlaying ? (
-                        <Pause className="w-4 h-4 fill-current" />
-                      ) : (
-                        <Play className="w-4 h-4 fill-current ml-0.5" />
-                      )}
-                    </button>
-
-                    {/* 3. Next Video */}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        triggerHaptic(15);
-                        resetVideoControlsTimer();
-                        setIsVideoQualityOpen(false);
-                        playNextTrack();
-                      }}
-                      className="p-1.5 rounded-full text-white/90 hover:text-white hover:bg-white/10 active:scale-90 transition-all cursor-pointer"
-                      title="Next Video"
-                      aria-label="Next Video"
-                    >
-                      <SkipForward className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                    </button>
-
-                    {/* Subtle Divider */}
-                    <div className="w-px h-3.5 bg-white/20 my-auto" />
-
-                    {/* 4. Quality Selector with Interactive Popover Menu */}
-                    <div className="relative">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          resetVideoControlsTimer();
-                          setIsVideoQualityOpen((prev) => !prev);
-                        }}
-                        className={`px-2.5 py-1 rounded-full text-[10px] sm:text-[11px] font-bold font-mono tracking-wide flex items-center gap-1 transition-all cursor-pointer ${
-                          isVideoQualityOpen
-                            ? 'bg-white text-black shadow-md'
-                            : 'text-white/90 bg-white/10 hover:bg-white/20 hover:text-white border border-white/15'
-                        }`}
-                        title="Video Quality Menu"
-                        aria-label="Video Quality Menu"
-                        aria-expanded={isVideoQualityOpen}
-                      >
-                        <Settings2 className="w-3 h-3" />
-                        <span>{selectedQuality.replace(' (HD)', '').replace(' FHD', '').replace(' HD', '').replace(' SD', '').replace(' Med', '')}</span>
-                      </button>
-
-                      {/* Quality Dropdown Popover */}
-                      {isVideoQualityOpen && (
-                        <div
-                          onClick={(e) => e.stopPropagation()}
-                          className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-36 rounded-xl border border-white/20 bg-neutral-950/95 backdrop-blur-xl shadow-2xl p-1.5 flex flex-col gap-1 z-30 animate-in fade-in zoom-in-95 duration-150"
-                        >
-                          <div className="px-2 py-0.5 text-[9px] uppercase tracking-wider font-semibold text-white/50 border-b border-white/10">
-                            Playback Quality
-                          </div>
-                          {[
-                            { label: 'Auto (HD)', value: 'auto' },
-                            { label: '1080p FHD', value: 'hd1080' },
-                            { label: '720p HD', value: 'hd720' },
-                            { label: '480p SD', value: 'large' },
-                            { label: '360p Med', value: 'medium' },
-                          ].map((opt) => {
-                            const isSelected = selectedQuality === opt.label;
-                            return (
-                              <button
-                                key={opt.value}
-                                type="button"
-                                onClick={() => {
-                                  triggerHaptic(15);
-                                  setSelectedQuality(opt.label);
-                                  setIsVideoQualityOpen(false);
-                                  resetVideoControlsTimer();
-                                  try {
-                                    if (playerRef.current && isPlayerReadyRef.current) {
-                                      if (typeof playerRef.current.setPlaybackQuality === 'function') {
-                                        playerRef.current.setPlaybackQuality(opt.value);
-                                      }
-                                      if (typeof playerRef.current.setPlaybackQualityRange === 'function') {
-                                        playerRef.current.setPlaybackQualityRange(opt.value, opt.value);
-                                      }
-                                    }
-                                  } catch {}
-                                  setStatusNotice(`Video Quality: ${opt.label}`);
-                                }}
-                                className={`w-full flex items-center justify-between px-2 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
-                                  isSelected
-                                    ? 'bg-white/20 text-white font-semibold'
-                                    : 'text-white/70 hover:text-white hover:bg-white/10'
-                                }`}
-                              >
-                                <span>{opt.label}</span>
-                                {isSelected && <Check className="w-3.5 h-3.5 text-emerald-400" />}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* 5. Fullscreen Toggle Button */}
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        resetVideoControlsTimer();
-                        setIsVideoQualityOpen(false);
                         handleToggleFullscreen();
                       }}
-                      className="p-1.5 rounded-full text-white/90 hover:text-white hover:bg-white/10 active:scale-90 transition-all cursor-pointer"
-                      title={isVideoFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
-                      aria-label={isVideoFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+                      className="p-2 rounded-full bg-black/75 text-white hover:bg-black cursor-pointer"
+                      title="Toggle Fullscreen"
                     >
                       {isVideoFullscreen ? (
-                        <Minimize2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                        <Minimize2 className="w-4 h-4" />
                       ) : (
-                        <Maximize2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                        <Maximize2 className="w-4 h-4" />
                       )}
                     </button>
                   </div>
@@ -3972,1289 +4983,809 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
               )}
             </div>
 
-            {isMelodiesPage && (
-              <div
-                className={`${
-                  isListExpanded ? 'hidden lg:flex' : 'flex'
-                } flex-1 min-h-0 flex-col items-center justify-evenly text-center w-full max-w-md lg:max-w-none mx-auto overflow-hidden`}
-              >
-                {/* A. Square Album Artwork */}
+            {/* 2A. APPLE MUSIC MAIN ARTWORK & CONTROLS SCREEN (WHEN DRAWER IS CLOSED) */}
+            {isMelodiesPage && isNowPlayingOpen && !isAppleSheetDrawerOpen && (
+              <div className="flex-1 min-h-0 flex flex-col justify-evenly py-1 overflow-hidden">
+                {/* Apple Music Breathing Album Artwork */}
                 {!showVideoViewport && (
-                  <div className="relative w-32 h-32 sm:w-44 sm:h-44 lg:w-44 lg:h-44 xl:w-48 xl:h-48 aspect-square rounded-3xl overflow-hidden shadow-xl border border-white/10 bg-black/40 shrink-0 group">
-                    <HighResThumbnail
-                      videoId={displayTrack.videoId}
-                      rawThumbnail={displayTrack.thumbnail}
-                      alt={displayTrack.title}
-                      aspect="square"
-                      className="transition-transform duration-700 group-hover:scale-105"
-                    />
-                    {isPlaying && (
-                      <div className="absolute bottom-2 right-2 px-2 py-1 rounded-full bg-black/65 backdrop-blur-xs flex items-end gap-1 h-5 z-10">
-                        <span className="w-1 h-2 bg-white rounded-full animate-pulse" />
-                        <span
-                          style={{ backgroundColor: activePalette.accent }}
-                          className="w-1 h-3.5 rounded-full animate-bounce"
-                        />
-                        <span className="w-1 h-2.5 bg-white rounded-full animate-pulse" />
-                      </div>
-                    )}
+                  <div className="w-full flex items-center justify-center my-auto py-1">
+                    <div
+                      onClick={handleTogglePlayPause}
+                      className={`relative w-[64vw] max-w-[260px] sm:max-w-[290px] aspect-square rounded-[22px] overflow-hidden bg-[#18181b] cursor-pointer transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${
+                        isPlaying
+                          ? 'scale-100 shadow-[0_28px_60px_rgba(0,0,0,0.75)] ring-1 ring-white/15'
+                          : 'scale-[0.84] opacity-90 shadow-[0_12px_28px_rgba(0,0,0,0.45)] ring-1 ring-white/10'
+                      }`}
+                    >
+                      <HighResThumbnail
+                        videoId={displayTrack.videoId}
+                        rawThumbnail={displayTrack.thumbnail}
+                        alt={displayTrack.title}
+                        aspect="square"
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
                   </div>
                 )}
 
-                {/* B. Song Information & Favorite */}
-                <div className="w-full px-4 py-1 shrink-0 flex items-center justify-between gap-3">
-                  <div className="min-w-0 flex-1 text-left">
-                    <h3
-                      style={{ color: activePalette.textPrimary }}
-                      className="text-sm sm:text-base font-bold tracking-tight truncate"
-                      title={displayTrack.title}
-                    >
+                {/* Apple Music Track Title, Artist & Circular Action Buttons */}
+                <div className="w-full flex items-center justify-between gap-3 pt-2">
+                  <div className="min-w-0 flex-1 overflow-hidden">
+                    <h2 className="block text-lg sm:text-xl font-bold tracking-tight text-white truncate whitespace-nowrap">
                       {displayTrack.title}
-                    </h3>
-                    <p
-                      style={{ color: activePalette.textSecondary }}
-                      className="text-[11px] sm:text-xs font-medium truncate"
-                    >
+                    </h2>
+                    <p className="block text-sm sm:text-base font-medium text-white/70 truncate whitespace-nowrap mt-0.5">
                       {displayTrack.artist}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => handleToggleFavorite(displayTrack)}
-                    className="p-2 rounded-full text-white/80 hover:text-white shrink-0 active:scale-90 transition-transform cursor-pointer"
-                    title={favoriteIds.has(displayTrack.videoId) ? 'Favorited' : 'Add to Favorites'}
-                    aria-label="Toggle favorite"
-                  >
-                    <Heart
-                      className={`w-5 h-5 transition-colors ${
-                        favoriteIds.has(displayTrack.videoId) ? 'fill-red-500 text-red-500' : 'text-white/70'
-                      }`}
-                    />
-                  </button>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleFavorite(displayTrack)}
+                      className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white/12 hover:bg-white/20 backdrop-blur-md text-white flex items-center justify-center cursor-pointer active:scale-90 transition-all"
+                      title="Favorite song"
+                      aria-label="Favorite song"
+                    >
+                      <Heart
+                        className={`w-4 h-4 ${
+                          favoriteIds.has(displayTrack.videoId)
+                            ? 'fill-[#fa2d48] text-[#fa2d48]'
+                            : 'text-white/90'
+                        }`}
+                      />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTrackForPlaylistModal(displayTrack)}
+                      className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white/12 hover:bg-white/20 backdrop-blur-md text-white flex items-center justify-center cursor-pointer active:scale-90 transition-all"
+                      title="Add to playlist"
+                      aria-label="Add to playlist"
+                    >
+                      <FolderPlus className="w-4 h-4 text-white/90" />
+                    </button>
+                  </div>
                 </div>
 
-                {/* C. Secondary Controls (Equalizer, Sleep Timer, Shuffle, Repeat, Video Toggle) */}
-                <div className="flex items-center justify-center gap-2.5 w-full shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      triggerHaptic(15);
-                      setIsEqMenuOpen((prev) => {
-                        const next = !prev;
-                        if (next) pushSubViewHistoryEntry('eq');
-                        return next;
-                      });
-                      setIsSleepMenuOpen(false);
-                    }}
-                    style={{
-                      background: isEqMenuOpen ? activePalette.accentGradient : activePalette.subBg,
-                      color: isEqMenuOpen ? '#ffffff' : activePalette.textSecondary,
-                      borderColor: isEqMenuOpen ? activePalette.accent : activePalette.deckBorder,
-                    }}
-                    className="p-2.5 rounded-full border hover:opacity-90 active:scale-90 transition-all cursor-pointer relative"
-                    title={`Equalizer: ${activeEqPreset} (Bass ${eqBands.bass >= 0 ? `+${eqBands.bass}` : eqBands.bass}dB, Mid ${eqBands.mid >= 0 ? `+${eqBands.mid}` : eqBands.mid}dB, Treble ${eqBands.treble >= 0 ? `+${eqBands.treble}` : eqBands.treble}dB)`}
-                    aria-label="Equalizer"
-                  >
-                    <Sliders className="w-3.5 h-3.5" />
-                    {(activeEqPreset !== 'Flat' ||
-                      eqBands.bass !== 0 ||
-                      eqBands.mid !== 0 ||
-                      eqBands.treble !== 0) && (
-                      <span
-                        className="absolute -top-1 -right-1 w-2 h-2 rounded-full"
-                        style={{ backgroundColor: activePalette.accent }}
-                      />
-                    )}
-                  </button>
+                {/* Apple Music Thickened Capsule Scrubber with Lossless Badge & Remaining Time */}
+                <div className="w-full pt-2">
+                  <PlayerProgressBar
+                    variant="apple"
+                    getPlaybackMetrics={getPlaybackMetrics}
+                    onSeekTo={handleSeekTo}
+                    isPlaying={isPlaying}
+                    trackId={displayTrack.videoId}
+                    fallbackDurationSec={displayTrack.durationSeconds || 215}
+                    accentColor="rgba(255,255,255,0.95)"
+                    trackBg="rgba(255,255,255,0.22)"
+                    textColor="rgba(255,255,255,0.65)"
+                  />
+                </div>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      triggerHaptic(15);
-                      setIsSleepMenuOpen((prev) => {
-                        const next = !prev;
-                        if (next) pushSubViewHistoryEntry('sleep');
-                        return next;
-                      });
-                      setIsEqMenuOpen(false);
-                    }}
-                    style={{
-                      background:
-                        sleepRemainingSec !== null
-                          ? activePalette.accentGradient
-                          : activePalette.subBg,
-                      color:
-                        sleepRemainingSec !== null ? '#ffffff' : activePalette.textSecondary,
-                      borderColor:
-                        isSleepMenuOpen || sleepRemainingSec !== null
-                          ? activePalette.accent
-                          : activePalette.deckBorder,
-                    }}
-                    className="p-2.5 rounded-full border hover:opacity-90 active:scale-90 transition-all cursor-pointer relative"
-                    title={
-                      sleepRemainingSec !== null
-                        ? `Sleep Timer: ${formatDuration(sleepRemainingSec)} remaining`
-                        : 'Set Sleep Timer'
-                    }
-                    aria-label="Sleep Timer"
-                  >
-                    <Timer className="w-3.5 h-3.5" />
-                    {sleepRemainingSec !== null && (
-                      <span className="absolute -bottom-1.5 -right-2 px-1 rounded bg-black/85 text-[8px] font-mono tabular-nums font-bold text-white">
-                        {formatDuration(sleepRemainingSec)}
-                      </span>
-                    )}
-                  </button>
-
+                {/* Apple Music Large Frameless White Transport Controls */}
+                <div className="w-full flex items-center justify-between px-2 sm:px-6 py-1">
                   <button
                     type="button"
                     onClick={handleToggleShuffle}
-                    style={{
-                      background: isShuffle ? activePalette.accentGradient : activePalette.subBg,
-                      color: isShuffle ? '#ffffff' : activePalette.textSecondary,
-                      borderColor: activePalette.deckBorder,
-                    }}
-                    className="p-2.5 rounded-full border hover:opacity-90 active:scale-90 transition-all cursor-pointer relative"
-                    title={`Shuffle: ${isShuffle ? 'ON' : 'OFF'}`}
+                    className={`p-2 rounded-full transition-all cursor-pointer active:scale-90 ${
+                      isShuffle
+                        ? 'bg-white/20 text-white'
+                        : 'text-white/55 hover:text-white'
+                    }`}
+                    title={isShuffle ? 'Shuffle On' : 'Shuffle Off'}
                     aria-label="Toggle shuffle"
                   >
-                    <Shuffle className="w-3.5 h-3.5" />
+                    <Shuffle className="w-4 h-4 sm:w-5 sm:h-5" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={playPrevTrack}
+                    className="p-2.5 rounded-full text-white hover:bg-white/10 active:scale-90 transition-all cursor-pointer"
+                    title="Previous"
+                    aria-label="Previous track"
+                  >
+                    <SkipBack className="w-7 h-7 sm:w-8 sm:h-8 fill-white" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleTogglePlayPause}
+                    className="w-14 h-14 sm:w-16 sm:h-16 rounded-full text-white flex items-center justify-center hover:bg-white/10 active:scale-90 transition-all cursor-pointer"
+                    title={isPlaying ? 'Pause' : 'Play'}
+                    aria-label={isPlaying ? 'Pause' : 'Play'}
+                  >
+                    {isBuffering ? (
+                      <Loader2 className="w-9 h-9 animate-spin text-white" />
+                    ) : isPlaying ? (
+                      <Pause className="w-10 h-10 sm:w-11 sm:h-11 fill-white" />
+                    ) : (
+                      <Play className="w-10 h-10 sm:w-11 sm:h-11 fill-white ml-1" />
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={playNextTrack}
+                    className="p-2.5 rounded-full text-white hover:bg-white/10 active:scale-90 transition-all cursor-pointer"
+                    title="Next"
+                    aria-label="Next track"
+                  >
+                    <SkipForward className="w-7 h-7 sm:w-8 sm:h-8 fill-white" />
                   </button>
 
                   <button
                     type="button"
                     onClick={handleToggleRepeat}
-                    style={{
-                      background: repeatMode !== 'off' ? activePalette.accentGradient : activePalette.subBg,
-                      color: repeatMode !== 'off' ? '#ffffff' : activePalette.textSecondary,
-                      borderColor: activePalette.deckBorder,
-                    }}
-                    className="p-2.5 rounded-full border hover:opacity-90 active:scale-90 transition-all cursor-pointer relative"
-                    title={`Repeat: ${repeatMode.toUpperCase()}`}
+                    className={`p-2 rounded-full transition-all cursor-pointer active:scale-90 ${
+                      repeatMode !== 'off'
+                        ? 'bg-white/20 text-white'
+                        : 'text-white/55 hover:text-white'
+                    }`}
+                    title={`Repeat: ${repeatMode}`}
                     aria-label="Toggle repeat mode"
                   >
-                    <Repeat className="w-3.5 h-3.5" />
-                    <span className="absolute -bottom-1 -right-1 px-1 rounded bg-black/85 text-[8px] font-bold text-white uppercase">
-                      {repeatMode === 'one' ? '1' : repeatMode === 'all' ? 'All' : 'Off'}
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!showVideoViewport) pushSubViewHistoryEntry('video');
-                      handleToggleVideoViewport();
-                    }}
-                    style={{
-                      background: showVideoViewport ? activePalette.accentGradient : activePalette.subBg,
-                      color: showVideoViewport ? '#ffffff' : activePalette.textSecondary,
-                      borderColor: activePalette.deckBorder,
-                    }}
-                    className="p-2.5 rounded-full border hover:opacity-90 active:scale-90 transition-all cursor-pointer"
-                    title={showVideoViewport ? 'Switch to Audio Artwork' : 'Watch Video'}
-                    aria-label="Toggle video view"
-                  >
-                    <Tv className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-
-                {/* Functional 3-Band Equalizer & Presets Panel */}
-                {isEqMenuOpen && (
-                  <div
-                    style={{
-                      backgroundColor: activePalette.subBg,
-                      borderColor: activePalette.deckBorder,
-                    }}
-                    className="w-full px-3 py-2 rounded-2xl border flex flex-col gap-2 shrink-0 animate-in fade-in duration-200"
-                  >
-                    <div className="flex items-center justify-between gap-1">
-                      <span
-                        style={{ color: activePalette.textSecondary }}
-                        className="text-[10px] font-bold uppercase tracking-wider shrink-0"
-                      >
-                        EQ Presets ({activeEqPreset})
-                      </span>
-                      <div className="flex items-center gap-2.5">
-                        <button
-                          type="button"
-                          onClick={() => handleSelectEqPreset('Flat')}
-                          style={{ color: activePalette.accent }}
-                          className="text-[10px] font-semibold hover:opacity-80 cursor-pointer"
-                        >
-                          Reset
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setIsEqMenuOpen(false)}
-                          style={{ color: activePalette.textSecondary }}
-                          className="text-[10px] font-semibold hover:opacity-80 cursor-pointer"
-                        >
-                          Done
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-1 flex-wrap">
-                      {(['Flat', 'Bass Boost', 'Vocal', 'Acoustic', 'Club', 'Lo-Fi Warm'] as const).map(
-                        (preset) => {
-                          const isSelected = activeEqPreset === preset;
-                          return (
-                            <button
-                              key={`eq-preset-${preset}`}
-                              type="button"
-                              onClick={() => handleSelectEqPreset(preset)}
-                              style={{
-                                background: isSelected
-                                  ? activePalette.accentGradient
-                                  : 'transparent',
-                                color: isSelected ? '#ffffff' : activePalette.textPrimary,
-                                borderColor: isSelected
-                                  ? activePalette.accent
-                                  : activePalette.deckBorder,
-                              }}
-                              className="px-2 py-0.5 rounded-lg border text-[10px] font-bold cursor-pointer active:scale-95 transition-transform"
-                            >
-                              {preset}
-                            </button>
-                          );
-                        }
-                      )}
-                    </div>
-
-                    {/* Interactive Bass, Midrange, and Treble Frequency Sliders (-12dB to +12dB) */}
-                    <div className="grid grid-cols-3 gap-2 pt-1 border-t border-white/10">
-                      {(
-                        [
-                          { key: 'bass', label: 'Bass 100Hz', val: eqBands.bass },
-                          { key: 'mid', label: 'Mid 1kHz', val: eqBands.mid },
-                          { key: 'treble', label: 'Treble 8kHz', val: eqBands.treble },
-                        ] as const
-                      ).map((band) => (
-                        <div key={band.key} className="flex flex-col gap-1">
-                          <div className="flex items-center justify-between text-[9px] font-mono">
-                            <span style={{ color: activePalette.textSecondary }}>{band.label}</span>
-                            <span
-                              style={{ color: activePalette.accent }}
-                              className="font-bold tabular-nums"
-                            >
-                              {band.val > 0 ? `+${band.val}` : band.val}dB
-                            </span>
-                          </div>
-                          <input
-                            type="range"
-                            min={-12}
-                            max={12}
-                            step={1}
-                            value={band.val}
-                            onChange={(e) =>
-                              handleEqBandChange(band.key, Number(e.target.value))
-                            }
-                            style={{ accentColor: activePalette.accent }}
-                            className="w-full h-1 rounded-lg cursor-pointer"
-                            aria-label={`${band.label} gain`}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Sleep Timer Duration Picker Strip */}
-                {isSleepMenuOpen && (
-                  <div
-                    style={{
-                      backgroundColor: activePalette.subBg,
-                      borderColor: activePalette.deckBorder,
-                    }}
-                    className="w-full px-2.5 py-1.5 rounded-2xl border flex items-center justify-between gap-1 shrink-0"
-                  >
-                    <span
-                      style={{ color: activePalette.textSecondary }}
-                      className="text-[10px] font-bold shrink-0 pl-1"
-                    >
-                      Sleep:
-                    </span>
-                    <div className="flex items-center gap-1 flex-wrap justify-end">
-                      {[1, 5, 15, 30, 45, 60].map((mins) => {
-                        const isSelected = sleepTimerMinutes === mins && sleepRemainingSec !== null;
-                        return (
-                          <button
-                            key={`sleep-${mins}`}
-                            type="button"
-                            onClick={() => handleSelectSleepTimer(mins)}
-                            style={{
-                              background: isSelected ? activePalette.accentGradient : 'transparent',
-                              color: isSelected ? '#ffffff' : activePalette.textPrimary,
-                              borderColor: isSelected ? activePalette.accent : activePalette.deckBorder,
-                            }}
-                            className="px-2 py-0.5 rounded-lg border text-[10px] font-mono tabular-nums font-bold cursor-pointer active:scale-95 transition-transform"
-                          >
-                            {mins}m
-                          </button>
-                        );
-                      })}
-                      <button
-                        type="button"
-                        onClick={() => handleSelectSleepTimer(null)}
-                        style={{
-                          backgroundColor:
-                            sleepRemainingSec === null ? activePalette.deckBg : 'transparent',
-                          color: activePalette.textSecondary,
-                          borderColor: activePalette.deckBorder,
-                        }}
-                        className="px-2 py-0.5 rounded-lg border text-[10px] font-bold cursor-pointer active:scale-95 transition-transform"
-                      >
-                        Off
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* D. Main Playback Controls (Quality Toggle, Previous, Large Play/Pause, Next, Library/Queue) */}
-                <div className="flex items-center justify-center gap-3.5 sm:gap-5 w-full shrink-0">
-                  {/* 1. Compact Quality Toggle Button (Default OFF = Low/Data Saver without glow; ON = High Quality with glow) */}
-                  <button
-                    type="button"
-                    onClick={handleToggleHighQuality}
-                    style={{
-                      background: isHighQuality
-                        ? activePalette.accentGradient
-                        : activePalette.subBg,
-                      color: isHighQuality ? '#ffffff' : activePalette.textSecondary,
-                      borderColor: isHighQuality
-                        ? activePalette.accent
-                        : activePalette.deckBorder,
-                      boxShadow: isHighQuality
-                        ? `0 0 14px ${activePalette.accent}, 0 4px 12px ${activePalette.accentGlow}`
-                        : 'none',
-                    }}
-                    className="w-9 h-9 sm:w-10 sm:h-10 rounded-full border flex items-center justify-center hover:opacity-90 active:scale-90 transition-all cursor-pointer"
-                    title={
-                      isHighQuality
-                        ? 'High Quality Active (Tap for Data Saver)'
-                        : 'Data Saver / Low Quality (Tap for High Quality)'
-                    }
-                    aria-label={isHighQuality ? 'High Quality Enabled' : 'Low Quality Data Saver'}
-                    aria-pressed={isHighQuality}
-                  >
-                    <Zap className={`w-4 h-4 ${isHighQuality ? 'fill-current' : ''}`} />
-                  </button>
-
-                  {/* 2. Previous Track */}
-                  <button
-                    type="button"
-                    onClick={playPrevTrack}
-                    style={{
-                      backgroundColor: activePalette.subBg,
-                      color: activePalette.textPrimary,
-                      borderColor: activePalette.deckBorder,
-                    }}
-                    className="w-11 h-11 rounded-full border flex items-center justify-center hover:opacity-90 active:scale-90 transition-transform cursor-pointer shadow-xs"
-                    aria-label="Previous track"
-                  >
-                    <SkipBack className="w-4 h-4" />
-                  </button>
-
-                  {/* 3. Play / Pause */}
-                  <button
-                    type="button"
-                    onClick={handleTogglePlayPause}
-                    style={{
-                      background: activePalette.accentGradient,
-                      color: '#ffffff',
-                      boxShadow: `0 8px 24px ${activePalette.accentGlow}`,
-                    }}
-                    className="w-14 h-14 sm:w-16 sm:h-16 rounded-full flex items-center justify-center active:scale-95 hover:scale-105 transition-transform cursor-pointer shadow-xl"
-                    aria-label={isPlaying ? 'Pause song' : 'Play song'}
-                  >
-                    {isBuffering ? (
-                      <Loader2 className="w-6 h-6 animate-spin" />
-                    ) : isPlaying ? (
-                      <Pause className="w-6 h-6 fill-current" />
+                    {repeatMode === 'one' ? (
+                      <Repeat1 className="w-4 h-4 sm:w-5 sm:h-5" />
                     ) : (
-                      <Play className="w-6 h-6 fill-current ml-0.5" />
+                      <Repeat className="w-4 h-4 sm:w-5 sm:h-5" />
                     )}
                   </button>
-
-                  {/* 4. Next Track */}
-                  <button
-                    type="button"
-                    onClick={playNextTrack}
-                    style={{
-                      backgroundColor: activePalette.subBg,
-                      color: activePalette.textPrimary,
-                      borderColor: activePalette.deckBorder,
-                    }}
-                    className="w-11 h-11 rounded-full border flex items-center justify-center hover:opacity-90 active:scale-90 transition-transform cursor-pointer shadow-xs"
-                    aria-label="Next track"
-                  >
-                    <SkipForward className="w-4 h-4" />
-                  </button>
-
-                  {/* 5. Compact Library / Active Queue Button */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      triggerHaptic(15);
-                      pushSubViewHistoryEntry('library');
-                      setIsLibraryQueueOpen(true);
-                    }}
-                    style={{
-                      background: isLibraryQueueOpen
-                        ? activePalette.accentGradient
-                        : activePalette.subBg,
-                      color: isLibraryQueueOpen ? '#ffffff' : activePalette.textSecondary,
-                      borderColor: isLibraryQueueOpen
-                        ? activePalette.accent
-                        : activePalette.deckBorder,
-                    }}
-                    className="w-9 h-9 sm:w-10 sm:h-10 rounded-full border flex items-center justify-center hover:opacity-90 active:scale-90 transition-all cursor-pointer"
-                    title="Open Music Library & Active Queue"
-                    aria-label="Open Music Library and Active Queue"
-                  >
-                    <ListMusic className="w-4 h-4" />
-                  </button>
                 </div>
 
-                {/* E. Wide Progress Bar & Compact Queue + "More" Button Row */}
-                <div className="w-full space-y-1.5 px-1 shrink-0">
-                  <PlayerProgressBar
-                    getPlaybackMetrics={getPlaybackMetrics}
-                    onSeekTo={handleSeekTo}
-                    isPlaying={isPlaying}
-                    trackId={displayTrack.videoId}
-                    fallbackDurationSec={displayTrack.durationSeconds}
-                    accentColor={activePalette.accent}
-                    accentGradient={activePalette.accentGradient}
-                    trackBg={activePalette.subBg}
-                    textColor={activePalette.textSecondary}
+                {/* Apple Music Bottom Volume Slider Row */}
+                <div className="w-full flex items-center gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleToggleMute}
+                    className="text-white/60 hover:text-white transition-colors cursor-pointer shrink-0"
+                    aria-label="Mute or unmute"
+                  >
+                    {isMuted || volume === 0 ? (
+                      <VolumeX className="w-4 h-4 text-[#fa2d48]" />
+                    ) : (
+                      <Volume1 className="w-4 h-4" />
+                    )}
+                  </button>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={isMuted ? 0 : volume}
+                    onChange={handleVolumeChange}
+                    aria-label="Volume"
+                    style={{ accentColor: '#ffffff' }}
+                    className="flex-1 h-1.5 rounded-full bg-white/25 cursor-pointer"
                   />
-                  {(() => {
-                    const activeQueue = getActivePlaybackQueue();
-                    const currentIdx = activeQueue.findIndex(
-                      (t) => t.videoId === displayTrack.videoId
-                    );
-                    const queuePos = currentIdx >= 0 ? currentIdx + 1 : 1;
-                    const totalQueue = activeQueue.length > 0 ? activeQueue.length : 1;
-                    const queueContextLabel =
-                      customQueue.length > 0 &&
-                      customQueue.some((t) => t.videoId === displayTrack.videoId)
-                        ? activeQueueLabel
-                        : activeResultSection === 'discover'
-                        ? 'DISCOVER'
-                        : activeResultSection === 'videos'
-                        ? 'VIDEOS'
-                        : 'SONGS';
-                    return (
-                      <div className="flex items-center justify-between gap-2 pt-0.5">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            triggerHaptic(15);
-                            setLibraryTab('queue');
-                            pushSubViewHistoryEntry('library');
-                            setIsLibraryQueueOpen(true);
-                          }}
-                          style={{ color: activePalette.textSecondary }}
-                          className="text-[10px] font-bold tracking-widest uppercase hover:opacity-80 transition-opacity cursor-pointer truncate"
-                          title="Tap to view active playback queue"
-                        >
-                          {queueContextLabel} – {queuePos} / {totalQueue}
-                        </button>
-
-                        {/* Compact Single "More" Button (Replaces Full-Width MORE LIKE THIS Strip) */}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            triggerHaptic(15);
-                            pushSubViewHistoryEntry('more');
-                            setIsMoreLikeThisOpen(true);
-                            if (
-                              relatedTracks.length < 18 &&
-                              hasMoreRelatedRef.current &&
-                              !isLoadingMoreRelatedRef.current
-                            ) {
-                              void loadMoreRelatedTracks();
-                            }
-                          }}
-                          style={{
-                            background: activePalette.accentGradient,
-                            color: activePalette.accentText,
-                            boxShadow: `0 3px 10px ${activePalette.accentGlow}`,
-                          }}
-                          className="px-3 py-1 rounded-xl text-[11px] font-bold hover:opacity-95 active:scale-95 transition-all cursor-pointer shrink-0 flex items-center gap-1"
-                          aria-label="Open related songs"
-                          title="More related songs"
-                        >
-                          {isLoadingRelated ? (
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                          ) : (
-                            <Sparkles className="w-3 h-3" />
-                          )}
-                          <span>More</span>
-                        </button>
-                      </div>
-                    );
-                  })()}
+                  <Volume2 className="w-4 h-4 text-white/60 shrink-0" />
                 </div>
-
-                {statusNotice && (
-                  <p className="text-[10px] font-medium text-amber-400 px-1 truncate shrink-0">
-                    {statusNotice}
-                  </p>
-                )}
               </div>
             )}
-          </div>
 
-          {/* RIGHT PANEL: Filtered Songs / Videos Library (Expandable on Mobile, Persistent Side-by-Side on Desktop) */}
-          {isMelodiesPage && (
-            <div
-              style={{
-                backgroundColor: activePalette.deckBg,
-                borderColor: activePalette.deckBorder,
-                boxShadow: activePalette.shellShadow,
-              }}
-              className={`${
-                isListExpanded ? 'flex' : 'hidden lg:flex'
-              } flex-1 min-h-0 rounded-3xl border px-4 py-3 lg:p-5 flex-col justify-between overflow-hidden backdrop-blur-md lg:col-span-7 lg:h-full`}
-            >
-              <div
-                className="flex items-center justify-between gap-2 pb-2 lg:pb-3 mb-1.5 lg:mb-2 border-b shrink-0"
-                style={{ borderColor: activePalette.deckBorder }}
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  {activeResultSection === 'discover' ? (
-                    <Compass className="w-4 h-4 shrink-0" style={{ color: activePalette.accent }} />
-                  ) : activeResultSection === 'songs' ? (
-                    <Music className="w-4 h-4 shrink-0" style={{ color: activePalette.accent }} />
-                  ) : (
-                    <Film className="w-4 h-4 shrink-0" style={{ color: activePalette.accent }} />
-                  )}
-                  <span
-                    style={{ color: activePalette.textPrimary }}
-                    className="text-xs lg:text-sm font-bold truncate"
-                  >
-                    {activeResultSection === 'discover'
-                      ? 'Music Discovery'
-                      : activeResultSection === 'songs'
-                      ? `Filtered Songs (${tracks.length})`
-                      : `Filtered Videos (${videoTracks.length})`}
-                  </span>
-                  {(isSearching || isSearchingVideos) && (
-                    <Loader2
-                      className="w-3.5 h-3.5 animate-spin shrink-0"
-                      style={{ color: activePalette.accent }}
-                    />
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    triggerHaptic(15);
-                    setIsListExpanded(false);
-                  }}
-                  style={{
-                    backgroundColor: activePalette.subBg,
-                    color: activePalette.textPrimary,
-                    borderColor: activePalette.deckBorder,
-                  }}
-                  className="px-2.5 py-1 rounded-xl border text-[11px] font-bold flex items-center gap-1 cursor-pointer active:scale-95"
-                >
-                  <Disc3
-                    className={`w-3.5 h-3.5 ${isPlaying ? 'animate-spin' : ''}`}
-                    style={{ color: activePalette.accent }}
-                  />
-                  <span>Cantus</span>
-                </button>
-              </div>
-
-              <div className="flex-1 min-h-0 max-h-full flex flex-col justify-start gap-2 overflow-y-auto pr-1">
-                {activeResultSection === 'discover' ? (
-                  <MusicDiscoveryView
-                    currentTrack={displayTrack}
-                    isPlaying={isPlaying}
-                    onSelectTrack={(t, contextQueue, contextLabel) => {
-                      handleSelectTrack(
-                        { ...t, mediaType: 'song' },
-                        contextQueue && contextQueue.length > 0 ? contextQueue : undefined,
-                        contextLabel
-                      );
-                      setIsListExpanded(false);
-                    }}
-                    onPreCueTrack={handlePreCueTrack}
-                    favoriteIds={favoriteIds}
-                    onToggleFavorite={handleToggleFavorite}
-                    activePalette={activePalette}
-                    recentPlayedTracks={recentPlayedTracks}
-                    HighResThumbnailComponent={HighResThumbnail}
-                  />
-                ) : searchError && tracks.length === 0 && videoTracks.length === 0 ? (
-                  <div
-                    style={{
-                      backgroundColor: activePalette.subBg,
-                      borderColor: activePalette.deckBorder,
-                    }}
-                    className="p-4 rounded-2xl border text-center space-y-2"
-                  >
-                    <p style={{ color: activePalette.textSecondary }} className="text-xs">
-                      {searchError}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => void runSearch(searchQuery, false)}
-                      style={{
-                        background: activePalette.accentGradient,
-                        color: '#ffffff',
-                      }}
-                      className="px-4 py-1.5 rounded-xl text-xs font-bold cursor-pointer"
-                    >
-                      Retry Search
-                    </button>
-                  </div>
-                ) : activeResultSection === 'songs' ? (
-                  tracks.length > 0 ? (
-                    tracks.map((track, idx) => {
-                      const isSelected = currentTrack?.videoId === track.videoId;
-                      return (
-                        <button
-                          key={`song-${track.videoId}`}
-                          type="button"
-                          onMouseEnter={() => handlePreCueTrack(track)}
-                          onTouchStart={() => handlePreCueTrack(track)}
-                          onClick={() => {
-                            handleSelectTrack({ ...track, mediaType: 'song' });
-                            setIsListExpanded(false);
-                          }}
-                          style={{
-                            backgroundColor: isSelected ? activePalette.subBg : 'transparent',
-                            borderColor: isSelected ? activePalette.accent : activePalette.deckBorder,
-                          }}
-                          className="w-full text-left p-2 lg:px-3 lg:py-2.5 rounded-2xl border flex items-center gap-3 hover:opacity-95 active:scale-[0.99] transition-all cursor-pointer group shrink-0"
-                        >
-                          <span
-                            style={{
-                              color: isSelected ? activePalette.accent : activePalette.textSecondary,
-                            }}
-                            className="hidden lg:inline-block text-[11px] font-mono tabular-nums w-5 text-right shrink-0"
-                          >
-                            {String(idx + 1).padStart(2, '0')}
-                          </span>
-                          <div className="relative w-10 h-10 lg:w-11 lg:h-11 aspect-square rounded-xl overflow-hidden shrink-0 bg-black/30 border border-white/10">
-                            <HighResThumbnail
-                              videoId={track.videoId}
-                              rawThumbnail={track.thumbnail}
-                              alt={track.title}
-                              aspect="square"
-                            />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <p
-                              style={{
-                                color: isSelected ? activePalette.accent : activePalette.textPrimary,
-                              }}
-                              className="text-xs lg:text-sm font-bold truncate"
-                            >
-                              {track.title}
-                            </p>
-                            <p
-                              style={{ color: activePalette.textSecondary }}
-                              className="text-[11px] lg:text-xs truncate"
-                            >
-                              {track.artist}
-                              {track.album ? ` · ${track.album}` : ''}
-                            </p>
-                          </div>
-                          {track.durationText && (
-                            <span
-                              style={{ color: activePalette.textSecondary }}
-                              className="text-[10px] lg:text-xs font-mono tabular-nums shrink-0"
-                            >
-                              {track.durationText}
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })
-                  ) : !isSearching ? (
-                    <div className="p-4 text-center space-y-2">
-                      <p style={{ color: activePalette.textSecondary }} className="text-xs">
-                        {videoTracks.length > 0
-                          ? 'Songs mein nahi mila, Videos tab check karein!'
-                          : 'Search any song above to start listening.'}
-                      </p>
-                    </div>
-                  ) : null
-                ) : videoTracks.length > 0 ? (
-                  videoTracks.map((video, idx) => {
-                    const isSelected = currentTrack?.videoId === video.videoId;
-                    return (
-                      <div
-                        key={`video-${video.videoId}`}
-                        onMouseEnter={() => handlePreCueTrack(video)}
-                        onTouchStart={() => handlePreCueTrack(video)}
-                        onClick={() => {
-                          showVideoViewportRef.current = true;
-                          setShowVideoViewport(true);
-                          handleSelectTrack(
-                            {
-                              ...video,
-                              mediaType: 'video',
-                            },
-                            videoTracks,
-                            'VIDEOS'
-                          );
-                          setIsListExpanded(false);
-                        }}
-                        style={{
-                          backgroundColor: isSelected ? activePalette.subBg : 'transparent',
-                          borderColor: isSelected ? activePalette.accent : activePalette.deckBorder,
-                        }}
-                        className="w-full text-left p-2 lg:px-3 lg:py-2.5 rounded-2xl border flex items-center gap-3 hover:opacity-95 active:scale-[0.99] transition-all cursor-pointer group shrink-0"
-                      >
-                        <span
-                          style={{
-                            color: isSelected ? activePalette.accent : activePalette.textSecondary,
-                          }}
-                          className="hidden lg:inline-block text-[11px] font-mono tabular-nums w-5 text-right shrink-0"
-                        >
-                          {String(idx + 1).padStart(2, '0')}
-                        </span>
-                        <div className="relative w-16 h-10 lg:w-20 lg:h-12 aspect-video rounded-xl overflow-hidden shrink-0 bg-black/30 border border-white/10">
-                          <HighResThumbnail
-                            videoId={video.videoId}
-                            rawThumbnail={video.thumbnail}
-                            alt={video.title}
-                            aspect="video"
-                          />
-                          {video.durationText && (
-                            <span className="absolute bottom-0.5 right-0.5 px-1 rounded bg-black/80 text-white text-[8px] font-mono z-10">
-                              {video.durationText}
-                            </span>
-                          )}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p
-                            style={{
-                              color: isSelected ? activePalette.accent : activePalette.textPrimary,
-                            }}
-                            className="text-xs lg:text-sm font-bold truncate"
-                          >
-                            {video.title}
-                          </p>
-                          <p
-                            style={{ color: activePalette.textSecondary }}
-                            className="text-[11px] lg:text-xs truncate"
-                          >
-                            {video.artist}
-                            {video.viewsText ? ` · ${video.viewsText}` : ''}
-                          </p>
-                        </div>
-                        <span
-                          style={{
-                            backgroundColor: activePalette.subBg,
-                            color: activePalette.accent,
-                            borderColor: activePalette.deckBorder,
-                          }}
-                          className="px-2.5 py-1 rounded-xl border text-[10px] font-bold shrink-0 flex items-center gap-1"
-                        >
-                          <Tv className="w-3 h-3" />
-                          <span>Watch</span>
-                        </span>
-                      </div>
-                    );
-                  })
-                ) : !isSearchingVideos ? (
-                  <p
-                    style={{ color: activePalette.textSecondary }}
-                    className="text-xs text-center py-4 opacity-80"
-                  >
-                    No videos found yet. Search any song or video title above.
-                  </p>
-                ) : null}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* EXPANDED "MORE LIKE THIS" CONTINUOUS RELATED SONGS VIEW */}
-        {isMelodiesPage && isMoreLikeThisOpen && (
-          <div
-            onClick={() => setIsMoreLikeThisOpen(false)}
-            className="fixed inset-0 top-14 pb-[82px] z-50 flex items-center justify-center px-3 sm:px-6 py-2.5 bg-black/70 backdrop-blur-md animate-in fade-in duration-200"
-          >
-            <div
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                backgroundColor: activePalette.deckBg,
-                borderColor: activePalette.deckBorder,
-                boxShadow: activePalette.shellShadow,
-              }}
-              className="w-full max-w-2xl h-full max-h-full rounded-3xl border p-3.5 sm:p-5 flex flex-col justify-between overflow-hidden backdrop-blur-xl"
-            >
-              {/* Modal Header */}
-              <div
-                style={{ borderColor: activePalette.deckBorder }}
-                className="flex flex-col gap-2.5 pb-2.5 mb-2 border-b shrink-0"
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0 flex-1 text-left">
-                    <div className="flex items-center gap-1.5">
-                      <Sparkles
-                        className="w-4 h-4 shrink-0"
-                        style={{ color: activePalette.accent }}
-                      />
-                      <h3
-                        style={{ color: activePalette.textPrimary }}
-                        className="text-xs sm:text-sm font-extrabold uppercase tracking-wider truncate"
-                      >
-                        Related Songs
-                      </h3>
-                      <span
-                        style={{
-                          backgroundColor: activePalette.subBg,
-                          color: activePalette.accent,
-                          borderColor: activePalette.deckBorder,
-                        }}
-                        className="px-2 py-0.5 rounded-full border text-[10px] font-mono font-bold shrink-0"
-                      >
-                        {relatedTracks.length} songs
-                      </span>
-                    </div>
-                    <p
-                      style={{ color: activePalette.textSecondary }}
-                      className="text-[11px] truncate mt-0.5"
-                    >
-                      Based on <span className="font-semibold">{displayTrack.title}</span> ·{' '}
-                      {displayTrack.artist}
-                    </p>
-                  </div>
-
+            {/* 2B. APPLE MUSIC COMPACT HEADER + INTEGRATED UP NEXT / LYRICS / RELATED VIEW (WHEN DRAWER IS OPEN) */}
+            {isMelodiesPage && isNowPlayingOpen && isAppleSheetDrawerOpen && (
+              <div className="flex-1 min-h-0 flex flex-col overflow-hidden pt-1">
+                {/* Apple Music Compact Mini-Header (Tap thumbnail/title to return to full Artwork view) */}
+                <div className="w-full flex items-center justify-between gap-3 pb-3 border-b border-white/10 shrink-0">
                   <button
                     type="button"
-                    onClick={() => {
-                      triggerHaptic(15);
-                      setIsMoreLikeThisOpen(false);
-                    }}
-                    style={{
-                      backgroundColor: activePalette.subBg,
-                      color: activePalette.textPrimary,
-                      borderColor: activePalette.deckBorder,
-                    }}
-                    className="p-2 rounded-full border hover:opacity-90 active:scale-90 transition-all cursor-pointer shrink-0"
-                    aria-label="Close Related Songs panel"
-                    title="Close"
+                    onClick={() => setIsAppleSheetDrawerOpen(false)}
+                    className="flex items-center gap-3 min-w-0 flex-1 text-left cursor-pointer group"
+                    title="Return to full artwork player"
                   >
-                    <X className="w-4 h-4" />
+                    <div className="relative w-12 h-12 rounded-xl overflow-hidden shadow-lg bg-[#18181b] ring-1 ring-white/15 shrink-0 group-hover:scale-105 transition-transform">
+                      <HighResThumbnail
+                        videoId={displayTrack.videoId}
+                        rawThumbnail={displayTrack.thumbnail}
+                        alt={displayTrack.title}
+                        aspect="square"
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                    <div className="min-w-0 flex-1 overflow-hidden">
+                      <p className="block text-sm sm:text-base font-bold text-white truncate whitespace-nowrap">
+                        {displayTrack.title}
+                      </p>
+                      <p className="block text-xs text-white/65 truncate whitespace-nowrap">
+                        {displayTrack.artist}
+                      </p>
+                    </div>
                   </button>
+
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleTogglePlayPause}
+                      className="w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 text-white flex items-center justify-center cursor-pointer active:scale-90 transition-all"
+                      aria-label={isPlaying ? 'Pause' : 'Play'}
+                    >
+                      {isBuffering ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : isPlaying ? (
+                        <Pause className="w-4 h-4 fill-white" />
+                      ) : (
+                        <Play className="w-4 h-4 fill-white ml-0.5" />
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={playNextTrack}
+                      className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center cursor-pointer active:scale-90 transition-all"
+                      aria-label="Next track"
+                    >
+                      <SkipForward className="w-4 h-4 fill-white" />
+                    </button>
+                  </div>
                 </div>
 
-                {/* Mood & Context Filter Chips */}
-                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5 w-full">
-                  {RELATED_MOOD_CHIPS.map((chip) => {
-                    const isSelected = relatedMoodFilter === chip.id;
+                {/* Segmented Pill Bar: UP NEXT | LYRICS | RELATED */}
+                <div className="grid grid-cols-3 bg-white/10 p-1 rounded-xl my-2.5 shrink-0">
+                  {[
+                    { id: 'upnext' as const, label: 'Playing Next' },
+                    { id: 'lyrics' as const, label: 'Lyrics' },
+                    { id: 'related' as const, label: 'Related' },
+                  ].map((tab) => {
+                    const isActive = nowPlayingTab === tab.id;
                     return (
                       <button
-                        key={`related-mood-${chip.id}`}
+                        key={tab.id}
                         type="button"
                         onClick={() => {
-                          triggerHaptic(15);
-                          setRelatedMoodFilter(chip.id);
-                          if (relatedScrollContainerRef.current) {
-                            relatedScrollContainerRef.current.scrollTop = 0;
-                          }
+                          triggerHaptic(10);
+                          setNowPlayingTab(tab.id);
                         }}
-                        style={{
-                          background: isSelected
-                            ? activePalette.accentGradient
-                            : activePalette.subBg,
-                          color: isSelected ? '#ffffff' : activePalette.textSecondary,
-                          borderColor: isSelected
-                            ? activePalette.accent
-                            : activePalette.deckBorder,
-                        }}
-                        className="px-2.5 py-1 rounded-xl border text-[10px] font-bold shrink-0 flex items-center gap-1 active:scale-95 transition-all cursor-pointer"
+                        className={`py-1.5 px-2 rounded-lg text-xs font-bold tracking-tight whitespace-nowrap transition-all cursor-pointer ${
+                          isActive
+                            ? 'bg-white/20 text-white shadow-sm'
+                            : 'text-white/60 hover:text-white'
+                        }`}
                       >
-                        <span>{chip.emoji}</span>
-                        <span>{chip.name}</span>
+                        {tab.label}
                       </button>
                     );
                   })}
                 </div>
-              </div>
 
-              {/* Continuous Infinite-Scroll Related Songs List */}
-              <div
-                ref={relatedScrollContainerRef}
-                onScroll={handleRelatedListScroll}
-                className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-2"
-              >
-                {relatedTracks.map((song, idx) => {
-                  const isCurrent = currentTrack?.videoId === song.videoId;
-                  const isFav = favoriteIds.has(song.videoId);
-                  return (
-                    <div
-                      key={`expanded-related-${song.videoId}`}
-                      onClick={() => {
-                        const basePool = [
-                          displayTrack,
-                          ...relatedTracks.filter((r) => r.videoId !== displayTrack.videoId),
-                        ];
-                        const nextRelatedQueue = basePool.some((r) => r.videoId === song.videoId)
-                          ? basePool
-                          : [song, ...basePool];
-                        handleSelectTrack(
-                          { ...song, mediaType: 'song' },
-                          nextRelatedQueue,
-                          'RELATED',
-                          true
-                        );
-                      }}
-                      onMouseEnter={() => handlePreCueTrack(song)}
-                      onTouchStart={() => handlePreCueTrack(song)}
-                      style={{
-                        backgroundColor: isCurrent ? activePalette.subBg : 'transparent',
-                        borderColor: isCurrent ? activePalette.accent : activePalette.deckBorder,
-                      }}
-                      className="w-full text-left p-2 sm:px-3 sm:py-2.5 rounded-2xl border flex items-center gap-3 hover:bg-white/[0.04] active:scale-[0.99] transition-all cursor-pointer group"
-                    >
-                      <span
-                        style={{
-                          color: isCurrent ? activePalette.accent : activePalette.textSecondary,
-                        }}
-                        className="text-[10px] sm:text-[11px] font-mono tabular-nums w-6 text-right shrink-0"
-                      >
-                        {String(idx + 1).padStart(2, '0')}
-                      </span>
-
-                      <div className="relative w-10 h-10 sm:w-11 sm:h-11 aspect-square rounded-xl overflow-hidden shrink-0 bg-black/40 border border-white/10">
-                        <HighResThumbnail
-                          videoId={song.videoId}
-                          rawThumbnail={song.thumbnail}
-                          alt={song.title}
-                          aspect="square"
-                          loading="lazy"
-                        />
-                        <div className="absolute inset-0 bg-black/35 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                          {isCurrent && isPlaying ? (
-                            <Pause className="w-4 h-4 fill-white text-white" />
-                          ) : (
-                            <Play className="w-4 h-4 fill-white text-white ml-0.5" />
-                          )}
+                {/* Scrollable Content Area inside Unified Player */}
+                <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+                  {/* Tab 1: UP NEXT Queue */}
+                  {nowPlayingTab === 'upnext' && (
+                    <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+                      <div className="shrink-0 py-1.5 text-xs text-white/70 flex items-center justify-between">
+                        <span className="font-bold text-white tracking-tight">
+                          Playing Next • {activeQueueList.length}
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={handleToggleShuffle}
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-colors ${
+                              isShuffle
+                                ? 'bg-white/25 text-white'
+                                : 'bg-white/10 text-white/70 hover:text-white'
+                            }`}
+                          >
+                            <Shuffle className="w-3 h-3" />
+                            <span>Shuffle</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleToggleRepeat}
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-colors ${
+                              repeatMode !== 'off'
+                                ? 'bg-white/25 text-white'
+                                : 'bg-white/10 text-white/70 hover:text-white'
+                            }`}
+                          >
+                            {repeatMode === 'one' ? (
+                              <Repeat1 className="w-3 h-3" />
+                            ) : (
+                              <Repeat className="w-3 h-3" />
+                            )}
+                            <span>Repeat</span>
+                          </button>
                         </div>
                       </div>
+                      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y py-1.5 pb-4 space-y-1">
+                        {activeQueueList.map((song, idx) =>
+                          renderSongRow(song, idx, activeQueueList, activeQueueLabel, {
+                            showQueueControls: true,
+                            totalInQueue: activeQueueList.length,
+                          })
+                        )}
+                      </div>
+                    </div>
+                  )}
 
-                      <div className="min-w-0 flex-1">
-                        <p
-                          style={{
-                            color: isCurrent ? activePalette.accent : activePalette.textPrimary,
-                          }}
-                          className="text-xs sm:text-sm font-bold truncate"
-                        >
-                          {song.title}
-                        </p>
-                        <p
-                          style={{ color: activePalette.textSecondary }}
-                          className="text-[10px] sm:text-xs truncate"
-                        >
-                          {song.artist}
-                          {song.album ? ` · ${song.album}` : ''}
-                        </p>
+                  {/* Tab 2: APPLE MUSIC BOLD LYRICS */}
+                  {nowPlayingTab === 'lyrics' && (
+                    <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y py-3 pb-6 space-y-4">
+                      {isLoadingLyrics ? (
+                        <div className="h-40 flex flex-col items-center justify-center gap-2 text-white/70">
+                          <Loader2 className="w-6 h-6 animate-spin text-white" />
+                          <span className="text-xs">Loading lyrics for {displayTrack.title}...</span>
+                        </div>
+                      ) : lyricsData?.plainLyrics ? (
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between gap-2 text-[11px] text-white/50 border-b border-white/10 pb-2">
+                            <span className="truncate">{displayTrack.title}</span>
+                            <span className="whitespace-nowrap shrink-0">
+                              Source: {lyricsData.source}
+                            </span>
+                          </div>
+                          <pre className="whitespace-pre-wrap font-sans text-lg sm:text-xl font-bold leading-relaxed tracking-tight text-white/95">
+                            {lyricsData.plainLyrics}
+                          </pre>
+                        </div>
+                      ) : (
+                        <div className="h-40 flex flex-col items-center justify-center text-center text-white/60 text-sm font-medium">
+                          Lyrics unavailable for this track.
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Tab 3: RELATED SONGS */}
+                  {nowPlayingTab === 'related' && (
+                    <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+                      <div className="shrink-0 py-1.5 flex items-center gap-1.5 overflow-x-auto overflow-y-hidden no-scrollbar touch-pan-x">
+                        {RELATED_MOOD_CHIPS.map((chip) => {
+                          const active = relatedMoodFilter === chip.id;
+                          return (
+                            <button
+                              key={chip.id}
+                              type="button"
+                              onClick={() => setRelatedMoodFilter(chip.id)}
+                              style={{ whiteSpace: 'nowrap' }}
+                              className={`px-3 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap cursor-pointer transition-colors flex items-center gap-1 shrink-0 ${
+                                active
+                                  ? 'bg-white text-black'
+                                  : 'bg-white/12 text-white/80 hover:bg-white/20'
+                              }`}
+                            >
+                              <span className="shrink-0">{chip.emoji}</span>
+                              <span className="whitespace-nowrap">{chip.name}</span>
+                            </button>
+                          );
+                        })}
                       </div>
 
-                      {song.durationText && (
-                        <span
-                          style={{ color: activePalette.textSecondary }}
-                          className="text-[10px] sm:text-xs font-mono tabular-nums shrink-0"
-                        >
-                          {song.durationText}
-                        </span>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleToggleFavorite(song);
-                        }}
-                        className="p-1.5 rounded-full text-white/70 hover:text-white shrink-0 active:scale-90 transition-transform cursor-pointer"
-                        aria-label="Favorite song"
-                        title={isFav ? 'Remove from favorites' : 'Add to favorites'}
+                      <div
+                        ref={relatedScrollContainerRef}
+                        onScroll={handleRelatedListScroll}
+                        className="flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y py-1.5 pb-4 space-y-1"
                       >
-                        <Heart
-                          className={`w-4 h-4 ${isFav ? 'fill-red-500 text-red-500' : ''}`}
-                        />
-                      </button>
-                    </div>
-                  );
-                })}
+                        {relatedTracks.map((song, idx) =>
+                          renderSongRow(song, idx, [displayTrack, ...relatedTracks], 'RELATED')
+                        )}
 
-                {/* Sentinel for Continuous Pagination */}
-                <div ref={relatedSentinelRef} className="py-3 flex flex-col items-center justify-center gap-2">
-                  {isLoadingRelated ? (
-                    <div className="flex items-center gap-2 text-xs" style={{ color: activePalette.textSecondary }}>
-                      <Loader2 className="w-4 h-4 animate-spin" style={{ color: activePalette.accent }} />
-                      <span>Loading more related songs...</span>
+                        {isLoadingRelated && (
+                          <div className="py-3 flex items-center justify-center gap-2 text-xs text-white/70">
+                            <Loader2 className="w-4 h-4 animate-spin text-white" />
+                            <span>Finding more related songs...</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  ) : hasMoreRelated ? (
-                    <button
-                      type="button"
-                      onClick={() => void loadMoreRelatedTracks()}
-                      style={{
-                        backgroundColor: activePalette.subBg,
-                        color: activePalette.textPrimary,
-                        borderColor: activePalette.deckBorder,
-                      }}
-                      className="px-4 py-1.5 rounded-xl border text-xs font-bold hover:opacity-90 active:scale-95 transition-all cursor-pointer"
-                    >
-                      Load More Related Songs
-                    </button>
-                  ) : (
-                    <span style={{ color: activePalette.textSecondary }} className="text-[11px] opacity-70">
-                      All available related songs loaded
-                    </span>
                   )}
                 </div>
               </div>
-            </div>
-          </div>
-        )}
+            )}
 
-        {/* LIBRARY & ACTIVE PLAYBACK QUEUE MODAL (Phase 9 Library Button) */}
-        {isMelodiesPage && isLibraryQueueOpen && (
-          <div
-            onClick={() => setIsLibraryQueueOpen(false)}
-            className="fixed inset-0 top-14 pb-[82px] z-50 flex items-center justify-center px-3 sm:px-6 py-2.5 bg-black/70 backdrop-blur-md animate-in fade-in duration-200"
-          >
-            <div
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                backgroundColor: activePalette.deckBg,
-                borderColor: activePalette.deckBorder,
-                boxShadow: activePalette.shellShadow,
-              }}
-              className="w-full max-w-2xl h-full max-h-full rounded-3xl border p-3.5 sm:p-5 flex flex-col justify-between overflow-hidden backdrop-blur-xl"
-            >
-              <div
-                style={{ borderColor: activePalette.deckBorder }}
-                className="flex flex-col gap-2.5 pb-2.5 mb-2 border-b shrink-0"
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <ListMusic
-                      className="w-4 h-4 shrink-0"
-                      style={{ color: activePalette.accent }}
-                    />
-                    <h3
-                      style={{ color: activePalette.textPrimary }}
-                      className="text-xs sm:text-sm font-extrabold uppercase tracking-wider truncate"
-                    >
-                      Music Library & Queue
-                    </h3>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      triggerHaptic(15);
-                      setIsLibraryQueueOpen(false);
-                    }}
-                    style={{
-                      backgroundColor: activePalette.subBg,
-                      color: activePalette.textPrimary,
-                      borderColor: activePalette.deckBorder,
-                    }}
-                    className="p-2 rounded-full border hover:opacity-90 active:scale-90 transition-all cursor-pointer shrink-0"
-                    aria-label="Close Library & Queue"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-
-                {/* Library Tabs: Active Queue | Favorites | Recently Played */}
-                <div className="grid grid-cols-3 gap-1.5">
-                  {(() => {
-                    const favIdSet = favoriteIds;
-                    const favCount = favIdSet.size;
-                    return (
-                      [
-                        { id: 'queue', label: `Active Queue (${getActivePlaybackQueue().length})` },
-                        { id: 'favorites', label: `Favorites (${favCount})` },
-                        { id: 'history', label: `History (${recentPlayedTracks.length})` },
-                      ] as const
-                    ).map((tab) => {
-                      const isSelected = libraryTab === tab.id;
-                      return (
-                        <button
-                          key={tab.id}
-                          type="button"
-                          onClick={() => {
-                            triggerHaptic(15);
-                            setLibraryTab(tab.id);
-                          }}
-                          style={{
-                            background: isSelected
-                              ? activePalette.accentGradient
-                              : activePalette.subBg,
-                            color: isSelected ? '#ffffff' : activePalette.textSecondary,
-                            borderColor: isSelected
-                              ? activePalette.accent
-                              : activePalette.deckBorder,
-                          }}
-                          className="py-1.5 px-2 rounded-xl border text-[11px] font-bold truncate cursor-pointer active:scale-95 transition-all"
-                        >
-                          {tab.label}
-                        </button>
-                      );
-                    });
-                  })()}
-                </div>
-              </div>
-
-              <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-2">
-                {(() => {
-                  const activeQueue = getActivePlaybackQueue();
-                  const favTracks: YouTubeTrack[] = [];
-                  const seenFav = new Set<string>();
-                  for (const pool of [
-                    favoriteTracks,
-                    recentPlayedTracks,
-                    tracks,
-                    relatedTracks,
-                    ALL_DISCOVERY_TRACKS,
-                  ]) {
-                    for (const t of pool) {
-                      if (favoriteIds.has(t.videoId) && !seenFav.has(t.videoId)) {
-                        seenFav.add(t.videoId);
-                        favTracks.push(resolveCanonicalTrack(t));
-                      }
+            {/* 3. APPLE MUSIC BOTTOM MODE BAR (Lyrics, Artwork Player, Playing Next Queue, Related) */}
+            {isMelodiesPage && isNowPlayingOpen && (
+              <div className="w-full flex items-center justify-around pt-2 pb-1 shrink-0 border-t border-white/10">
+                {/* Lyrics Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    triggerHaptic(10);
+                    if (isAppleSheetDrawerOpen && nowPlayingTab === 'lyrics') {
+                      setIsAppleSheetDrawerOpen(false);
+                    } else {
+                      setNowPlayingTab('lyrics');
+                      setIsAppleSheetDrawerOpen(true);
                     }
-                  }
+                  }}
+                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer ${
+                    isAppleSheetDrawerOpen && nowPlayingTab === 'lyrics'
+                      ? 'bg-white text-black shadow-md'
+                      : 'text-white/70 hover:text-white hover:bg-white/10'
+                  }`}
+                  title="Lyrics"
+                  aria-label="Toggle Lyrics"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  <span>Lyrics</span>
+                </button>
 
-                  const displayedList =
-                    libraryTab === 'queue'
-                      ? activeQueue
-                      : libraryTab === 'favorites'
-                      ? favTracks
-                      : recentPlayedTracks;
-                  const queueTag =
-                    libraryTab === 'queue'
-                      ? activeQueueLabel
-                      : libraryTab === 'favorites'
-                      ? 'FAVORITES'
-                      : 'RECENTLY PLAYED';
+                {/* Up Next Queue Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    triggerHaptic(10);
+                    if (isAppleSheetDrawerOpen && nowPlayingTab === 'upnext') {
+                      setIsAppleSheetDrawerOpen(false);
+                    } else {
+                      setNowPlayingTab('upnext');
+                      setIsAppleSheetDrawerOpen(true);
+                    }
+                  }}
+                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer ${
+                    isAppleSheetDrawerOpen && nowPlayingTab === 'upnext'
+                      ? 'bg-white text-black shadow-md'
+                      : 'text-white/70 hover:text-white hover:bg-white/10'
+                  }`}
+                  title="Playing Next Queue"
+                  aria-label="Toggle Playing Next Queue"
+                >
+                  <ListMusic className="w-4 h-4" />
+                  <span>Up Next</span>
+                </button>
 
-                  if (displayedList.length === 0) {
-                    return (
-                      <div className="py-10 text-center">
-                        <p
-                          style={{ color: activePalette.textSecondary }}
-                          className="text-xs opacity-75"
-                        >
-                          {libraryTab === 'favorites'
-                            ? 'No favorite songs yet. Tap the heart icon on any song to save it here.'
-                            : libraryTab === 'history'
-                            ? 'No recently played songs yet.'
-                            : 'Active queue is empty.'}
-                        </p>
-                      </div>
-                    );
-                  }
-
-                  return displayedList.map((song, idx) => {
-                    const isCurrent = currentTrack?.videoId === song.videoId;
-                    const isFav = favoriteIds.has(song.videoId);
-                    return (
-                      <div
-                        key={`lib-${libraryTab}-${song.videoId}-${idx}`}
-                        onClick={() => {
-                          handleSelectTrack(
-                            { ...song, mediaType: song.mediaType || 'song' },
-                            displayedList,
-                            queueTag,
-                            true
-                          );
-                        }}
-                        onMouseEnter={() => handlePreCueTrack(song)}
-                        onTouchStart={() => handlePreCueTrack(song)}
-                        style={{
-                          backgroundColor: isCurrent ? activePalette.subBg : 'transparent',
-                          borderColor: isCurrent
-                            ? activePalette.accent
-                            : activePalette.deckBorder,
-                        }}
-                        className="w-full text-left p-2 sm:px-3 sm:py-2.5 rounded-2xl border flex items-center gap-3 hover:bg-white/[0.04] active:scale-[0.99] transition-all cursor-pointer group"
-                      >
-                        <span
-                          style={{
-                            color: isCurrent
-                              ? activePalette.accent
-                              : activePalette.textSecondary,
-                          }}
-                          className="text-[10px] sm:text-[11px] font-mono tabular-nums w-6 text-right shrink-0"
-                        >
-                          {String(idx + 1).padStart(2, '0')}
-                        </span>
-
-                        <div className="relative w-10 h-10 sm:w-11 sm:h-11 aspect-square rounded-xl overflow-hidden shrink-0 bg-black/40 border border-white/10">
-                          <HighResThumbnail
-                            videoId={song.videoId}
-                            rawThumbnail={song.thumbnail}
-                            alt={song.title}
-                            aspect="square"
-                            loading="lazy"
-                          />
-                        </div>
-
-                        <div className="min-w-0 flex-1">
-                          <p
-                            style={{
-                              color: isCurrent
-                                ? activePalette.accent
-                                : activePalette.textPrimary,
-                            }}
-                            className="text-xs sm:text-sm font-bold truncate"
-                          >
-                            {song.title}
-                          </p>
-                          <p
-                            style={{ color: activePalette.textSecondary }}
-                            className="text-[10px] sm:text-xs truncate"
-                          >
-                            {song.artist}
-                          </p>
-                        </div>
-
-                        {song.durationText && (
-                          <span
-                            style={{ color: activePalette.textSecondary }}
-                            className="text-[10px] sm:text-xs font-mono tabular-nums shrink-0"
-                          >
-                            {song.durationText}
-                          </span>
-                        )}
-
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleToggleFavorite(song);
-                          }}
-                          className="p-1.5 rounded-full text-white/70 hover:text-white shrink-0 active:scale-90 transition-transform cursor-pointer"
-                          aria-label="Favorite song"
-                        >
-                          <Heart
-                            className={`w-4 h-4 ${isFav ? 'fill-red-500 text-red-500' : ''}`}
-                          />
-                        </button>
-                      </div>
-                    );
-                  });
-                })()}
+                {/* Related Tracks Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    triggerHaptic(10);
+                    if (isAppleSheetDrawerOpen && nowPlayingTab === 'related') {
+                      setIsAppleSheetDrawerOpen(false);
+                    } else {
+                      setNowPlayingTab('related');
+                      setIsAppleSheetDrawerOpen(true);
+                    }
+                  }}
+                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer ${
+                    isAppleSheetDrawerOpen && nowPlayingTab === 'related'
+                      ? 'bg-white text-black shadow-md'
+                      : 'text-white/70 hover:text-white hover:bg-white/10'
+                  }`}
+                  title="Related Songs"
+                  aria-label="Toggle Related Songs"
+                >
+                  <Compass className="w-4 h-4" />
+                  <span>Related</span>
+                </button>
               </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ==================== 4. APPLE MUSIC FLOATING PILL MINI-PLAYER (ONLY VISIBLE WHEN EXPANDED PLAYER IS MINIMIZED) ==================== */}
+      {isMelodiesPage && !isNowPlayingOpen && (
+        <footer
+          onClick={() => setIsNowPlayingOpen(true)}
+          style={{
+            background: `linear-gradient(90deg, rgba(${coverAmbientRgb}, 0.28) 0%, rgba(28, 28, 30, 0.92) 60%)`,
+          }}
+          className="relative h-14 sm:h-16 mx-2 mb-1 sm:mx-3 sm:mb-1.5 rounded-2xl bg-[#1c1c1e]/90 backdrop-blur-2xl border border-white/15 shadow-[0_10px_30px_rgba(0,0,0,0.65)] px-3 sm:px-4 flex items-center justify-between gap-2.5 sm:gap-4 shrink-0 z-40 cursor-pointer transition-all duration-200 ease-out hover:border-white/25 overflow-hidden"
+        >
+          {/* Thin Subtle Progress Bar at the Bottom Edge of the Apple Music Pill */}
+          <PlayerProgressBar
+            variant="top-edge"
+            getPlaybackMetrics={getPlaybackMetrics}
+            onSeekTo={handleSeekTo}
+            isPlaying={isPlaying}
+            trackId={displayTrack.videoId}
+            fallbackDurationSec={displayTrack.durationSeconds || 215}
+            accentColor="rgba(255,255,255,0.85)"
+            trackBg="rgba(255,255,255,0.12)"
+          />
+
+          {/* LEFT: Rounded Album Art + Song Title & Artist */}
+          <div className="flex items-center gap-3 min-w-0 flex-1 overflow-hidden">
+            <div className="relative w-10 h-10 sm:w-11 sm:h-11 rounded-xl overflow-hidden bg-[#2c2c2e] shadow-md ring-1 ring-white/10 shrink-0">
+              <HighResThumbnail
+                videoId={displayTrack.videoId}
+                rawThumbnail={displayTrack.thumbnail}
+                alt={displayTrack.title}
+                aspect="square"
+                className="w-full h-full object-cover"
+              />
+            </div>
+
+            <div className="min-w-0 flex-1 overflow-hidden">
+              <p className="block text-xs sm:text-sm font-bold text-white truncate whitespace-nowrap">
+                {displayTrack.title}
+              </p>
+              <p className="block text-[11px] sm:text-xs text-white/65 truncate whitespace-nowrap">
+                {displayTrack.artist}
+              </p>
             </div>
           </div>
-        )}
-      </div>
+
+          {/* RIGHT: Apple Music Clean Controls (Favorite, Play/Pause, Next) */}
+          <div
+            className="flex items-center gap-1 sm:gap-2 shrink-0"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => handleToggleFavorite(displayTrack)}
+              className="p-2 rounded-full text-white/80 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+              title="Favorite song"
+              aria-label="Like current song"
+            >
+              <Heart
+                className={`w-4 h-4 sm:w-5 sm:h-5 ${
+                  favoriteIds.has(displayTrack.videoId)
+                    ? 'fill-[#fa2d48] text-[#fa2d48]'
+                    : 'text-white/80'
+                }`}
+              />
+            </button>
+
+            <button
+              type="button"
+              onClick={handleTogglePlayPause}
+              className="p-2 rounded-full text-white hover:bg-white/10 active:scale-90 transition-all cursor-pointer"
+              title={isPlaying ? 'Pause (Space)' : 'Play (Space)'}
+              aria-label={isPlaying ? 'Pause' : 'Play'}
+            >
+              {isBuffering ? (
+                <Loader2 className="w-5 h-5 sm:w-6 sm:h-6 animate-spin" />
+              ) : isPlaying ? (
+                <Pause className="w-5 h-5 sm:w-6 sm:h-6 fill-white" />
+              ) : (
+                <Play className="w-5 h-5 sm:w-6 sm:h-6 fill-white ml-0.5" />
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={playNextTrack}
+              className="p-2 rounded-full text-white hover:bg-white/10 active:scale-90 transition-all cursor-pointer"
+              title="Next (Right Arrow)"
+              aria-label="Next track"
+            >
+              <SkipForward className="w-5 h-5 sm:w-6 sm:h-6 fill-white" />
+            </button>
+          </div>
+        </footer>
+      )}
+
+      {/* ==================== 6. MODALS & POPOVERS (PLAYLISTS, EQUALIZER, SLEEP TIMER) ==================== */}
+      {/* Create Playlist Modal */}
+      {isMelodiesPage && isCreatePlaylistOpen && (
+        <div
+          onClick={() => setIsCreatePlaylistOpen(false)}
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-2xl bg-[#181818] border border-white/15 p-5 space-y-4 shadow-2xl"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-white">New playlist</h3>
+              <button
+                type="button"
+                onClick={() => setIsCreatePlaylistOpen(false)}
+                className="text-neutral-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <form onSubmit={handleCreatePlaylist} className="space-y-4">
+              <input
+                type="text"
+                value={newPlaylistName}
+                onChange={(e) => setNewPlaylistName(e.target.value)}
+                placeholder="Playlist title (e.g. Late Night Vibes)"
+                autoFocus
+                className="w-full px-3.5 py-2.5 rounded-xl bg-[#121212] border border-white/15 text-sm text-white placeholder-neutral-500 focus:border-[#ff0033] outline-none"
+              />
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsCreatePlaylistOpen(false)}
+                  className="px-4 py-2 rounded-full text-xs font-semibold text-neutral-300 hover:bg-white/10 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!newPlaylistName.trim()}
+                  className="px-5 py-2 rounded-full bg-[#ff0033] hover:bg-[#e6002e] disabled:opacity-40 text-white text-xs font-bold cursor-pointer"
+                >
+                  Create
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Save Track to Playlist Modal */}
+      {isMelodiesPage && trackForPlaylistModal && (
+        <div
+          onClick={() => setTrackForPlaylistModal(null)}
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-2xl bg-[#181818] border border-white/15 p-5 space-y-4 shadow-2xl"
+          >
+            <div className="flex items-center justify-between">
+              <div className="min-w-0">
+                <h3 className="text-base font-bold text-white">Save to playlist</h3>
+                <p className="text-xs text-neutral-400 truncate">
+                  {trackForPlaylistModal.title}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTrackForPlaylistModal(null)}
+                className="text-neutral-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="max-h-56 overflow-y-auto space-y-1.5">
+              {playlists.length === 0 ? (
+                <p className="text-xs text-neutral-400 py-3 text-center">
+                  No custom playlists yet. Create one below!
+                </p>
+              ) : (
+                playlists.map((pl) => (
+                  <button
+                    key={pl.id}
+                    type="button"
+                    onClick={() => handleAddTrackToPlaylist(pl.id, trackForPlaylistModal)}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#121212] hover:bg-[#222222] flex items-center justify-between text-left transition-colors cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <ListMusic className="w-4 h-4 text-[#ff0033] shrink-0" />
+                      <span className="text-xs sm:text-sm font-semibold text-white truncate">
+                        {pl.name}
+                      </span>
+                    </div>
+                    <span className="text-[11px] text-neutral-400">
+                      {pl.tracks.length} songs
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setIsCreatePlaylistOpen(true);
+              }}
+              className="w-full py-2.5 rounded-full bg-[#ff0033] hover:bg-[#e6002e] text-white text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>New playlist</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 3-Band Equalizer Modal */}
+      {isMelodiesPage && isEqMenuOpen && (
+        <div
+          onClick={() => setIsEqMenuOpen(false)}
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-2xl bg-[#181818] border border-white/15 p-5 space-y-4 shadow-2xl"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sliders className="w-4 h-4 text-[#ff0033]" />
+                <h3 className="text-base font-bold text-white">Studio Equalizer</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsEqMenuOpen(false)}
+                className="text-neutral-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex flex-wrap gap-1.5">
+              {Object.keys(EQ_PRESETS).map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => handleSelectEqPreset(preset)}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold cursor-pointer transition-colors ${
+                    activeEqPreset === preset
+                      ? 'bg-[#ff0033] text-white'
+                      : 'bg-[#121212] text-neutral-300 hover:bg-white/10'
+                  }`}
+                >
+                  {preset}
+                </button>
+              ))}
+            </div>
+
+            <div className="space-y-3 pt-1">
+              {(
+                [
+                  { key: 'bass', label: 'Bass (100 Hz)' },
+                  { key: 'mid', label: 'Mid (1 kHz)' },
+                  { key: 'treble', label: 'Treble (8 kHz)' },
+                ] as const
+              ).map((b) => (
+                <div key={b.key} className="space-y-1">
+                  <div className="flex justify-between text-xs">
+                    <span className="text-neutral-300 font-medium">{b.label}</span>
+                    <span className="font-mono text-[#ff0033]">
+                      {eqBands[b.key] > 0 ? `+${eqBands[b.key]}` : eqBands[b.key]} dB
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={-12}
+                    max={12}
+                    step={1}
+                    value={eqBands[b.key]}
+                    onChange={(e) => handleEqBandChange(b.key, Number(e.target.value))}
+                    style={{ accentColor: '#ff0033' }}
+                    className="w-full h-1.5 rounded-lg cursor-pointer"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Sleep Timer Modal */}
+      {isMelodiesPage && isSleepMenuOpen && (
+        <div
+          onClick={() => setIsSleepMenuOpen(false)}
+          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-xs rounded-2xl bg-[#181818] border border-white/15 p-5 space-y-3 shadow-2xl"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Moon className="w-4 h-4 text-[#ff0033]" />
+                <h3 className="text-base font-bold text-white">Sleep Timer</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsSleepMenuOpen(false)}
+                className="text-neutral-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              {[5, 15, 30, 45, 60].map((mins) => (
+                <button
+                  key={mins}
+                  type="button"
+                  onClick={() => handleSelectSleepTimer(mins)}
+                  className={`py-2 rounded-xl text-xs font-bold border cursor-pointer transition-colors ${
+                    sleepTimerMinutes === mins
+                      ? 'bg-[#ff0033] text-white border-[#ff0033]'
+                      : 'bg-[#121212] text-neutral-200 border-white/10 hover:bg-white/10'
+                  }`}
+                >
+                  {mins} minutes
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => handleSelectSleepTimer(null)}
+                className="py-2 rounded-xl text-xs font-bold bg-[#121212] text-neutral-400 border border-white/10 hover:text-white cursor-pointer"
+              >
+                Off
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

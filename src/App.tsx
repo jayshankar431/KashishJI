@@ -483,8 +483,14 @@ export default function App() {
   };
 
   const handleToggleDarkMode = (origin?: ThemeOriginSource) => {
-    const next: AppThemeId =
-      appTheme === 'default' ? 'glass' : appTheme === 'glass' ? 'light' : 'default';
+    const cycleMap: Record<AppThemeId, AppThemeId> = {
+      default: 'liquid-glass',
+      'liquid-glass': 'glass',
+      glass: 'light',
+      light: 'pastel',
+      pastel: 'default',
+    };
+    const next: AppThemeId = cycleMap[appTheme] || 'default';
     transitionThemeChange(next, (resolved) => setAppTheme(resolved), origin);
   };
 
@@ -1167,7 +1173,7 @@ export default function App() {
             </div>
           </main>
 
-          {/* Bottom Floating Hover Navigation Dock (Left: Melodies, Center Circle: Home, Right: Rooms) */}
+          {/* Minimal Floating Bottom Navigation Dock (Melodies • Home • Rooms) */}
           {(() => {
             const isMelodiesActive = activeTab === 'melodies';
             const isHomeActive = activeTab === 'home';
@@ -1175,7 +1181,7 @@ export default function App() {
               activeTab === 'rooms' ||
               (activeTab !== 'home' && activeTab !== 'melodies');
 
-            if (isKeyboardOpen) return null;
+            if (isKeyboardOpen && !isMelodiesActive) return null;
 
             return (
               <nav
@@ -1183,91 +1189,94 @@ export default function App() {
                 style={{
                   paddingBottom: 'env(safe-area-inset-bottom, 0px)',
                 }}
-                className="fixed bottom-3 left-1/2 -translate-x-1/2 z-[88] w-[92%] max-w-sm pointer-events-none select-none"
+                className="fixed bottom-1.5 left-1/2 -translate-x-1/2 z-[88] w-auto max-w-[calc(100vw-1rem)] pointer-events-none select-none"
               >
                 <div
                   style={{
-                    backgroundColor: 'var(--nav-bg)',
-                    borderColor: 'var(--card-border)',
-                    boxShadow: '0 12px 34px var(--shadow-color)',
+                    backgroundColor: isMelodiesActive
+                      ? 'rgba(15, 15, 15, 0.94)'
+                      : 'var(--nav-bg)',
+                    borderColor: isMelodiesActive
+                      ? 'rgba(255, 255, 255, 0.14)'
+                      : 'var(--card-border)',
+                    boxShadow: isMelodiesActive
+                      ? '0 6px 20px rgba(0, 0, 0, 0.75)'
+                      : '0 8px 24px var(--shadow-color)',
                   }}
-                  className="pointer-events-auto relative rounded-full border backdrop-blur-xl px-4 py-2 flex items-center justify-between"
+                  className="pointer-events-auto rounded-full border backdrop-blur-xl px-1.5 py-1 flex flex-row items-center justify-between gap-1.5 sm:gap-2"
                 >
-                  {/* Left Button: Melodies */}
+                  {/* Melodies */}
                   <button
                     type="button"
                     onClick={() => {
-                      triggerHaptic(25);
+                      triggerHaptic(20);
                       romanticAudio.playChime();
                       handleTabSelect('melodies');
                     }}
                     style={{
-                      color: isMelodiesActive ? 'var(--accent)' : 'var(--text-soft)',
-                      backgroundColor: isMelodiesActive ? 'var(--card-subtle)' : 'transparent',
+                      color: isMelodiesActive
+                        ? '#ffffff'
+                        : 'var(--text-soft)',
+                      backgroundColor: isMelodiesActive
+                        ? '#ff0033'
+                        : 'transparent',
+                      whiteSpace: 'nowrap',
                     }}
-                    className="flex-1 flex flex-col items-center justify-center gap-1 py-1.5 px-3 rounded-full transition-all duration-200 cursor-pointer hover:scale-105 active:scale-95"
+                    className="flex-1 min-w-[88px] sm:min-w-[98px] inline-flex flex-row items-center justify-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-semibold leading-none tracking-tight whitespace-nowrap shrink-0 transition-colors duration-200 cursor-pointer hover:opacity-95 active:scale-95"
                   >
-                    <Music
-                      className={`w-5 h-5 transition-transform duration-200 ${
-                        isMelodiesActive ? 'scale-110' : ''
-                      }`}
-                    />
-                    <span className="text-[11px] font-bold tracking-wide">
-                      Melodies
-                    </span>
+                    <Music className="w-3.5 h-3.5 shrink-0" />
+                    <span className="whitespace-nowrap leading-none">Melodies</span>
                   </button>
 
-                  {/* Center Elevated Circle Button: Home */}
-                  <div className="relative flex flex-col items-center justify-center px-2 -mt-6">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        triggerHaptic(30);
-                        romanticAudio.playChime();
-                        handleTabSelect('home');
-                      }}
-                      aria-label="Home"
-                      style={{
-                        background: isHomeActive
-                          ? 'linear-gradient(135deg, #ec4899 0%, #e11d48 55%, #be123c 100%)'
-                          : 'var(--card)',
-                        color: isHomeActive ? '#ffffff' : 'var(--accent)',
-                        borderColor: isHomeActive ? 'rgba(255,255,255,0.35)' : 'var(--card-border)',
-                        boxShadow: isHomeActive
-                          ? '0 8px 24px rgba(225, 29, 72, 0.5)'
-                          : '0 6px 18px var(--shadow-color)',
-                      }}
-                      className="w-14 h-14 rounded-full border-2 flex flex-col items-center justify-center gap-0.5 transition-all duration-200 cursor-pointer hover:scale-105 active:scale-95"
-                    >
-                      <Home className="w-5 h-5" />
-                      <span className="text-[9px] font-bold tracking-wider uppercase leading-none">
-                        Home
-                      </span>
-                    </button>
-                  </div>
-
-                  {/* Right Button: Rooms */}
+                  {/* Home */}
                   <button
                     type="button"
                     onClick={() => {
-                      triggerHaptic(25);
+                      triggerHaptic(20);
+                      romanticAudio.playChime();
+                      handleTabSelect('home');
+                    }}
+                    aria-label="Home"
+                    style={{
+                      background: isHomeActive
+                        ? 'linear-gradient(135deg, #ec4899 0%, #e11d48 100%)'
+                        : 'transparent',
+                      color: isHomeActive
+                        ? '#ffffff'
+                        : isMelodiesActive
+                          ? '#a3a3a3'
+                          : 'var(--text-soft)',
+                      whiteSpace: 'nowrap',
+                    }}
+                    className="flex-1 min-w-[84px] sm:min-w-[94px] inline-flex flex-row items-center justify-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-semibold leading-none tracking-tight whitespace-nowrap shrink-0 transition-colors duration-200 cursor-pointer hover:opacity-95 active:scale-95"
+                  >
+                    <Home className="w-3.5 h-3.5 shrink-0" />
+                    <span className="whitespace-nowrap leading-none">Home</span>
+                  </button>
+
+                  {/* Rooms */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      triggerHaptic(20);
                       romanticAudio.playChime();
                       handleTabSelect('rooms');
                     }}
                     style={{
-                      color: isRoomsActive ? 'var(--accent)' : 'var(--text-soft)',
-                      backgroundColor: isRoomsActive ? 'var(--card-subtle)' : 'transparent',
+                      color: isRoomsActive
+                        ? '#ffffff'
+                        : isMelodiesActive
+                          ? '#a3a3a3'
+                          : 'var(--text-soft)',
+                      backgroundColor: isRoomsActive
+                        ? 'var(--accent)'
+                        : 'transparent',
+                      whiteSpace: 'nowrap',
                     }}
-                    className="flex-1 flex flex-col items-center justify-center gap-1 py-1.5 px-3 rounded-full transition-all duration-200 cursor-pointer hover:scale-105 active:scale-95"
+                    className="flex-1 min-w-[88px] sm:min-w-[98px] inline-flex flex-row items-center justify-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-semibold leading-none tracking-tight whitespace-nowrap shrink-0 transition-colors duration-200 cursor-pointer hover:opacity-95 active:scale-95"
                   >
-                    <LayoutGrid
-                      className={`w-5 h-5 transition-transform duration-200 ${
-                        isRoomsActive ? 'scale-110' : ''
-                      }`}
-                    />
-                    <span className="text-[11px] font-bold tracking-wide">
-                      Rooms
-                    </span>
+                    <LayoutGrid className="w-3.5 h-3.5 shrink-0" />
+                    <span className="whitespace-nowrap leading-none">Rooms</span>
                   </button>
                 </div>
               </nav>

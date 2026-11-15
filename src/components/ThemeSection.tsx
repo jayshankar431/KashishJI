@@ -1,10 +1,10 @@
 import React from 'react';
 import { createPortal, flushSync } from 'react-dom';
-import { Palette, Sparkles, Check, Moon, Sun, Layers, X, Heart } from 'lucide-react';
+import { Palette, Sparkles, Check, Moon, Sun, Layers, X, Heart, Droplets } from 'lucide-react';
 import { romanticAudio } from '../audio';
 import { triggerHaptic, logNativeActivity } from '../androidBridge';
 
-export type AppThemeId = 'default' | 'glass' | 'light' | 'pastel';
+export type AppThemeId = 'default' | 'glass' | 'liquid-glass' | 'light' | 'pastel';
 export type ThemeOriginSource =
   | React.MouseEvent<HTMLElement>
   | HTMLElement
@@ -16,6 +16,7 @@ export function getSavedTheme(): AppThemeId {
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
       const saved = window.localStorage.getItem('kashishTheme');
+      if (saved === 'liquid-glass') return 'liquid-glass';
       if (saved === 'glass') return 'glass';
       if (saved === 'light') return 'light';
       if (saved === 'pastel') return 'pastel';
@@ -37,6 +38,7 @@ export function applyThemeToDocument(theme: AppThemeId): void {
       const colorMap: Record<AppThemeId, string> = {
         default: '#140c1e',
         glass: '#070312',
+        'liquid-glass': '#030d1e',
         light: '#fff5f8',
         pastel: '#F8F5FF',
       };
@@ -248,6 +250,7 @@ export const ThemeSection: React.FC<ThemeSectionProps> = ({
     previewSubtext: string;
     previewAccent: string;
     isGlass?: boolean;
+    isLiquid?: boolean;
   }> = [
     {
       id: 'default',
@@ -263,9 +266,25 @@ export const ThemeSection: React.FC<ThemeSectionProps> = ({
       previewAccent: '#f43f5e',
     },
     {
+      id: 'liquid-glass',
+      title: 'Liquid Glass',
+      badge: 'Fluid Cyan Glow 🌊',
+      subtitle: 'Aqua-cyan refractive fluid glass cards with dynamic water sheen, ultra-smooth blur and chromatic edge highlights.',
+      icon: Droplets,
+      previewBg:
+        'radial-gradient(circle at 18% 20%, rgba(6, 182, 212, 0.72) 0%, transparent 45%), radial-gradient(circle at 82% 80%, rgba(99, 102, 241, 0.65) 0%, transparent 48%), linear-gradient(135deg, #030d1e 0%, #061e38 48%, #021226 100%)',
+      previewCardBg: 'rgba(8, 28, 54, 0.48)',
+      previewCardBorder: 'rgba(103, 232, 249, 0.42)',
+      previewText: '#ffffff',
+      previewSubtext: 'rgba(207, 250, 254, 0.92)',
+      previewAccent: '#06b6d4',
+      isGlass: true,
+      isLiquid: true,
+    },
+    {
       id: 'glass',
       title: 'Glassmorphism',
-      badge: 'New · Dark Frosted Glass ✨',
+      badge: 'Dark Frosted Glass ✨',
       subtitle: 'Deep dark midnight background with ultra-frosted smoked crystal glass cards & glowing orbs.',
       icon: Layers,
       previewBg:
@@ -370,20 +389,24 @@ export const ThemeSection: React.FC<ThemeSectionProps> = ({
                 style={{ background: t.previewBg }}
                 className="relative w-full h-36 sm:h-40 rounded-2xl p-3.5 overflow-hidden border border-white/20 flex flex-col justify-between shadow-inner"
               >
-                {/* Decorative glowing orbs inside Glassmorphism preview */}
+                {/* Decorative glowing orbs inside Glassmorphism and Liquid Glass preview */}
                 {t.isGlass && (
                   <>
                     <div
                       className="absolute -top-6 -left-6 w-24 h-24 rounded-full pointer-events-none"
                       style={{
-                        background: 'radial-gradient(circle, rgba(244,63,94,0.75) 0%, transparent 70%)',
+                        background: t.isLiquid
+                          ? 'radial-gradient(circle, rgba(6,182,212,0.85) 0%, transparent 70%)'
+                          : 'radial-gradient(circle, rgba(244,63,94,0.75) 0%, transparent 70%)',
                         filter: 'blur(12px)',
                       }}
                     />
                     <div
                       className="absolute -bottom-6 -right-6 w-28 h-28 rounded-full pointer-events-none"
                       style={{
-                        background: 'radial-gradient(circle, rgba(59,130,246,0.75) 0%, transparent 70%)',
+                        background: t.isLiquid
+                          ? 'radial-gradient(circle, rgba(99,102,241,0.8) 0%, transparent 70%)'
+                          : 'radial-gradient(circle, rgba(59,130,246,0.75) 0%, transparent 70%)',
                         filter: 'blur(12px)',
                       }}
                     />
@@ -549,7 +572,16 @@ export const ThemeSection: React.FC<ThemeSectionProps> = ({
               }}
               className="self-start sm:self-auto px-3 py-1 rounded-full border text-xs font-bold"
             >
-              Active: {currentTheme === 'glass' ? 'Glassmorphism ✨' : currentTheme === 'light' ? 'Soft Blush ☀️' : 'Default 🌙'}
+              Active:{' '}
+              {currentTheme === 'liquid-glass'
+                ? 'Liquid Glass 🌊'
+                : currentTheme === 'glass'
+                ? 'Glassmorphism ✨'
+                : currentTheme === 'light'
+                ? 'Soft Blush ☀️'
+                : currentTheme === 'pastel'
+                ? 'Pastel Lavender 💜'
+                : 'Default 🌙'}
             </span>
           </div>
 
@@ -572,11 +604,14 @@ export const ThemeSection: React.FC<ThemeSectionProps> = ({
               value={currentTheme}
               onChange={(e) => {
                 const next = e.target.value as AppThemeId;
-                handleSelect(
-                  next,
-                  next === 'glass' ? 'Glassmorphism' : next === 'light' ? 'Soft Blush' : 'Default',
-                  e.currentTarget
-                );
+                const labelMap: Record<AppThemeId, string> = {
+                  default: 'Default',
+                  'liquid-glass': 'Liquid Glass',
+                  glass: 'Glassmorphism',
+                  light: 'Soft Blush',
+                  pastel: 'Pastel Lavender',
+                };
+                handleSelect(next, labelMap[next] || 'Theme', e.currentTarget);
               }}
               style={{
                 backgroundColor: 'var(--card-subtle)',
@@ -586,16 +621,18 @@ export const ThemeSection: React.FC<ThemeSectionProps> = ({
               className="w-full px-4 py-2.5 rounded-2xl border text-xs sm:text-sm font-semibold cursor-pointer focus:outline-none"
             >
               <option value="default">🌙 Default Theme (Current Look)</option>
-              <option value="glass">✨ Glassmorphism Theme (Frosted Glass)</option>
-              <option value="light">☀️ Soft Blush Theme (Daylight)</option>
+              <option value="liquid-glass">🌊 Liquid Glass (Fluid Cyan Glow)</option>
+              <option value="glass">✨ Glassmorphism (Frosted Glass)</option>
+              <option value="light">☀️ Soft Blush (Daylight)</option>
+              <option value="pastel">💜 Pastel Lavender (Modern Feminine)</option>
             </select>
 
             <button
               type="button"
               onClick={(e) =>
                 handleSelect(
-                  currentTheme === 'glass' ? 'default' : 'glass',
-                  currentTheme === 'glass' ? 'Default' : 'Glassmorphism',
+                  currentTheme === 'liquid-glass' ? 'default' : 'liquid-glass',
+                  currentTheme === 'liquid-glass' ? 'Default' : 'Liquid Glass',
                   e
                 )
               }
@@ -605,9 +642,9 @@ export const ThemeSection: React.FC<ThemeSectionProps> = ({
               }}
               className="w-full px-4 py-2.5 rounded-2xl text-xs sm:text-sm font-bold shadow-md flex items-center justify-center gap-2 cursor-pointer active:scale-95"
             >
-              <Palette className="w-4 h-4" />
+              <Droplets className="w-4 h-4" />
               <span>
-                {currentTheme === 'glass' ? 'Switch to Default' : 'Try Glassmorphism ✨'}
+                {currentTheme === 'liquid-glass' ? 'Switch to Default' : 'Try Liquid Glass 🌊'}
               </span>
             </button>
           </div>
