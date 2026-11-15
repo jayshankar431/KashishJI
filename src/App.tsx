@@ -324,20 +324,30 @@ export default function App() {
   useEffect(() => {
     let active = true;
     const syncApkStatus = async (force = false) => {
+      if (!force && typeof window !== 'undefined' && (window as any).__kashishAppInBackground) {
+        return;
+      }
       const curVer = getInstalledAppVersion();
       const curCode = getInstalledAppVersionCode();
       if (active) {
-        setInstalledApkVer(curVer);
-        setInstalledApkCode(curCode);
+        setInstalledApkVer((prev) => (prev === curVer ? prev : curVer));
+        setInstalledApkCode((prev) => (prev === curCode ? prev : curCode));
       }
       const info = await fetchLatestReleaseApkInfo(force);
       if (active && info) {
-        setLiveReleaseApk(info);
+        setLiveReleaseApk((prev) =>
+          prev &&
+          prev.version === info.version &&
+          prev.versionCode === info.versionCode &&
+          prev.apkUrl === info.apkUrl
+            ? prev
+            : info
+        );
       }
     };
 
     void syncApkStatus();
-    // 60-second periodic background check (avoids GitHub 403 API rate limits)
+    // 60-second periodic check (skipped when backgrounded to avoid CPU/network wakeups during music playback)
     const timer = window.setInterval(() => void syncApkStatus(), 60000);
 
     // Auto-sync when app resumes or window regains focus (e.g. user returns from package installer)
@@ -689,8 +699,8 @@ export default function App() {
       style={{ backgroundColor: 'var(--bg)', color: 'var(--text)' }}
       className="min-h-screen min-h-[100dvh] relative font-sans transition-colors duration-300 selection:bg-rose-200 selection:text-rose-900"
     >
-      {/* Background Floating Hearts, Rose Petals and Twinkling Stars */}
-      <BackgroundEffects isDarkMode={isDarkMode} />
+      {/* Background Floating Hearts, Rose Petals and Twinkling Stars (unmounted on full-screen opaque Melodies tab to free 100% GPU/CPU for audio/video) */}
+      {activeTab !== 'melodies' && <BackgroundEffects isDarkMode={isDarkMode} />}
 
       {/* Heart-beat Loading Screen during initial asset preload & auth session restore */}
       {(isLoadingAssets || approvalStatus === 'loading') && (
@@ -1173,7 +1183,7 @@ export default function App() {
             </div>
           </main>
 
-          {/* Minimal Floating Bottom Navigation Dock (Melodies • Home • Rooms) */}
+          {/* Fixed Android-Style Bottom Icon Navigation Bar (Melodies • Home • Rooms) */}
           {(() => {
             const isMelodiesActive = activeTab === 'melodies';
             const isHomeActive = activeTab === 'home';
@@ -1188,24 +1198,17 @@ export default function App() {
                 aria-label="Primary Bottom Navigation"
                 style={{
                   paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+                  backgroundColor: isMelodiesActive
+                    ? 'rgba(10, 10, 12, 0.96)'
+                    : 'var(--nav-bg)',
+                  borderColor: isMelodiesActive
+                    ? 'rgba(255, 255, 255, 0.1)'
+                    : 'var(--card-border)',
                 }}
-                className="fixed bottom-1.5 left-1/2 -translate-x-1/2 z-[88] w-auto max-w-[calc(100vw-1rem)] pointer-events-none select-none"
+                className="fixed bottom-0 left-0 right-0 z-[88] w-full border-t backdrop-blur-xl select-none"
               >
-                <div
-                  style={{
-                    backgroundColor: isMelodiesActive
-                      ? 'rgba(15, 15, 15, 0.94)'
-                      : 'var(--nav-bg)',
-                    borderColor: isMelodiesActive
-                      ? 'rgba(255, 255, 255, 0.14)'
-                      : 'var(--card-border)',
-                    boxShadow: isMelodiesActive
-                      ? '0 6px 20px rgba(0, 0, 0, 0.75)'
-                      : '0 8px 24px var(--shadow-color)',
-                  }}
-                  className="pointer-events-auto rounded-full border backdrop-blur-xl px-1.5 py-1 flex flex-row items-center justify-between gap-1.5 sm:gap-2"
-                >
-                  {/* Melodies */}
+                <div className="max-w-lg mx-auto h-12 px-4 grid grid-cols-3 items-center justify-items-center">
+                  {/* Melodies (Icon Only) */}
                   <button
                     type="button"
                     onClick={() => {
@@ -1213,22 +1216,26 @@ export default function App() {
                       romanticAudio.playChime();
                       handleTabSelect('melodies');
                     }}
+                    title="Melodies"
+                    aria-label="Melodies"
                     style={{
                       color: isMelodiesActive
                         ? '#ffffff'
                         : 'var(--text-soft)',
                       backgroundColor: isMelodiesActive
-                        ? '#ff0033'
+                        ? 'rgba(255, 0, 51, 0.22)'
                         : 'transparent',
-                      whiteSpace: 'nowrap',
                     }}
-                    className="flex-1 min-w-[88px] sm:min-w-[98px] inline-flex flex-row items-center justify-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-semibold leading-none tracking-tight whitespace-nowrap shrink-0 transition-colors duration-200 cursor-pointer hover:opacity-95 active:scale-95"
+                    className="w-16 h-9 rounded-full flex items-center justify-center transition-all duration-200 cursor-pointer hover:opacity-95 active:scale-90"
                   >
-                    <Music className="w-3.5 h-3.5 shrink-0" />
-                    <span className="whitespace-nowrap leading-none">Melodies</span>
+                    <Music
+                      className={`w-5 h-5 shrink-0 transition-transform ${
+                        isMelodiesActive ? 'text-[#ff0033] scale-110' : ''
+                      }`}
+                    />
                   </button>
 
-                  {/* Home */}
+                  {/* Home (Icon Only) */}
                   <button
                     type="button"
                     onClick={() => {
@@ -1236,25 +1243,28 @@ export default function App() {
                       romanticAudio.playChime();
                       handleTabSelect('home');
                     }}
+                    title="Home"
                     aria-label="Home"
                     style={{
-                      background: isHomeActive
-                        ? 'linear-gradient(135deg, #ec4899 0%, #e11d48 100%)'
+                      backgroundColor: isHomeActive
+                        ? 'rgba(236, 72, 153, 0.22)'
                         : 'transparent',
                       color: isHomeActive
-                        ? '#ffffff'
+                        ? '#ec4899'
                         : isMelodiesActive
                           ? '#a3a3a3'
                           : 'var(--text-soft)',
-                      whiteSpace: 'nowrap',
                     }}
-                    className="flex-1 min-w-[84px] sm:min-w-[94px] inline-flex flex-row items-center justify-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-semibold leading-none tracking-tight whitespace-nowrap shrink-0 transition-colors duration-200 cursor-pointer hover:opacity-95 active:scale-95"
+                    className="w-16 h-9 rounded-full flex items-center justify-center transition-all duration-200 cursor-pointer hover:opacity-95 active:scale-90"
                   >
-                    <Home className="w-3.5 h-3.5 shrink-0" />
-                    <span className="whitespace-nowrap leading-none">Home</span>
+                    <Home
+                      className={`w-5 h-5 shrink-0 transition-transform ${
+                        isHomeActive ? 'scale-110' : ''
+                      }`}
+                    />
                   </button>
 
-                  {/* Rooms */}
+                  {/* Rooms (Icon Only) */}
                   <button
                     type="button"
                     onClick={() => {
@@ -1262,21 +1272,25 @@ export default function App() {
                       romanticAudio.playChime();
                       handleTabSelect('rooms');
                     }}
+                    title="Rooms"
+                    aria-label="Rooms"
                     style={{
                       color: isRoomsActive
-                        ? '#ffffff'
+                        ? 'var(--accent)'
                         : isMelodiesActive
                           ? '#a3a3a3'
                           : 'var(--text-soft)',
                       backgroundColor: isRoomsActive
-                        ? 'var(--accent)'
+                        ? 'rgba(244, 63, 94, 0.2)'
                         : 'transparent',
-                      whiteSpace: 'nowrap',
                     }}
-                    className="flex-1 min-w-[88px] sm:min-w-[98px] inline-flex flex-row items-center justify-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-semibold leading-none tracking-tight whitespace-nowrap shrink-0 transition-colors duration-200 cursor-pointer hover:opacity-95 active:scale-95"
+                    className="w-16 h-9 rounded-full flex items-center justify-center transition-all duration-200 cursor-pointer hover:opacity-95 active:scale-90"
                   >
-                    <LayoutGrid className="w-3.5 h-3.5 shrink-0" />
-                    <span className="whitespace-nowrap leading-none">Rooms</span>
+                    <LayoutGrid
+                      className={`w-5 h-5 shrink-0 transition-transform ${
+                        isRoomsActive ? 'scale-110' : ''
+                      }`}
+                    />
                   </button>
                 </div>
               </nav>

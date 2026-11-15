@@ -127,20 +127,14 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
-        // Always keep WebView audio pipeline and timers active when minimizing the app
-        try {
-            webView.onResume()
-            webView.resumeTimers()
-        } catch (_: Exception) {}
+        // Always keep WebView audio pipeline, renderer priority, and timers active when switching to heavy apps
+        keepWebViewRendererHighPriority(isBackgrounded = true)
     }
 
     override fun onStop() {
         super.onStop()
-        // Prevent Chromium from suspending HTML5 <audio> or YouTube iframe when Activity enters stopped state
-        try {
-            webView.onResume()
-            webView.resumeTimers()
-        } catch (_: Exception) {}
+        // Prevent Chromium from suspending HTML5 <audio> or downgrading renderer priority when Activity stops
+        keepWebViewRendererHighPriority(isBackgrounded = true)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -151,6 +145,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        keepWebViewRendererHighPriority(isBackgrounded = false)
         FirestoreOverlayBackgroundService.startServiceSafely(this)
         if (!PermissionReporter.allRequiredPermissionsGranted(this)) {
             val setupIntent = Intent(this, PermissionSetupActivity::class.java).apply {
@@ -162,6 +157,21 @@ class MainActivity : AppCompatActivity() {
         PermissionReporter.reportStatusAsync(this)
         syncPermissionsIntoWebView()
         handleIncomingSectionIntent(intent)
+    }
+
+    private fun keepWebViewRendererHighPriority(isBackgrounded: Boolean) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
+            }
+            webView.onResume()
+            webView.resumeTimers()
+            val bgLiteral = if (isBackgrounded) "true" else "false"
+            webView.evaluateJavascript(
+                "window.__kashishAppInBackground = $bgLiteral; window.dispatchEvent(new CustomEvent('kashish-app-background-state', { detail: { backgrounded: $bgLiteral } }));",
+                null
+            )
+        } catch (_: Exception) {}
     }
 
     private fun handleIncomingSectionIntent(incoming: Intent?) {
@@ -179,6 +189,11 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun configureWebView() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
+            } catch (_: Exception) {}
+        }
         val settings = webView.settings
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true

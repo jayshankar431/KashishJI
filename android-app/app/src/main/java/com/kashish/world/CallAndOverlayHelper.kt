@@ -747,38 +747,106 @@ object CallAndOverlayHelper {
     }
 
     private fun cropSquareBitmap(src: Bitmap): Bitmap {
-        val size = minOf(src.width, src.height).coerceAtLeast(1)
-        val left = (src.width - size) / 2
-        val top = (src.height - size) / 2
         return try {
-            Bitmap.createBitmap(src, left, top, size, size)
+            // Strip top/bottom 4:3 black letterbox bars present in YouTube hqdefault (480x360) / sddefault (640x480)
+            val isFourByThree = src.width > src.height && kotlin.math.abs(src.width * 3 - src.height * 4) <= 12
+            val activeHeight = if (isFourByThree) {
+                ((src.width * 9) / 16).coerceAtLeast(1)
+            } else {
+                src.height
+            }
+            val size = minOf(src.width, activeHeight).coerceAtLeast(1)
+            val left = ((src.width - size) / 2).coerceAtLeast(0)
+            val top = ((src.height - size) / 2).coerceAtLeast(0)
+            val cropped = Bitmap.createBitmap(src, left, top, size, size)
+            if (cropped.width != 512 || cropped.height != 512) {
+                Bitmap.createScaledBitmap(cropped, 512, 512, true)
+            } else {
+                cropped
+            }
         } catch (_: Exception) {
             src
         }
     }
 
+    private fun downloadBitmapFromUrl(urlStr: String): Bitmap? {
+        return try {
+            val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 4500
+                readTimeout = 4500
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", "Mozilla/5.0")
+            }
+            if (conn.responseCode in 200..299) {
+                conn.inputStream.use { BitmapFactory.decodeStream(it) }
+            } else {
+                null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun loadSquareAlbumArtBitmap(context: Context, imageUrl: String): Bitmap? {
-        if (imageUrl.isNotBlank() && imageUrl == cachedAlbumArtUrl && cachedAlbumArtBitmap != null) {
+        val cleanUrl = imageUrl.trim()
+        if (cleanUrl.isNotBlank() && cleanUrl == cachedAlbumArtUrl && cachedAlbumArtBitmap != null) {
             return cachedAlbumArtBitmap
         }
-        if (imageUrl.isNotBlank() && (imageUrl.startsWith("http://") || imageUrl.startsWith("https://"))) {
+
+        // 1. Support data:image/...;base64,... directly from WebView canvas square crop
+        if (cleanUrl.startsWith("data:image/") && cleanUrl.contains("base64,")) {
             try {
-                val conn = (URL(imageUrl).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 4500
-                    readTimeout = 4500
-                    instanceFollowRedirects = true
-                }
-                val downloaded = conn.inputStream.use { BitmapFactory.decodeStream(it) }
-                if (downloaded != null) {
-                    val square = cropSquareBitmap(downloaded)
-                    cachedAlbumArtUrl = imageUrl
+                val base64Part = cleanUrl.substringAfter("base64,")
+                val bytes = android.util.Base64.decode(base64Part, android.util.Base64.DEFAULT)
+                val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                if (decoded != null && decoded.width > 64) {
+                    val square = cropSquareBitmap(decoded)
+                    cachedAlbumArtUrl = cleanUrl
                     cachedAlbumArtBitmap = square
                     return square
                 }
             } catch (_: Exception) {}
         }
-        return loadNotificationAvatarBitmap(context, "")
+
+        // 2. Support HTTP/HTTPS URLs with automatic YouTube multi-resolution fallback
+        if (cleanUrl.startsWith("http://") || cleanUrl.startsWith("https://")) {
+            val candidateUrls = mutableListOf<String>()
+            candidateUrls.add(cleanUrl)
+
+            val ytMatch = Regex("""ytimg\.com/vi/([a-zA-Z0-9_-]{11})""").find(cleanUrl)
+            if (ytMatch != null) {
+                val vid = ytMatch.groupValues[1]
+                val fallbacks = listOf(
+                    "https://i.ytimg.com/vi/$vid/maxresdefault.jpg",
+                    "https://i.ytimg.com/vi/$vid/hq720.jpg",
+                    "https://i.ytimg.com/vi/$vid/mqdefault.jpg",
+                    "https://i.ytimg.com/vi/$vid/hqdefault.jpg"
+                )
+                for (fb in fallbacks) {
+                    if (!candidateUrls.contains(fb)) {
+                        candidateUrls.add(fb)
+                    }
+                }
+            }
+
+            for (candidate in candidateUrls) {
+                val downloaded = downloadBitmapFromUrl(candidate)
+                // Reject YouTube's 120x90 missing-thumbnail placeholder
+                if (downloaded != null && downloaded.width > 120 && downloaded.height > 90) {
+                    val square = cropSquareBitmap(downloaded)
+                    cachedAlbumArtUrl = cleanUrl
+                    cachedAlbumArtBitmap = square
+                    return square
+                }
+            }
+        }
+
+        val fallback = loadNotificationAvatarBitmap(context, "")
+        return if (fallback != null) cropSquareBitmap(fallback) else null
     }
+
+    private var lastMetadataSignature: String = ""
+    private var lastNotificationSignature: String = ""
 
     private fun postMediaSessionAndNotificationOnMain(
         appCtx: Context,
@@ -815,17 +883,28 @@ object CallAndOverlayHelper {
                 )
             session.setPlaybackState(stateBuilder.build())
 
-            val metaBuilder = android.media.MediaMetadata.Builder()
-                .putString(android.media.MediaMetadata.METADATA_KEY_TITLE, title.ifBlank { "Melodies for Kashish ♡" })
-                .putString(android.media.MediaMetadata.METADATA_KEY_ARTIST, artist.ifBlank { "Jay's Heart" })
-                .putString(android.media.MediaMetadata.METADATA_KEY_ALBUM, "Kashish's World 💖")
-                .putLong(android.media.MediaMetadata.METADATA_KEY_DURATION, durMs)
-            if (artBitmap != null) {
-                metaBuilder.putBitmap(android.media.MediaMetadata.METADATA_KEY_ALBUM_ART, artBitmap)
-                metaBuilder.putBitmap(android.media.MediaMetadata.METADATA_KEY_ART, artBitmap)
-                metaBuilder.putBitmap(android.media.MediaMetadata.METADATA_KEY_DISPLAY_ICON, artBitmap)
+            val artGenId = artBitmap?.generationId ?: 0
+            val metaSig = "$title|$artist|$durMs|$artGenId"
+            if (metaSig != lastMetadataSignature) {
+                lastMetadataSignature = metaSig
+                val metaBuilder = android.media.MediaMetadata.Builder()
+                    .putString(android.media.MediaMetadata.METADATA_KEY_TITLE, title.ifBlank { "Melodies for Kashish ♡" })
+                    .putString(android.media.MediaMetadata.METADATA_KEY_ARTIST, artist.ifBlank { "Jay's Heart" })
+                    .putString(android.media.MediaMetadata.METADATA_KEY_ALBUM, "Kashish's World 💖")
+                    .putLong(android.media.MediaMetadata.METADATA_KEY_DURATION, durMs)
+                if (artBitmap != null) {
+                    metaBuilder.putBitmap(android.media.MediaMetadata.METADATA_KEY_ALBUM_ART, artBitmap)
+                    metaBuilder.putBitmap(android.media.MediaMetadata.METADATA_KEY_DISPLAY_ICON, artBitmap)
+                }
+                session.setMetadata(metaBuilder.build())
             }
-            session.setMetadata(metaBuilder.build())
+
+            // Avoid redundant 1MB+ Binder IPC Notification rebuilds when only playback position ticked
+            val notifSig = "$title|$artist|$isPlaying|$artGenId"
+            if (notifSig == lastNotificationSignature) {
+                return
+            }
+            lastNotificationSignature = notifSig
 
             val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
@@ -925,10 +1004,11 @@ object CallAndOverlayHelper {
             requestAudioFocus(appCtx)
         }
 
-        val immediateArt = if (thumbnailUrl.isNotBlank() && thumbnailUrl == cachedAlbumArtUrl && cachedAlbumArtBitmap != null) {
+        val cleanThumb = thumbnailUrl.trim()
+        val immediateArt = if (cleanThumb.isNotBlank() && cleanThumb == cachedAlbumArtUrl && cachedAlbumArtBitmap != null) {
             cachedAlbumArtBitmap
         } else {
-            cachedAlbumArtBitmap ?: loadNotificationAvatarBitmap(appCtx, "")
+            cachedAlbumArtBitmap ?: loadNotificationAvatarBitmap(appCtx, "")?.let { cropSquareBitmap(it) }
         }
 
         // Immediately post/update MediaSession + Notification on main thread so transport controls
@@ -945,12 +1025,12 @@ object CallAndOverlayHelper {
             )
         }
 
-        // If new remote artwork is needed, download it asynchronously and refresh the notification art.
-        if (thumbnailUrl.isNotBlank() && thumbnailUrl != cachedAlbumArtUrl &&
-            (thumbnailUrl.startsWith("http://") || thumbnailUrl.startsWith("https://"))
+        // If new remote or base64 artwork is needed, decode/download it asynchronously and refresh the notification art.
+        if (cleanThumb.isNotBlank() && cleanThumb != cachedAlbumArtUrl &&
+            (cleanThumb.startsWith("http://") || cleanThumb.startsWith("https://") || cleanThumb.startsWith("data:image/"))
         ) {
             mediaArtExecutor.execute {
-                val downloadedArt = loadSquareAlbumArtBitmap(appCtx, thumbnailUrl)
+                val downloadedArt = loadSquareAlbumArtBitmap(appCtx, cleanThumb)
                 if (downloadedArt != null && isMusicSessionActive) {
                     android.os.Handler(android.os.Looper.getMainLooper()).post {
                         postMediaSessionAndNotificationOnMain(

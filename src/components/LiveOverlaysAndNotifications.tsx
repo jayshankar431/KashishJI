@@ -331,7 +331,10 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
           // When the app is visible in the foreground, render the interactive React overlay popup directly
           // so button responses are captured immediately via the authenticated Firebase SDK.
           let nativeOverlayDispatched = false;
-          if (typeof document !== 'undefined' && document.hidden && canDrawOverlays()) {
+          const isAppInBg =
+            (typeof document !== 'undefined' && document.hidden) ||
+            (typeof window !== 'undefined' && Boolean((window as any).__kashishAppInBackground));
+          if (isAppInBg && canDrawOverlays()) {
             nativeOverlayDispatched = triggerNativeSystemOverlay(fullOverlay);
           }
 

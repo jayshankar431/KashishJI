@@ -165,9 +165,101 @@ function updateMediaSessionPosition(positionSec: number, durationSec: number, pl
   }
 }
 
+const squareArtworkDataCache = new Map<string, string>();
+const squareArtworkPendingSet = new Set<string>();
+
+function cropImageElementToSquareDataUrl(img: HTMLImageElement): string | null {
+  try {
+    const w = img.naturalWidth || img.width;
+    const h = img.naturalHeight || img.height;
+    if (w <= 120 || h <= 90) return null;
+    // Strip 4:3 black letterbox bars present in YouTube hqdefault (480x360) / sddefault (640x480)
+    const isFourByThree = w > h && Math.abs(w * 3 - h * 4) <= 12;
+    const activeH = isFourByThree ? Math.max(1, Math.floor((w * 9) / 16)) : h;
+    const size = Math.max(1, Math.min(w, activeH));
+    const sx = Math.max(0, Math.floor((w - size) / 2));
+    const sy = Math.max(0, Math.floor((h - size) / 2));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 512;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(img, sx, sy, size, size, 0, 0, 512, 512);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+    return dataUrl && dataUrl.startsWith('data:image/') ? dataUrl : null;
+  } catch {
+    return null;
+  }
+}
+
+function ensureSquareArtworkForTrack(
+  videoId: string,
+  rawThumbnail: string | undefined,
+  onReady?: (squareDataUrl: string) => void
+): void {
+  if (!videoId || typeof window === 'undefined' || typeof document === 'undefined') return;
+  const existing = squareArtworkDataCache.get(videoId);
+  if (existing) {
+    onReady?.(existing);
+    return;
+  }
+  if (squareArtworkPendingSet.has(videoId)) return;
+  squareArtworkPendingSet.add(videoId);
+
+  const candidates = [
+    ...(rawThumbnail && (rawThumbnail.includes('googleusercontent.com') || rawThumbnail.includes('ggpht.com'))
+      ? [rawThumbnail.replace(/=w\d+-h\d+[^&?]*/, '=w512-h512-l90-rj')]
+      : []),
+    `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`,
+    `https://i.ytimg.com/vi/${videoId}/hq720.jpg`,
+    `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+    `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+  ];
+
+  let idx = 0;
+  const tryNext = () => {
+    if (idx >= candidates.length) {
+      squareArtworkPendingSet.delete(videoId);
+      return;
+    }
+    const url = candidates[idx++];
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.referrerPolicy = 'no-referrer';
+    img.onload = () => {
+      if (img.naturalWidth <= 120 || img.naturalHeight <= 90) {
+        tryNext();
+        return;
+      }
+      const dataUrl = cropImageElementToSquareDataUrl(img);
+      squareArtworkPendingSet.delete(videoId);
+      if (dataUrl) {
+        squareArtworkDataCache.set(videoId, dataUrl);
+        onReady?.(dataUrl);
+      }
+    };
+    img.onerror = () => {
+      tryNext();
+    };
+    img.src = url;
+  };
+
+  tryNext();
+}
+
 function buildMediaArtworkList(rawThumbnail: string | undefined, videoId: string): MediaImage[] {
-  const primary = normalizeSquareThumbnail(rawThumbnail, videoId);
+  const cachedSquareData = videoId ? squareArtworkDataCache.get(videoId) : undefined;
   const sizes = [96, 128, 192, 256, 384, 512];
+  if (cachedSquareData) {
+    return sizes.map((sz) => ({
+      src: cachedSquareData,
+      sizes: `${sz}x${sz}`,
+      type: 'image/jpeg',
+    }));
+  }
+
+  const primary = normalizeSquareThumbnail(rawThumbnail, videoId);
   const toAbsolute = (url: string) => {
     try {
       if (typeof window !== 'undefined' && !url.startsWith('http://') && !url.startsWith('https://')) {
@@ -498,6 +590,9 @@ const PlayerProgressBar = memo(
     useEffect(() => {
       const updateProgress = () => {
         if (isDraggingRef.current) return;
+        if (typeof window !== 'undefined' && (window as any).__kashishAppInBackground === true) {
+          return;
+        }
         try {
           const { currentTime: cur, duration: dur } = getPlaybackMetrics();
           const effectiveDur = dur > 0 ? dur : fallbackDurationSec;
@@ -540,7 +635,17 @@ const PlayerProgressBar = memo(
       updateProgress();
       if (!isPlaying) return;
       const interval = window.setInterval(updateProgress, 400);
-      return () => window.clearInterval(interval);
+      const onBgState = (e: Event) => {
+        const detail = (e as CustomEvent)?.detail;
+        if (detail && detail.backgrounded === false) {
+          updateProgress();
+        }
+      };
+      window.addEventListener('kashish-app-background-state', onBgState);
+      return () => {
+        window.clearInterval(interval);
+        window.removeEventListener('kashish-app-background-state', onBgState);
+      };
     }, [isPlaying, getPlaybackMetrics, fallbackDurationSec]);
 
     const computeSecondsFromClientX = useCallback(
@@ -1788,13 +1893,18 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
 
       const toAbsolute = (url: string) => {
         try {
-          if (typeof window !== 'undefined' && !url.startsWith('http://') && !url.startsWith('https://')) {
+          if (typeof window !== 'undefined' && !url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('data:')) {
             return new URL(url, window.location.href).href;
           }
         } catch {}
         return url;
       };
-      const thumbUrl = toAbsolute(normalizeSquareThumbnail(track.thumbnail, track.videoId));
+      const hasNativeAndroidBridge =
+        typeof window !== 'undefined' && Boolean(window.AndroidApp);
+      const nativeHttpThumb = toAbsolute(
+        verifiedThumbnailCache.get(track.videoId) ||
+          normalizeSquareThumbnail(track.thumbnail, track.videoId)
+      );
       const artworkList = buildMediaArtworkList(track.thumbnail, track.videoId);
       const { currentTime, duration } = getPlaybackMetrics();
       const effectiveDur =
@@ -1803,6 +1913,28 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
           : track.durationSeconds && track.durationSeconds > 0
           ? track.durationSeconds
           : 215;
+
+      // Ensure 1:1 512x512 square cover art is generated for Web MediaSession
+      if (!hasNativeAndroidBridge && !squareArtworkDataCache.has(track.videoId)) {
+        ensureSquareArtworkForTrack(track.videoId, track.thumbnail, () => {
+          if (currentTrackRef.current?.videoId === track.videoId) {
+            try {
+              if (
+                typeof navigator !== 'undefined' &&
+                'mediaSession' in navigator &&
+                typeof (window as any).MediaMetadata !== 'undefined'
+              ) {
+                navigator.mediaSession.metadata = new window.MediaMetadata({
+                  title: track.title,
+                  artist: track.artist,
+                  album: track.album || `Kashish's World · Melodies for ${recipientName}`,
+                  artwork: buildMediaArtworkList(track.thumbnail, track.videoId),
+                });
+              }
+            } catch {}
+          }
+        });
+      }
 
       if (
         typeof navigator !== 'undefined' &&
@@ -1831,7 +1963,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
             window.AndroidApp.updateMusicNotificationWithPosition(
               track.title,
               track.artist,
-              thumbUrl,
+              nativeHttpThumb,
               false,
               Math.max(0, Math.floor(currentTime || 0)),
               Math.max(1, Math.floor(effectiveDur))
@@ -1840,7 +1972,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
             window.AndroidApp?.updateMusicNotification?.(
               track.title,
               track.artist,
-              thumbUrl,
+              nativeHttpThumb,
               false
             );
           }
@@ -1851,7 +1983,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
             window.AndroidApp.updateMusicNotificationWithPosition(
               track.title,
               track.artist,
-              thumbUrl,
+              nativeHttpThumb,
               true,
               Math.max(0, Math.floor(currentTime || 0)),
               Math.max(1, Math.floor(effectiveDur))
@@ -1860,7 +1992,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
             window.AndroidApp?.updateMusicNotification?.(
               track.title,
               track.artist,
-              thumbUrl,
+              nativeHttpThumb,
               true
             );
           }
@@ -1875,11 +2007,38 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     applyMediaMetadata(currentTrack, isPlaying);
   }, [currentTrack, isPlaying, applyMediaMetadata]);
 
-  // Continuous background MediaSession & Native Android Notification position/controls sync
-  // (Runs even when PlayerProgressBar is unmounted while viewing Lyrics/Up Next or other tabs)
+  // Automatically drop YouTube video stream decoding to 'small' while the app is in the background
+  // so 0% GPU/CPU is wasted decoding high-res video frames while heavy foreground apps are running
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleBgTransition = (e: Event) => {
+      const isBg = Boolean((e as CustomEvent)?.detail?.backgrounded);
+      const p = playerRef.current;
+      if (!p || !isPlayerReadyRef.current) return;
+      try {
+        if (isBg) {
+          p.setPlaybackQuality?.('small');
+          p.setPlaybackQualityRange?.('small', 'small');
+        } else {
+          const restoredQuality = isHighQualityRef.current
+            ? 'hd720'
+            : showVideoViewportRef.current
+            ? 'default'
+            : 'small';
+          p.setPlaybackQuality?.(restoredQuality);
+          p.setPlaybackQualityRange?.(restoredQuality, isHighQualityRef.current ? 'hd1080' : restoredQuality);
+        }
+      } catch {}
+    };
+    window.addEventListener('kashish-app-background-state', handleBgTransition);
+    return () => {
+      window.removeEventListener('kashish-app-background-state', handleBgTransition);
+    };
+  }, []);
+
+  // Lightweight background MediaSession position sync (without re-sending full metadata/bitmaps every 4s)
   useEffect(() => {
     if (!isPlaying || !currentTrack) return;
-    let lastNativePushMs = 0;
     let lastKnownDur = 0;
 
     const syncTick = () => {
@@ -1893,21 +2052,16 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
           ? tr.durationSeconds
           : 215;
 
-      bindMediaSessionHandlersRef.current();
       updateMediaSessionPosition(currentTime, effectiveDur);
 
-      const now = performance.now();
       const durJustResolved = duration > 0 && lastKnownDur === 0;
       if (durJustResolved) {
         lastKnownDur = duration;
-      }
-      if (durJustResolved || now - lastNativePushMs > 4000) {
-        lastNativePushMs = now;
         applyMediaMetadata(tr, true);
       }
     };
 
-    const timerId = window.setInterval(syncTick, 1000);
+    const timerId = window.setInterval(syncTick, 3000);
     return () => window.clearInterval(timerId);
   }, [isPlaying, currentTrack, getPlaybackMetrics, applyMediaMetadata]);
 
@@ -2101,28 +2255,38 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                 }
               }
               try {
-                const targetQuality = isHighQualityRef.current
+                const isBg =
+                  typeof window !== 'undefined' && (window as any).__kashishAppInBackground === true;
+                const targetQuality = isBg
+                  ? 'small'
+                  : isHighQualityRef.current
                   ? 'hd720'
                   : showVideoViewportRef.current
                   ? 'default'
                   : 'small';
                 event.target?.setPlaybackQuality?.(targetQuality);
               } catch {}
-              reclaimTopLevelAudioCarrier();
+              const hasNativeBridge =
+                typeof window !== 'undefined' && Boolean(window.AndroidApp);
+              if (!hasNativeBridge) {
+                reclaimTopLevelAudioCarrier();
+              }
               setIsPlaying(true);
               setIsBuffering(false);
               setStatusNotice(null);
               if (currentTrackRef.current) {
                 applyMediaMetadata(currentTrackRef.current, true);
               }
-              // Re-assert top-level MediaSession ownership after YouTube iframe claims internal focus
-              for (const delay of [150, 550, 1200]) {
-                window.setTimeout(() => {
-                  if (userWantPlayingRef.current && currentTrackRef.current) {
-                    reclaimTopLevelAudioCarrier();
-                    applyMediaMetadata(currentTrackRef.current, true);
-                  }
-                }, delay);
+              if (!hasNativeBridge) {
+                // Re-assert top-level MediaSession ownership on mobile web browsers after YouTube iframe claims internal focus
+                for (const delay of [150, 550, 1200]) {
+                  window.setTimeout(() => {
+                    if (userWantPlayingRef.current && currentTrackRef.current) {
+                      reclaimTopLevelAudioCarrier();
+                      applyMediaMetadata(currentTrackRef.current, true);
+                    }
+                  }, delay);
+                }
               }
             } else if (state === 2) {
               // If the user still wants music playing and the video viewport is hidden (or app is minimized/backgrounded),
@@ -2211,6 +2375,9 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   return;
                 } catch {}
               }
+            }
+            if (failedTrack?.videoId) {
+              setVerifiedVideoMap((prev) => ({ ...prev, [failedTrack.videoId]: false }));
             }
             setIsBuffering(false);
             setIsPlaying(false);
@@ -2952,11 +3119,30 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     [applyDirectVolume]
   );
 
-  // 1-second countdown ticker while Sleep Timer is active
+  const sleepEndTimeMsRef = useRef<number | null>(null);
+
+  // 1-second countdown ticker while Sleep Timer is active (skips intermediate React re-renders when app is backgrounded and >35s remain)
   useEffect(() => {
-    if (sleepRemainingSec === null || sleepRemainingSec <= 0) return;
+    if (sleepRemainingSec === null || sleepRemainingSec <= 0) {
+      sleepEndTimeMsRef.current = null;
+      return;
+    }
+    if (sleepEndTimeMsRef.current === null && sleepTimerMinutes) {
+      sleepEndTimeMsRef.current = Date.now() + sleepRemainingSec * 1000;
+    }
     const timer = window.setInterval(() => {
-      setSleepRemainingSec((prev) => (prev !== null && prev > 0 ? prev - 1 : null));
+      const targetMs = sleepEndTimeMsRef.current;
+      const nextRemaining = targetMs
+        ? Math.max(0, Math.round((targetMs - Date.now()) / 1000))
+        : null;
+      const inBg = typeof window !== 'undefined' && Boolean((window as any).__kashishAppInBackground);
+      if (inBg && nextRemaining !== null && nextRemaining > 35) {
+        return;
+      }
+      setSleepRemainingSec((prev) => {
+        if (nextRemaining !== null) return nextRemaining;
+        return prev !== null && prev > 0 ? prev - 1 : null;
+      });
     }, 1000);
     return () => window.clearInterval(timer);
   }, [sleepRemainingSec !== null && sleepRemainingSec > 0, sleepTimerMinutes]);
@@ -3039,6 +3225,9 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
   const [isNowPlayingOpen, setIsNowPlayingOpen] = useState<boolean>(false);
   const [nowPlayingTab, setNowPlayingTab] = useState<'upnext' | 'lyrics' | 'related'>('upnext');
   const [isAppleSheetDrawerOpen, setIsAppleSheetDrawerOpen] = useState<boolean>(false);
+  const [isKashishHubOpen, setIsKashishHubOpen] = useState<boolean>(false);
+  const [kashishHubTab, setKashishHubTab] = useState<'playlists' | 'liked' | 'history' | 'queue'>('playlists');
+  const [verifiedVideoMap, setVerifiedVideoMap] = useState<Record<string, boolean>>({});
 
   // Home Mood Chips state (Relax, Workout, Focus, Party + All, Romantic, Lo-Fi, Punjabi)
   const [homeMood, setHomeMood] = useState<string>('All');
@@ -3759,6 +3948,54 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     );
   }, [displayTrack.videoId, displayTrack.thumbnail]);
 
+  // Determine whether an official/playable video is available for displayTrack
+  useEffect(() => {
+    const vid = displayTrack?.videoId;
+    if (!vid) return;
+    if (
+      displayTrack.mediaType === 'video' ||
+      displayTrack.catalogSource === 'youtube_video' ||
+      videoTracks.some((v) => v.videoId === vid)
+    ) {
+      setVerifiedVideoMap((prev) => (prev[vid] === true ? prev : { ...prev, [vid]: true }));
+      return;
+    }
+    if (verifiedVideoMap[vid] !== undefined) return;
+
+    let cancelled = false;
+    const img = new Image();
+    img.referrerPolicy = 'no-referrer';
+    img.onload = () => {
+      if (cancelled) return;
+      // Valid YouTube videos serve a 320x180 mqdefault frame (120x90 is YouTube's missing/deleted placeholder)
+      const hasValidVideoStream = img.naturalWidth > 120 && img.naturalHeight > 90;
+      setVerifiedVideoMap((prev) => ({
+        ...prev,
+        [vid]: hasValidVideoStream,
+      }));
+    };
+    img.onerror = () => {
+      if (cancelled) return;
+      setVerifiedVideoMap((prev) => ({ ...prev, [vid]: false }));
+    };
+    img.src = `https://i.ytimg.com/vi/${vid}/mqdefault.jpg`;
+
+    return () => {
+      cancelled = true;
+    };
+  }, [displayTrack.videoId, displayTrack.mediaType, displayTrack.catalogSource, videoTracks, verifiedVideoMap]);
+
+  const isVideoAvailableForCurrentTrack = Boolean(
+    displayTrack?.videoId && verifiedVideoMap[displayTrack.videoId] !== false
+  );
+
+  useEffect(() => {
+    if (!isVideoAvailableForCurrentTrack && showVideoViewport) {
+      setShowVideoViewport(false);
+      showVideoViewportRef.current = false;
+    }
+  }, [isVideoAvailableForCurrentTrack, showVideoViewport]);
+
   // Real Lyrics Fetcher for Now Playing Lyrics Tab
   const [lyricsData, setLyricsData] = useState<TrackLyricsData | null>(null);
   const [isLoadingLyrics, setIsLoadingLyrics] = useState<boolean>(false);
@@ -4031,6 +4268,10 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
         setIsSleepMenuOpen(false);
         return true;
       }
+      if (isKashishHubOpen) {
+        setIsKashishHubOpen(false);
+        return true;
+      }
       if (isVideoFullscreen) {
         setIsVideoFullscreen(false);
         return true;
@@ -4065,6 +4306,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     activeTab,
     isCreatePlaylistOpen,
     isEqMenuOpen,
+    isKashishHubOpen,
     isLibraryQueueOpen,
     isMoreLikeThisOpen,
     isNowPlayingOpen,
@@ -4282,7 +4524,9 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     <div
       className={
         isMelodiesPage
-          ? 'fixed inset-0 top-14 z-30 w-full h-[calc(var(--stable-vh,100dvh)-3.5rem)] pb-[calc(3.25rem+env(safe-area-inset-bottom,0px))] bg-black text-white flex flex-col overflow-hidden select-none'
+          ? isNowPlayingOpen
+            ? 'fixed inset-0 top-0 z-[130] w-screen h-[100dvh] pb-0 bg-black text-white flex flex-col overflow-hidden select-none'
+            : 'fixed inset-0 top-14 z-30 w-full h-[calc(var(--stable-vh,100dvh)-3.5rem)] pb-[calc(3rem+env(safe-area-inset-bottom,0px))] bg-black text-white flex flex-col overflow-hidden select-none'
           : 'fixed -top-[9999px] -left-[9999px] w-px h-px overflow-hidden opacity-0 pointer-events-none'
       }
     >
@@ -4349,7 +4593,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
               </form>
             </div>
 
-            {/* Right: Equalizer, HD Quality, Sleep Timer & Profile Avatar */}
+            {/* Right: Equalizer, Sleep Timer & Kashish Logo Hub Icon */}
             <div className="flex items-center gap-1 sm:gap-2 shrink-0">
               {/* Equalizer Button */}
               <button
@@ -4358,6 +4602,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   triggerHaptic(15);
                   setIsEqMenuOpen((prev) => !prev);
                   setIsSleepMenuOpen(false);
+                  setIsKashishHubOpen(false);
                 }}
                 className={`p-2 rounded-full transition-colors cursor-pointer ${
                   isEqMenuOpen || activeEqPreset !== 'Flat'
@@ -4377,6 +4622,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   triggerHaptic(15);
                   setIsSleepMenuOpen((prev) => !prev);
                   setIsEqMenuOpen(false);
+                  setIsKashishHubOpen(false);
                 }}
                 className={`p-2 rounded-full transition-colors cursor-pointer flex items-center gap-1 ${
                   sleepRemainingSec !== null
@@ -4394,18 +4640,58 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                 )}
               </button>
 
-              {/* HD Audio/Video Quality Toggle */}
+              {/* Kashish Library Logo Icon Button (Opens Playlists, Liked Songs, Song History, Queue & Options) */}
               <button
                 type="button"
-                onClick={handleToggleHighQuality}
-                className={`hidden sm:inline-flex px-2 py-1 rounded-md text-[10px] font-extrabold tracking-wider uppercase border transition-all cursor-pointer ${
-                  isHighQuality
-                    ? 'bg-[#ff0033] text-white border-[#ff0033] shadow-[0_0_12px_rgba(255,0,51,0.5)]'
-                    : 'bg-[#121212] text-neutral-400 border-white/15 hover:text-white'
+                onClick={() => {
+                  triggerHaptic(20);
+                  setIsKashishHubOpen((prev) => !prev);
+                  setIsSleepMenuOpen(false);
+                  setIsEqMenuOpen(false);
+                }}
+                style={{ width: '36px', height: '36px', minWidth: '36px', minHeight: '36px' }}
+                className={`relative flex items-center justify-center rounded-full p-[1.5px] bg-gradient-to-tr from-[#ff0033] via-pink-500 to-amber-300 shadow-[0_0_14px_rgba(255,0,51,0.55)] cursor-pointer active:scale-90 transition-transform shrink-0 ${
+                  isKashishHubOpen ? 'ring-2 ring-white scale-105' : ''
                 }`}
-                title={isHighQuality ? 'HD Quality Active' : 'Enable HD Quality'}
+                title={`${recipientName}'s Music Library (Playlists, Liked Songs, History)`}
+                aria-label={`${recipientName}'s Music Library`}
               >
-                HD
+                <span className="relative w-full h-full rounded-full overflow-hidden bg-gradient-to-br from-[#2d0a1a] to-[#12040a] flex items-center justify-center">
+                  <Library className="w-4 h-4 text-amber-300 shrink-0" />
+                  <img
+                    src="/apple-touch-icon.png"
+                    alt={`${recipientName} Library`}
+                    width={36}
+                    height={36}
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'cover',
+                      display: 'block',
+                      position: 'absolute',
+                      inset: 0,
+                    }}
+                    className="w-full h-full rounded-full object-cover"
+                    onError={(e) => {
+                      const target = e.currentTarget;
+                      if (!target.dataset.step) {
+                        target.dataset.step = '1';
+                        target.src = '/pwa-192x192.png';
+                      } else if (target.dataset.step === '1') {
+                        target.dataset.step = '2';
+                        target.src = '/app-icon.png';
+                      } else if (target.dataset.step === '2') {
+                        target.dataset.step = '3';
+                        target.src = '/assets/golden_gaze_logo.svg';
+                      } else {
+                        target.style.display = 'none';
+                      }
+                    }}
+                  />
+                </span>
+                <span className="absolute -bottom-0.5 -right-0.5 z-10 w-4 h-4 rounded-full bg-[#ff0033] border border-black flex items-center justify-center shadow">
+                  <Library className="w-2.5 h-2.5 text-white" />
+                </span>
               </button>
             </div>
           </header>
@@ -4514,8 +4800,51 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
             {/* ==================== VIEW A: HOME PAGE ==================== */}
             {ytmView !== 'search' && (
               <div className="max-w-6xl mx-auto space-y-6 pb-2">
-                {/* 1. Mood Chips Row (Relax, Workout, Focus, Party, etc.) */}
+                {/* 1. Mood Chips Row + Kashish Library Hub Quick Chip */}
                 <div className="flex items-center gap-2 overflow-x-auto overflow-y-hidden no-scrollbar touch-pan-x pb-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      triggerHaptic(16);
+                      setIsKashishHubOpen(true);
+                    }}
+                    style={{ whiteSpace: 'nowrap' }}
+                    className="pl-1.5 pr-3 py-1 rounded-full text-xs sm:text-sm font-bold whitespace-nowrap transition-all cursor-pointer shrink-0 flex items-center gap-2 bg-gradient-to-r from-[#280917] to-[#1a121f] text-white border border-pink-500/40 hover:border-pink-400 shadow-[0_0_12px_rgba(255,0,51,0.25)]"
+                  >
+                    <span
+                      style={{ width: '22px', height: '22px', minWidth: '22px', minHeight: '22px' }}
+                      className="relative rounded-full overflow-hidden border border-amber-300/80 bg-[#1a0812] flex items-center justify-center shrink-0"
+                    >
+                      <Library className="w-3 h-3 text-amber-300" />
+                      <img
+                        src="/apple-touch-icon.png"
+                        alt="Library"
+                        width={22}
+                        height={22}
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'cover',
+                          display: 'block',
+                          position: 'absolute',
+                          inset: 0,
+                        }}
+                        onError={(e) => {
+                          const target = e.currentTarget;
+                          if (!target.dataset.step) {
+                            target.dataset.step = '1';
+                            target.src = '/pwa-192x192.png';
+                          } else if (target.dataset.step === '1') {
+                            target.dataset.step = '2';
+                            target.src = '/assets/golden_gaze_logo.svg';
+                          } else {
+                            target.style.display = 'none';
+                          }
+                        }}
+                      />
+                    </span>
+                    <span>Library</span>
+                  </button>
                   {HOME_MOOD_CHIPS.map((chip) => {
                     const isActive = homeMood === chip.id;
                     return (
@@ -4819,7 +5148,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
           </main>
         )}
 
-        {/* ==================== 3. APPLE MUSIC UNIFIED EXPANDED PLAYER (ALWAYS MOUNTED SO YOUTUBE IFRAME NEVER RELOADS) ==================== */}
+        {/* ==================== 3. YOUTUBE MUSIC / APPLE MUSIC UNIFIED FULL-SCREEN EXPANDED PLAYER ==================== */}
         <div
           style={
             isMelodiesPage && isNowPlayingOpen
@@ -4830,21 +5159,21 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
           }
           className={
             isMelodiesPage && isNowPlayingOpen
-              ? 'absolute inset-0 z-30 flex flex-col overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] opacity-100 translate-y-0 pointer-events-auto bg-[#09090c] backdrop-blur-3xl will-change-[opacity,transform]'
+              ? 'fixed inset-0 z-[130] w-screen h-[var(--stable-vh,100dvh)] pt-[max(0.5rem,env(safe-area-inset-top,0px))] pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] flex flex-col overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] opacity-100 translate-y-0 pointer-events-auto bg-[#09090c] backdrop-blur-3xl will-change-[opacity,transform]'
               : 'fixed -top-[9999px] -left-[9999px] w-px h-px opacity-0 translate-y-6 pointer-events-none overflow-hidden z-[-1] transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]'
           }
         >
-          {/* Single Continuous Unified Apple Music Player Container */}
-          <div className="w-full max-w-xl mx-auto flex-1 min-h-0 flex flex-col justify-between overflow-hidden px-5 sm:px-8 pt-2 pb-3">
-            {/* Top Grabber Pill + Song/Video Pill + Minimize Chevron */}
+          {/* Single Continuous Full-Screen Player Container */}
+          <div className="w-full max-w-xl mx-auto flex-1 min-h-0 flex flex-col justify-between overflow-hidden px-4 sm:px-8 pt-1.5 pb-2">
+            {/* TOP BAR: Minimize Chevron + YouTube Music Segmented Song | Video Toggle Pill + Add to Playlist */}
             {isMelodiesPage && isNowPlayingOpen && (
-              <div className="w-full flex flex-col items-center shrink-0 pb-1">
-                {/* Apple Music iOS Sheet Grabber Handle */}
+              <div className="w-full flex flex-col items-center shrink-0 pb-1 z-20">
+                {/* Sheet Grabber Handle */}
                 <button
                   type="button"
                   onClick={() => setIsNowPlayingOpen(false)}
                   aria-label="Minimize Now Playing"
-                  className="py-1.5 px-6 cursor-pointer group focus:outline-none"
+                  className="py-1 px-6 cursor-pointer group focus:outline-none"
                 >
                   <div className="w-10 h-1.5 rounded-full bg-white/35 group-hover:bg-white/60 transition-colors" />
                 </button>
@@ -4853,52 +5182,111 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   <button
                     type="button"
                     onClick={() => setIsNowPlayingOpen(false)}
-                    className="w-8 h-8 rounded-full bg-white/12 hover:bg-white/20 text-white/90 flex items-center justify-center cursor-pointer transition-colors"
+                    className="w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 text-white flex items-center justify-center cursor-pointer transition-colors shrink-0"
                     title="Minimize player"
                     aria-label="Minimize player"
                   >
-                    <ChevronDown className="w-4 h-4" />
+                    <ChevronDown className="w-5 h-5" />
                   </button>
 
-                  {/* Apple Music Segmented Song | Video Pill */}
-                  <div className="flex items-center bg-black/25 backdrop-blur-md border border-white/10 rounded-full p-0.5">
+                  {/* YouTube Music Style Top Segmented Song | Video Toggle Pill */}
+                  <div className="flex items-center bg-black/50 backdrop-blur-md border border-white/20 rounded-full p-1 shadow-lg">
                     <button
                       type="button"
                       onClick={() => {
                         if (showVideoViewport) handleToggleVideoViewport();
                       }}
-                      className={`px-3.5 py-1 rounded-full text-[11px] font-bold transition-all cursor-pointer ${
+                      className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer ${
                         !showVideoViewport
-                          ? 'bg-white/20 text-white shadow-sm'
-                          : 'text-white/60 hover:text-white'
+                          ? 'bg-white text-black shadow-sm'
+                          : 'text-white/80 hover:text-white'
                       }`}
                     >
-                      Song
+                      <Music className="w-3.5 h-3.5" />
+                      <span>Song</span>
                     </button>
                     <button
                       type="button"
                       onClick={() => {
+                        if (!isVideoAvailableForCurrentTrack) {
+                          showNativeToast('Video is not available for this track');
+                          return;
+                        }
                         if (!showVideoViewport) handleToggleVideoViewport();
                       }}
-                      className={`px-3.5 py-1 rounded-full text-[11px] font-bold transition-all cursor-pointer ${
-                        showVideoViewport
-                          ? 'bg-white/20 text-white shadow-sm'
-                          : 'text-white/60 hover:text-white'
+                      className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer ${
+                        showVideoViewport && isVideoAvailableForCurrentTrack
+                          ? 'bg-white text-black shadow-sm'
+                          : isVideoAvailableForCurrentTrack
+                          ? 'text-white/80 hover:text-white'
+                          : 'text-white/40 cursor-not-allowed'
                       }`}
                     >
-                      Video
+                      <Film className="w-3.5 h-3.5" />
+                      <span>Video</span>
                     </button>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setTrackForPlaylistModal(displayTrack)}
-                    className="w-8 h-8 rounded-full bg-white/12 hover:bg-white/20 text-white/90 flex items-center justify-center cursor-pointer transition-colors"
-                    title="Add to playlist"
-                    aria-label="Add to playlist"
-                  >
-                    <Plus className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setTrackForPlaylistModal(displayTrack)}
+                      className="w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 text-white flex items-center justify-center cursor-pointer transition-colors shrink-0"
+                      title="Add to playlist"
+                      aria-label="Add to playlist"
+                    >
+                      <Plus className="w-5 h-5" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        triggerHaptic(20);
+                        setIsKashishHubOpen(true);
+                      }}
+                      style={{ width: '36px', height: '36px', minWidth: '36px', minHeight: '36px' }}
+                      className="relative flex items-center justify-center rounded-full p-[1.5px] bg-gradient-to-tr from-[#ff0033] via-pink-500 to-amber-300 shadow-[0_0_12px_rgba(255,0,51,0.5)] cursor-pointer active:scale-90 transition-transform shrink-0"
+                      title={`${recipientName}'s Music Library`}
+                      aria-label={`${recipientName}'s Music Library`}
+                    >
+                      <span className="relative w-full h-full rounded-full overflow-hidden bg-gradient-to-br from-[#2d0a1a] to-[#12040a] flex items-center justify-center">
+                        <Library className="w-4 h-4 text-amber-300 shrink-0" />
+                        <img
+                          src="/apple-touch-icon.png"
+                          alt={`${recipientName} Library`}
+                          width={36}
+                          height={36}
+                          style={{
+                            width: '100%',
+                            height: '100%',
+                            objectFit: 'cover',
+                            display: 'block',
+                            position: 'absolute',
+                            inset: 0,
+                          }}
+                          className="w-full h-full rounded-full object-cover"
+                          onError={(e) => {
+                            const target = e.currentTarget;
+                            if (!target.dataset.step) {
+                              target.dataset.step = '1';
+                              target.src = '/pwa-192x192.png';
+                            } else if (target.dataset.step === '1') {
+                              target.dataset.step = '2';
+                              target.src = '/app-icon.png';
+                            } else if (target.dataset.step === '2') {
+                              target.dataset.step = '3';
+                              target.src = '/assets/golden_gaze_logo.svg';
+                            } else {
+                              target.style.display = 'none';
+                            }
+                          }}
+                        />
+                      </span>
+                      <span className="absolute -bottom-0.5 -right-0.5 z-10 w-3.5 h-3.5 rounded-full bg-[#ff0033] border border-black flex items-center justify-center">
+                        <Library className="w-2 h-2 text-white" />
+                      </span>
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
@@ -4910,13 +5298,13 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
               onTouchStart={resetVideoControlsTimer}
               onClick={resetVideoControlsTimer}
               className={
-                isMelodiesPage && isNowPlayingOpen && showVideoViewport && displayTrack
+                isMelodiesPage && isNowPlayingOpen && showVideoViewport && isVideoAvailableForCurrentTrack && displayTrack
                   ? `relative w-full aspect-video ${
                       isVideoFullscreen
                         ? 'fixed inset-0 z-50 w-screen h-screen max-h-none rounded-none'
                         : isAppleSheetDrawerOpen
-                        ? 'max-h-[16dvh] rounded-2xl shadow-xl my-1'
-                        : 'max-h-[30dvh] sm:max-h-[34dvh] rounded-2xl shadow-[0_24px_50px_rgba(0,0,0,0.65)] my-2'
+                        ? 'max-h-[18dvh] rounded-2xl shadow-xl my-1'
+                        : 'max-h-[32dvh] sm:max-h-[36dvh] rounded-2xl shadow-[0_24px_50px_rgba(0,0,0,0.65)] my-1.5'
                     } overflow-hidden bg-black shrink-0 mx-auto group select-none transition-all duration-300`
                   : 'fixed -top-[9999px] -left-[9999px] w-px h-px opacity-0 pointer-events-none overflow-hidden z-[-1]'
               }
@@ -4924,7 +5312,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
               <div
                 id="kashish-yt-iframe-wrapper"
                 style={
-                  isMelodiesPage && isNowPlayingOpen && showVideoViewport && displayTrack
+                  isMelodiesPage && isNowPlayingOpen && showVideoViewport && isVideoAvailableForCurrentTrack && displayTrack
                     ? {
                         position: 'absolute',
                         top: '-14%',
@@ -4941,7 +5329,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                 className="overflow-hidden pointer-events-none"
               />
 
-              {isMelodiesPage && isNowPlayingOpen && showVideoViewport && displayTrack && (
+              {isMelodiesPage && isNowPlayingOpen && showVideoViewport && isVideoAvailableForCurrentTrack && displayTrack && (
                 <>
                   <div
                     onClick={(e) => {
@@ -4983,18 +5371,18 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
               )}
             </div>
 
-            {/* 2A. APPLE MUSIC MAIN ARTWORK & CONTROLS SCREEN (WHEN DRAWER IS CLOSED) */}
+            {/* 2A. MAIN ARTWORK & CONTROLS SCREEN (WHEN UP NEXT / LYRICS / RELATED DRAWER IS CLOSED) */}
             {isMelodiesPage && isNowPlayingOpen && !isAppleSheetDrawerOpen && (
               <div className="flex-1 min-h-0 flex flex-col justify-evenly py-1 overflow-hidden">
-                {/* Apple Music Breathing Album Artwork */}
-                {!showVideoViewport && (
+                {/* Responsive 1:1 Square Album Artwork (scales to both viewport width and height so controls never clip) */}
+                {(!showVideoViewport || !isVideoAvailableForCurrentTrack) && (
                   <div className="w-full flex items-center justify-center my-auto py-1">
                     <div
                       onClick={handleTogglePlayPause}
-                      className={`relative w-[64vw] max-w-[260px] sm:max-w-[290px] aspect-square rounded-[22px] overflow-hidden bg-[#18181b] cursor-pointer transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${
+                      className={`relative w-[min(76vw,36dvh)] sm:w-[min(76vw,40dvh)] max-w-[320px] aspect-square rounded-[24px] overflow-hidden bg-[#18181b] cursor-pointer transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${
                         isPlaying
-                          ? 'scale-100 shadow-[0_28px_60px_rgba(0,0,0,0.75)] ring-1 ring-white/15'
-                          : 'scale-[0.84] opacity-90 shadow-[0_12px_28px_rgba(0,0,0,0.45)] ring-1 ring-white/10'
+                          ? 'scale-100 shadow-[0_24px_50px_rgba(0,0,0,0.75)] ring-1 ring-white/15'
+                          : 'scale-[0.88] opacity-90 shadow-[0_12px_28px_rgba(0,0,0,0.45)] ring-1 ring-white/10'
                       }`}
                     >
                       <HighResThumbnail
@@ -5008,13 +5396,13 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   </div>
                 )}
 
-                {/* Apple Music Track Title, Artist & Circular Action Buttons */}
-                <div className="w-full flex items-center justify-between gap-3 pt-2">
+                {/* Track Title, Artist & Action Buttons */}
+                <div className="w-full flex items-center justify-between gap-3 pt-1">
                   <div className="min-w-0 flex-1 overflow-hidden">
-                    <h2 className="block text-lg sm:text-xl font-bold tracking-tight text-white truncate whitespace-nowrap">
+                    <h2 className="block text-lg sm:text-2xl font-bold tracking-tight text-white truncate whitespace-nowrap">
                       {displayTrack.title}
                     </h2>
-                    <p className="block text-sm sm:text-base font-medium text-white/70 truncate whitespace-nowrap mt-0.5">
+                    <p className="block text-xs sm:text-base font-medium text-white/70 truncate whitespace-nowrap mt-0.5">
                       {displayTrack.artist}
                     </p>
                   </div>
@@ -5023,12 +5411,12 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     <button
                       type="button"
                       onClick={() => handleToggleFavorite(displayTrack)}
-                      className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white/12 hover:bg-white/20 backdrop-blur-md text-white flex items-center justify-center cursor-pointer active:scale-90 transition-all"
+                      className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-white/12 hover:bg-white/20 backdrop-blur-md text-white flex items-center justify-center cursor-pointer active:scale-90 transition-all"
                       title="Favorite song"
                       aria-label="Favorite song"
                     >
                       <Heart
-                        className={`w-4 h-4 ${
+                        className={`w-4.5 h-4.5 ${
                           favoriteIds.has(displayTrack.videoId)
                             ? 'fill-[#fa2d48] text-[#fa2d48]'
                             : 'text-white/90'
@@ -5038,17 +5426,17 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     <button
                       type="button"
                       onClick={() => setTrackForPlaylistModal(displayTrack)}
-                      className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white/12 hover:bg-white/20 backdrop-blur-md text-white flex items-center justify-center cursor-pointer active:scale-90 transition-all"
+                      className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-white/12 hover:bg-white/20 backdrop-blur-md text-white flex items-center justify-center cursor-pointer active:scale-90 transition-all"
                       title="Add to playlist"
                       aria-label="Add to playlist"
                     >
-                      <FolderPlus className="w-4 h-4 text-white/90" />
+                      <FolderPlus className="w-4.5 h-4.5 text-white/90" />
                     </button>
                   </div>
                 </div>
 
-                {/* Apple Music Thickened Capsule Scrubber with Lossless Badge & Remaining Time */}
-                <div className="w-full pt-2">
+                {/* Progress Bar Scrubber */}
+                <div className="w-full pt-1">
                   <PlayerProgressBar
                     variant="apple"
                     getPlaybackMetrics={getPlaybackMetrics}
@@ -5062,7 +5450,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   />
                 </div>
 
-                {/* Apple Music Large Frameless White Transport Controls */}
+                {/* Transport Controls */}
                 <div className="w-full flex items-center justify-between px-2 sm:px-6 py-1">
                   <button
                     type="button"
@@ -5075,7 +5463,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     title={isShuffle ? 'Shuffle On' : 'Shuffle Off'}
                     aria-label="Toggle shuffle"
                   >
-                    <Shuffle className="w-4 h-4 sm:w-5 sm:h-5" />
+                    <Shuffle className="w-5 h-5" />
                   </button>
 
                   <button
@@ -5126,54 +5514,27 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     aria-label="Toggle repeat mode"
                   >
                     {repeatMode === 'one' ? (
-                      <Repeat1 className="w-4 h-4 sm:w-5 sm:h-5" />
+                      <Repeat1 className="w-5 h-5" />
                     ) : (
-                      <Repeat className="w-4 h-4 sm:w-5 sm:h-5" />
+                      <Repeat className="w-5 h-5" />
                     )}
                   </button>
-                </div>
-
-                {/* Apple Music Bottom Volume Slider Row */}
-                <div className="w-full flex items-center gap-3 pt-1">
-                  <button
-                    type="button"
-                    onClick={handleToggleMute}
-                    className="text-white/60 hover:text-white transition-colors cursor-pointer shrink-0"
-                    aria-label="Mute or unmute"
-                  >
-                    {isMuted || volume === 0 ? (
-                      <VolumeX className="w-4 h-4 text-[#fa2d48]" />
-                    ) : (
-                      <Volume1 className="w-4 h-4" />
-                    )}
-                  </button>
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    value={isMuted ? 0 : volume}
-                    onChange={handleVolumeChange}
-                    aria-label="Volume"
-                    style={{ accentColor: '#ffffff' }}
-                    className="flex-1 h-1.5 rounded-full bg-white/25 cursor-pointer"
-                  />
-                  <Volume2 className="w-4 h-4 text-white/60 shrink-0" />
                 </div>
               </div>
             )}
 
-            {/* 2B. APPLE MUSIC COMPACT HEADER + INTEGRATED UP NEXT / LYRICS / RELATED VIEW (WHEN DRAWER IS OPEN) */}
+            {/* 2B. COMPACT HEADER + INTEGRATED UP NEXT / LYRICS / RELATED VIEW (WHEN DRAWER IS OPEN) */}
             {isMelodiesPage && isNowPlayingOpen && isAppleSheetDrawerOpen && (
               <div className="flex-1 min-h-0 flex flex-col overflow-hidden pt-1">
-                {/* Apple Music Compact Mini-Header (Tap thumbnail/title to return to full Artwork view) */}
-                <div className="w-full flex items-center justify-between gap-3 pb-3 border-b border-white/10 shrink-0">
+                {/* Compact Mini-Header (Tap thumbnail/title to return to full Artwork view) */}
+                <div className="w-full flex items-center justify-between gap-3 pb-2.5 border-b border-white/10 shrink-0">
                   <button
                     type="button"
                     onClick={() => setIsAppleSheetDrawerOpen(false)}
                     className="flex items-center gap-3 min-w-0 flex-1 text-left cursor-pointer group"
                     title="Return to full artwork player"
                   >
-                    <div className="relative w-12 h-12 rounded-xl overflow-hidden shadow-lg bg-[#18181b] ring-1 ring-white/15 shrink-0 group-hover:scale-105 transition-transform">
+                    <div className="relative w-11 h-11 rounded-xl overflow-hidden shadow-lg bg-[#18181b] ring-1 ring-white/15 shrink-0 group-hover:scale-105 transition-transform">
                       <HighResThumbnail
                         videoId={displayTrack.videoId}
                         rawThumbnail={displayTrack.thumbnail}
@@ -5218,42 +5579,14 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   </div>
                 </div>
 
-                {/* Segmented Pill Bar: UP NEXT | LYRICS | RELATED */}
-                <div className="grid grid-cols-3 bg-white/10 p-1 rounded-xl my-2.5 shrink-0">
-                  {[
-                    { id: 'upnext' as const, label: 'Playing Next' },
-                    { id: 'lyrics' as const, label: 'Lyrics' },
-                    { id: 'related' as const, label: 'Related' },
-                  ].map((tab) => {
-                    const isActive = nowPlayingTab === tab.id;
-                    return (
-                      <button
-                        key={tab.id}
-                        type="button"
-                        onClick={() => {
-                          triggerHaptic(10);
-                          setNowPlayingTab(tab.id);
-                        }}
-                        className={`py-1.5 px-2 rounded-lg text-xs font-bold tracking-tight whitespace-nowrap transition-all cursor-pointer ${
-                          isActive
-                            ? 'bg-white/20 text-white shadow-sm'
-                            : 'text-white/60 hover:text-white'
-                        }`}
-                      >
-                        {tab.label}
-                      </button>
-                    );
-                  })}
-                </div>
-
                 {/* Scrollable Content Area inside Unified Player */}
-                <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+                <div className="flex-1 min-h-0 flex flex-col overflow-hidden pt-2">
                   {/* Tab 1: UP NEXT Queue */}
                   {nowPlayingTab === 'upnext' && (
                     <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
                       <div className="shrink-0 py-1.5 text-xs text-white/70 flex items-center justify-between">
                         <span className="font-bold text-white tracking-tight">
-                          Playing Next • {activeQueueList.length}
+                          Up Next • {activeQueueList.length}
                         </span>
                         <div className="flex items-center gap-1.5">
                           <button
@@ -5297,7 +5630,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     </div>
                   )}
 
-                  {/* Tab 2: APPLE MUSIC BOLD LYRICS */}
+                  {/* Tab 2: LYRICS */}
                   {nowPlayingTab === 'lyrics' && (
                     <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y py-3 pb-6 space-y-4">
                       {isLoadingLyrics ? (
@@ -5372,9 +5705,33 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
               </div>
             )}
 
-            {/* 3. APPLE MUSIC BOTTOM MODE BAR (Lyrics, Artwork Player, Playing Next Queue, Related) */}
+            {/* 3. YOUTUBE MUSIC BOTTOM TAB BAR (UP NEXT | LYRICS | RELATED) */}
             {isMelodiesPage && isNowPlayingOpen && (
-              <div className="w-full flex items-center justify-around pt-2 pb-1 shrink-0 border-t border-white/10">
+              <div className="w-full grid grid-cols-3 gap-2 pt-2 pb-1 shrink-0 border-t border-white/15 z-20">
+                {/* Up Next Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    triggerHaptic(10);
+                    if (isAppleSheetDrawerOpen && nowPlayingTab === 'upnext') {
+                      setIsAppleSheetDrawerOpen(false);
+                    } else {
+                      setNowPlayingTab('upnext');
+                      setIsAppleSheetDrawerOpen(true);
+                    }
+                  }}
+                  className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                    isAppleSheetDrawerOpen && nowPlayingTab === 'upnext'
+                      ? 'bg-white text-black shadow-md'
+                      : 'bg-white/10 text-white/85 hover:text-white hover:bg-white/20'
+                  }`}
+                  title="Up Next Queue"
+                  aria-label="Toggle Up Next Queue"
+                >
+                  <ListMusic className="w-4 h-4 shrink-0" />
+                  <span>Up Next</span>
+                </button>
+
                 {/* Lyrics Button */}
                 <button
                   type="button"
@@ -5387,40 +5744,16 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                       setIsAppleSheetDrawerOpen(true);
                     }
                   }}
-                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer ${
+                  className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
                     isAppleSheetDrawerOpen && nowPlayingTab === 'lyrics'
                       ? 'bg-white text-black shadow-md'
-                      : 'text-white/70 hover:text-white hover:bg-white/10'
+                      : 'bg-white/10 text-white/85 hover:text-white hover:bg-white/20'
                   }`}
                   title="Lyrics"
                   aria-label="Toggle Lyrics"
                 >
-                  <Sparkles className="w-4 h-4" />
+                  <Sparkles className="w-4 h-4 shrink-0" />
                   <span>Lyrics</span>
-                </button>
-
-                {/* Up Next Queue Button */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    triggerHaptic(10);
-                    if (isAppleSheetDrawerOpen && nowPlayingTab === 'upnext') {
-                      setIsAppleSheetDrawerOpen(false);
-                    } else {
-                      setNowPlayingTab('upnext');
-                      setIsAppleSheetDrawerOpen(true);
-                    }
-                  }}
-                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer ${
-                    isAppleSheetDrawerOpen && nowPlayingTab === 'upnext'
-                      ? 'bg-white text-black shadow-md'
-                      : 'text-white/70 hover:text-white hover:bg-white/10'
-                  }`}
-                  title="Playing Next Queue"
-                  aria-label="Toggle Playing Next Queue"
-                >
-                  <ListMusic className="w-4 h-4" />
-                  <span>Up Next</span>
                 </button>
 
                 {/* Related Tracks Button */}
@@ -5435,15 +5768,15 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                       setIsAppleSheetDrawerOpen(true);
                     }
                   }}
-                  className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer ${
+                  className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
                     isAppleSheetDrawerOpen && nowPlayingTab === 'related'
                       ? 'bg-white text-black shadow-md'
-                      : 'text-white/70 hover:text-white hover:bg-white/10'
+                      : 'bg-white/10 text-white/85 hover:text-white hover:bg-white/20'
                   }`}
                   title="Related Songs"
                   aria-label="Toggle Related Songs"
                 >
-                  <Compass className="w-4 h-4" />
+                  <Compass className="w-4 h-4 shrink-0" />
                   <span>Related</span>
                 </button>
               </div>
@@ -5782,6 +6115,384 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
               >
                 Off
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Kashish Logo Music Hub Drawer / Modal (Playlists, Liked Songs, Song History, Active Queue & Studio Options) */}
+      {isMelodiesPage && isKashishHubOpen && (
+        <div
+          onClick={() => setIsKashishHubOpen(false)}
+          className="fixed inset-0 z-[160] bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full sm:max-w-lg max-h-[84dvh] rounded-t-3xl sm:rounded-3xl bg-[#141417] border-t sm:border border-white/15 flex flex-col overflow-hidden shadow-[0_-12px_40px_rgba(0,0,0,0.85)]"
+          >
+            {/* Top Grabber & Header */}
+            <div className="px-4 pt-3 pb-3 border-b border-white/10 bg-[#1a1a1f] shrink-0">
+              <div className="w-10 h-1 rounded-full bg-white/25 mx-auto mb-2.5 sm:hidden" />
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div
+                    style={{ width: '40px', height: '40px', minWidth: '40px', minHeight: '40px' }}
+                    className="relative flex items-center justify-center rounded-full p-[1.5px] bg-gradient-to-tr from-[#ff0033] via-pink-500 to-amber-300 shadow-[0_0_14px_rgba(255,0,51,0.45)] shrink-0"
+                  >
+                    <div className="relative w-full h-full rounded-full overflow-hidden bg-gradient-to-br from-[#2d0a1a] to-[#12040a] flex items-center justify-center">
+                      <Library className="w-4 h-4 text-amber-300 shrink-0" />
+                      <img
+                        src="/apple-touch-icon.png"
+                        alt={recipientName}
+                        width={40}
+                        height={40}
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'cover',
+                          display: 'block',
+                          position: 'absolute',
+                          inset: 0,
+                        }}
+                        className="w-full h-full rounded-full object-cover"
+                        onError={(e) => {
+                          const target = e.currentTarget;
+                          if (!target.dataset.step) {
+                            target.dataset.step = '1';
+                            target.src = '/pwa-192x192.png';
+                          } else if (target.dataset.step === '1') {
+                            target.dataset.step = '2';
+                            target.src = '/app-icon.png';
+                          } else if (target.dataset.step === '2') {
+                            target.dataset.step = '3';
+                            target.src = '/assets/golden_gaze_logo.svg';
+                          } else {
+                            target.style.display = 'none';
+                          }
+                        }}
+                      />
+                    </div>
+                    <span className="absolute -bottom-0.5 -right-0.5 z-10 w-4 h-4 rounded-full bg-[#ff0033] border border-black flex items-center justify-center shadow">
+                      <Library className="w-2.5 h-2.5 text-white" />
+                    </span>
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-sm sm:text-base font-extrabold text-white truncate">
+                      {recipientName}&apos;s Music Library 💖
+                    </h3>
+                    <p className="text-[11px] text-neutral-400 truncate">
+                      Playlists • Liked Songs • History • Up Next
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleToggleHighQuality}
+                    className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider border cursor-pointer transition-all ${
+                      isHighQuality
+                        ? 'bg-[#ff0033] text-white border-[#ff0033]'
+                        : 'bg-white/5 text-neutral-300 border-white/15 hover:text-white'
+                    }`}
+                  >
+                    {isHighQuality ? 'HD ON' : 'HD OFF'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsKashishHubOpen(false)}
+                    className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-neutral-300 hover:text-white flex items-center justify-center cursor-pointer"
+                    aria-label="Close Music Hub"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* 4-Tab Segmented Bar: Playlists | Liked | History | Queue */}
+              <div className="grid grid-cols-4 gap-1 bg-black/40 p-1 rounded-2xl mt-3 border border-white/10">
+                {[
+                  {
+                    id: 'playlists' as const,
+                    label: 'Playlists',
+                    count: playlists.length,
+                    icon: ListMusic,
+                  },
+                  {
+                    id: 'liked' as const,
+                    label: 'Liked',
+                    count: favoriteTracks.length,
+                    icon: Heart,
+                  },
+                  {
+                    id: 'history' as const,
+                    label: 'History',
+                    count: recentPlayedTracks.length,
+                    icon: Clock,
+                  },
+                  {
+                    id: 'queue' as const,
+                    label: 'Queue',
+                    count: activeQueueList.length,
+                    icon: Music,
+                  },
+                ].map((tab) => {
+                  const Icon = tab.icon;
+                  const active = kashishHubTab === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => {
+                        triggerHaptic(10);
+                        setKashishHubTab(tab.id);
+                      }}
+                      className={`py-2 px-1.5 rounded-xl text-[11px] font-bold flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
+                        active
+                          ? 'bg-[#ff0033] text-white shadow-sm'
+                          : 'text-neutral-300 hover:text-white hover:bg-white/5'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1">
+                        <Icon className="w-3.5 h-3.5 shrink-0" />
+                        <span className="truncate">{tab.label}</span>
+                      </div>
+                      <span
+                        className={`text-[9px] font-mono ${
+                          active ? 'text-white/90' : 'text-neutral-400'
+                        }`}
+                      >
+                        {tab.count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Scrollable Body Content for Selected Hub Tab */}
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-3.5 sm:p-4 space-y-3">
+              {/* TAB 1: PLAYLISTS */}
+              {kashishHubTab === 'playlists' && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-neutral-300">
+                      Your Custom Playlists ({playlists.length})
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsKashishHubOpen(false);
+                          setTrackForPlaylistModal(displayTrack);
+                        }}
+                        className="px-2.5 py-1.5 rounded-full bg-white/10 hover:bg-white/15 text-[11px] font-semibold text-white flex items-center gap-1 cursor-pointer"
+                      >
+                        <FolderPlus className="w-3.5 h-3.5 text-[#ff0033]" />
+                        <span>Save Current Song</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsKashishHubOpen(false);
+                          setIsCreatePlaylistOpen(true);
+                        }}
+                        className="px-3 py-1.5 rounded-full bg-[#ff0033] hover:bg-[#e6002e] text-[11px] font-bold text-white flex items-center gap-1 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>New Playlist</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {playlists.length === 0 ? (
+                    <div className="py-10 px-4 text-center rounded-2xl bg-white/5 border border-white/10 space-y-2">
+                      <ListMusic className="w-8 h-8 text-[#ff0033] mx-auto opacity-80" />
+                      <p className="text-sm font-bold text-white">No playlists created yet</p>
+                      <p className="text-xs text-neutral-400">
+                        Create your own custom playlists to organize your favorite romantic &amp; party tracks!
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {playlists.map((pl) => (
+                        <div
+                          key={pl.id}
+                          className="rounded-2xl bg-[#1c1c21] border border-white/10 p-3 space-y-2"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <h4 className="text-sm font-bold text-white truncate">{pl.name}</h4>
+                              <p className="text-[11px] text-neutral-400">
+                                {pl.tracks.length} {pl.tracks.length === 1 ? 'song' : 'songs'}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {pl.tracks.length > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    handleSelectTrack(pl.tracks[0], pl.tracks, `PLAYLIST_${pl.name}`);
+                                    setIsKashishHubOpen(false);
+                                  }}
+                                  className="px-3 py-1.5 rounded-full bg-[#ff0033] text-white text-xs font-bold flex items-center gap-1 cursor-pointer"
+                                >
+                                  <Play className="w-3 h-3 fill-white" />
+                                  <span>Play</span>
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleDeletePlaylist(pl.id)}
+                                className="p-1.5 rounded-full text-neutral-400 hover:text-[#ff0033] hover:bg-white/10 cursor-pointer"
+                                title="Delete playlist"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {pl.tracks.length > 0 && (
+                            <div className="divide-y divide-white/5 pt-1 max-h-44 overflow-y-auto">
+                              {pl.tracks.map((song, idx) =>
+                                renderSongRow(song, idx, pl.tracks, `PLAYLIST_${pl.name}`, {
+                                  showPlaylistRemoveId: pl.id,
+                                })
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TAB 2: LIKED SONGS */}
+              {kashishHubTab === 'liked' && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-neutral-300">
+                      Liked Songs ({favoriteTracks.length})
+                    </span>
+                    {favoriteTracks.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleSelectTrack(favoriteTracks[0], favoriteTracks, 'LIKED_SONGS');
+                          setIsKashishHubOpen(false);
+                        }}
+                        className="px-3 py-1.5 rounded-full bg-[#ff0033] text-white text-xs font-bold flex items-center gap-1 cursor-pointer"
+                      >
+                        <Play className="w-3 h-3 fill-white" />
+                        <span>Play All</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {favoriteTracks.length === 0 ? (
+                    <div className="py-10 px-4 text-center rounded-2xl bg-white/5 border border-white/10 space-y-2">
+                      <Heart className="w-8 h-8 text-[#ff0033] mx-auto opacity-80" />
+                      <p className="text-sm font-bold text-white">No liked songs yet</p>
+                      <p className="text-xs text-neutral-400">
+                        Tap the heart icon ❤️ on any song to save it to your Liked Songs!
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-white/5 rounded-2xl bg-[#1a1a1f] border border-white/10 p-1.5">
+                      {favoriteTracks.map((song, idx) =>
+                        renderSongRow(song, idx, favoriteTracks, 'LIKED_SONGS')
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TAB 3: SONG HISTORY (RECENTLY PLAYED) */}
+              {kashishHubTab === 'history' && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-neutral-300">
+                      Recently Played History ({recentPlayedTracks.length})
+                    </span>
+                    {recentPlayedTracks.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleSelectTrack(recentPlayedTracks[0], recentPlayedTracks, 'HISTORY');
+                          setIsKashishHubOpen(false);
+                        }}
+                        className="px-3 py-1.5 rounded-full bg-[#ff0033] text-white text-xs font-bold flex items-center gap-1 cursor-pointer"
+                      >
+                        <Play className="w-3 h-3 fill-white" />
+                        <span>Play All</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {recentPlayedTracks.length === 0 ? (
+                    <div className="py-10 px-4 text-center rounded-2xl bg-white/5 border border-white/10 space-y-2">
+                      <Clock className="w-8 h-8 text-[#ff0033] mx-auto opacity-80" />
+                      <p className="text-sm font-bold text-white">No listening history yet</p>
+                      <p className="text-xs text-neutral-400">
+                        Songs you play will automatically appear here in your listening history.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-white/5 rounded-2xl bg-[#1a1a1f] border border-white/10 p-1.5">
+                      {recentPlayedTracks.map((song, idx) =>
+                        renderSongRow(song, idx, recentPlayedTracks, 'HISTORY')
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TAB 4: PLAYING NEXT QUEUE */}
+              {kashishHubTab === 'queue' && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-neutral-300">
+                      Playing Next Queue ({activeQueueList.length})
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={handleToggleShuffle}
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-semibold flex items-center gap-1 cursor-pointer ${
+                          isShuffle
+                            ? 'bg-[#ff0033] text-white'
+                            : 'bg-white/10 text-neutral-300 hover:text-white'
+                        }`}
+                      >
+                        <Shuffle className="w-3 h-3" />
+                        <span>Shuffle</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleToggleRepeat}
+                        className={`px-2.5 py-1 rounded-full text-[11px] font-semibold flex items-center gap-1 cursor-pointer ${
+                          repeatMode !== 'off'
+                            ? 'bg-[#ff0033] text-white'
+                            : 'bg-white/10 text-neutral-300 hover:text-white'
+                        }`}
+                      >
+                        <Repeat className="w-3 h-3" />
+                        <span>Repeat: {repeatMode}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="divide-y divide-white/5 rounded-2xl bg-[#1a1a1f] border border-white/10 p-1.5">
+                    {activeQueueList.map((song, idx) =>
+                      renderSongRow(song, idx, activeQueueList, activeQueueLabel, {
+                        showQueueControls: true,
+                        totalInQueue: activeQueueList.length,
+                      })
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

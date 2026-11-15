@@ -42,10 +42,13 @@ export const BackgroundEffects: React.FC<BackgroundEffectsProps> = ({ isDarkMode
     }
 
     let animationFrameId: number | null = null;
-    let isVisible = !document.hidden;
+    const checkIsActive = () =>
+      !document.hidden && !Boolean((window as any).__kashishAppInBackground);
+    let isVisible = checkIsActive();
+    let lastFrameTime = 0;
 
-    // Cap devicePixelRatio at 2 to prevent GPU fill-rate throttling on ultra high-DPI phones
-    const dpr = Math.min(typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1, 2);
+    // Cap devicePixelRatio at 1.5 to prevent GPU fill-rate throttling on high-DPI phones
+    const dpr = Math.min(typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1, 1.5);
 
     let width = window.innerWidth;
     let height = window.innerHeight;
@@ -69,17 +72,43 @@ export const BackgroundEffects: React.FC<BackgroundEffectsProps> = ({ isDarkMode
 
     window.addEventListener('resize', handleResize, { passive: true });
 
-    // Handle tab visibility to save battery and maintain 60fps
-    const handleVisibilityChange = () => {
-      isVisible = !document.hidden;
-      if (isVisible && !animationFrameId) {
+    const syncAnimationState = (active: boolean) => {
+      isVisible = active;
+      if (!isVisible) {
+        if (animationFrameId !== null) {
+          cancelAnimationFrame(animationFrameId);
+          animationFrameId = null;
+        }
+      } else if (animationFrameId === null) {
         animationFrameId = requestAnimationFrame(render);
       }
     };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    // Limit particle counts: 32 on mobile, 64 on desktop for butter-smooth 60fps
-    const particleCount = width < 640 ? 32 : 64;
+    // Handle tab visibility and native Android background state to save CPU/GPU during background audio playback
+    const handleVisibilityChange = () => {
+      syncAnimationState(checkIsActive());
+    };
+    const handleNativeBackgroundState = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ backgrounded?: boolean }>).detail;
+      const inBg = Boolean(detail?.backgrounded ?? (window as any).__kashishAppInBackground);
+      syncAnimationState(!inBg && !document.hidden);
+    };
+    const handleWindowBlur = () => {
+      if ((window as any).__kashishAppInBackground) {
+        syncAnimationState(false);
+      }
+    };
+    const handleWindowFocus = () => {
+      syncAnimationState(checkIsActive());
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('kashish-app-background-state', handleNativeBackgroundState as EventListener);
+    window.addEventListener('blur', handleWindowBlur);
+    window.addEventListener('focus', handleWindowFocus);
+
+    // Lightweight particle counts: 20 on mobile, 42 on desktop
+    const particleCount = width < 640 ? 20 : 42;
     const particles: Particle[] = [];
 
     for (let i = 0; i < particleCount; i++) {
@@ -144,12 +173,18 @@ export const BackgroundEffects: React.FC<BackgroundEffectsProps> = ({ isDarkMode
     let lastTime = performance.now();
 
     const render = (currentTime: number) => {
-      if (!isVisible) {
+      if (!isVisible || (window as any).__kashishAppInBackground) {
         animationFrameId = null;
         return;
       }
 
-      // Delta time normalized to 60fps baseline (~16.67ms) to support up to 120Hz smoothly
+      // Throttle canvas particle redraws to ~30fps (33ms) so the main thread stays free for audio decoding
+      if (currentTime - lastFrameTime < 33) {
+        animationFrameId = requestAnimationFrame(render);
+        return;
+      }
+      lastFrameTime = currentTime;
+
       const elapsed = currentTime - lastTime;
       lastTime = currentTime;
       const dt = Math.min(elapsed / 16.67, 2.5);
@@ -201,12 +236,17 @@ export const BackgroundEffects: React.FC<BackgroundEffectsProps> = ({ isDarkMode
       animationFrameId = requestAnimationFrame(render);
     };
 
-    animationFrameId = requestAnimationFrame(render);
+    if (isVisible) {
+      animationFrameId = requestAnimationFrame(render);
+    }
 
     return () => {
-      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      if (animationFrameId !== null) cancelAnimationFrame(animationFrameId);
       window.removeEventListener('resize', handleResize);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('kashish-app-background-state', handleNativeBackgroundState as EventListener);
+      window.removeEventListener('blur', handleWindowBlur);
+      window.removeEventListener('focus', handleWindowFocus);
     };
   }, []);
 

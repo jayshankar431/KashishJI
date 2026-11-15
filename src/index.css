@@ -323,15 +323,17 @@ textarea,
   }
 }
 
-/* Prevent unwanted sideways overflow */
-img,
-video,
-canvas,
-svg,
-iframe {
-  max-width: 100%;
-  height: auto;
-  box-sizing: border-box;
+/* Prevent unwanted sideways overflow while allowing Tailwind @layer utilities (.h-full, .w-full, etc.) to take precedence */
+@layer base {
+  img,
+  video,
+  canvas,
+  svg,
+  iframe {
+    max-width: 100%;
+    height: auto;
+    box-sizing: border-box;
+  }
 }
 
 /* Touch manipulation on interactive elements to prevent double-tap zoom delay */

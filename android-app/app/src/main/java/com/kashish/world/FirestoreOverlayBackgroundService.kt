@@ -738,9 +738,61 @@ class FirestoreOverlayBackgroundService : Service() {
         }
     }
 
+    private var musicWakeLock: PowerManager.WakeLock? = null
+    private var musicWifiLock: android.net.wifi.WifiManager.WifiLock? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
+    @Suppress("DEPRECATION")
+    private fun acquireMusicPlaybackLocks() {
+        try {
+            if (musicWakeLock == null) {
+                val pm = applicationContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
+                musicWakeLock = pm?.newWakeLock(
+                    PowerManager.PARTIAL_WAKE_LOCK,
+                    "kashish:music_playback_cpu_lock"
+                )?.apply {
+                    setReferenceCounted(false)
+                }
+            }
+            if (musicWakeLock?.isHeld == false) {
+                musicWakeLock?.acquire(4 * 60 * 60 * 1000L) // Up to 4 hours continuous session
+            }
+        } catch (_: Exception) {}
+
+        try {
+            if (musicWifiLock == null) {
+                val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
+                val lockMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    android.net.wifi.WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+                } else {
+                    android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF
+                }
+                musicWifiLock = wm?.createWifiLock(lockMode, "kashish:music_playback_wifi_lock")?.apply {
+                    setReferenceCounted(false)
+                }
+            }
+            if (musicWifiLock?.isHeld == false) {
+                musicWifiLock?.acquire()
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun releaseMusicPlaybackLocks() {
+        try {
+            if (musicWakeLock?.isHeld == true) {
+                musicWakeLock?.release()
+            }
+        } catch (_: Exception) {}
+        try {
+            if (musicWifiLock?.isHeld == true) {
+                musicWifiLock?.release()
+            }
+        } catch (_: Exception) {}
+    }
+
     fun applyMusicForegroundNotification(notification: android.app.Notification) {
+        acquireMusicPlaybackLocks()
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(
@@ -755,6 +807,7 @@ class FirestoreOverlayBackgroundService : Service() {
     }
 
     fun clearMusicForegroundNotification() {
+        releaseMusicPlaybackLocks()
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -797,6 +850,7 @@ class FirestoreOverlayBackgroundService : Service() {
     }
 
     override fun onDestroy() {
+        releaseMusicPlaybackLocks()
         if (activeServiceInstance === this) {
             activeServiceInstance = null
         }

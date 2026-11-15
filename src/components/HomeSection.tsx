@@ -393,6 +393,13 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
 
   useEffect(() => {
     const calculateTime = () => {
+      if (typeof window !== 'undefined' && (window as any).__kashishAppInBackground) {
+        return;
+      }
+      if (typeof document !== 'undefined' && document.hidden) {
+        return;
+      }
+
       const parts = (birthday || '2026-12-17').split('-').map(Number);
       const bYear = parts[0] || 2026;
       const bMonth = parts[1] || 12;
@@ -426,9 +433,26 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
     };
 
     calculateTime();
+    if (viewMode === 'rooms') {
+      return;
+    }
+
     const interval = setInterval(calculateTime, 1000);
-    return () => clearInterval(interval);
-  }, [birthday, isAdminUser]);
+    const handleBgChange = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ backgrounded?: boolean }>).detail;
+      if (detail && detail.backgrounded === false) {
+        calculateTime();
+      }
+    };
+    window.addEventListener('kashish-app-background-state', handleBgChange as EventListener);
+    window.addEventListener('focus', calculateTime);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('kashish-app-background-state', handleBgChange as EventListener);
+      window.removeEventListener('focus', calculateTime);
+    };
+  }, [birthday, isAdminUser, viewMode]);
 
   const cards = [
     {
