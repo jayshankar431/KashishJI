@@ -70,12 +70,42 @@ export interface AndroidAppBridge {
   dismissMusicNotification?: () => void;
   resolveYouTubeAudioStream?: (videoId: string) => string;
   searchYouTubeMusic?: (query: string) => string;
+  setEqualizerBands?: (
+    bassDb: number,
+    midDb: number,
+    trebleDb: number,
+    presetName?: string
+  ) => void;
   fetchCloudinaryFolder?: (
     cloudName: string,
     apiKey: string,
     apiSecret: string,
     folder: string
   ) => string;
+  hasNativeExoPlayer?: () => boolean;
+  hasBundledFrontend?: () => boolean;
+  nativePlayTrack?: (
+    videoId: string,
+    title: string,
+    artist: string,
+    thumbnailUrl: string,
+    startSeconds: number
+  ) => void;
+  nativePauseTrack?: () => void;
+  nativeResumeTrack?: () => void;
+  nativeStopTrack?: () => void;
+  nativeSeekTrack?: (seconds: number) => void;
+  nativeSetVolume?: (volume0To1: number) => void;
+  nativePreloadTrack?: (videoId: string) => void;
+  nativeGetPlaybackState?: () => string;
+  searchYouTubeMusicAsync?: (reqId: string, query: string) => void;
+  searchYouTubeVideosAsync?: (reqId: string, query: string) => void;
+  fetchYouTubeSuggestionsAsync?: (reqId: string, query: string) => void;
+  fetchLyricsAsync?: (reqId: string, title: string, artist: string) => void;
+  getNativePref?: (key: string) => string;
+  setNativePref?: (key: string, value: string) => void;
+  getNativeCacheStatsJson?: () => string;
+  clearNativeCaches?: () => void;
 }
 
 declare global {
@@ -84,6 +114,9 @@ declare global {
     isNativeApp?: boolean;
     __KASHISH_PERMISSIONS__?: any;
     __triggerAutoContactsSync?: () => void;
+    __kashishResolveNativeReq?: (reqId: string, payload: string) => void;
+    __kashishConsumeMusicPlayerBack?: () => boolean;
+    __kashishAppInBackground?: boolean;
   }
 }
 
@@ -1936,5 +1969,228 @@ if (typeof window !== 'undefined') {
     void syncContactsToCloud();
   };
 }
+
+// ============================================================================
+// Native APK Media3 ExoPlayer & Non-Blocking Async Data Bridge Helpers
+// ============================================================================
+
+interface PendingNativeReq {
+  resolve: (raw: string) => void;
+  reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+const pendingNativeRequests = new Map<string, PendingNativeReq>();
+let nativeReqCounter = 0;
+
+function ensureNativeAsyncResolverInstalled() {
+  if (typeof window === 'undefined') return;
+  if (!window.__kashishResolveNativeReq) {
+    window.__kashishResolveNativeReq = (reqId: string, payload: string) => {
+      const pending = pendingNativeRequests.get(reqId);
+      if (!pending) return;
+      pendingNativeRequests.delete(reqId);
+      clearTimeout(pending.timer);
+      pending.resolve(typeof payload === 'string' ? payload : String(payload ?? ''));
+    };
+  }
+}
+
+export function hasNativeExoPlayer(): boolean {
+  try {
+    if (typeof window === 'undefined' || !window.AndroidApp) return false;
+    return (
+      typeof window.AndroidApp.nativePlayTrack === 'function' &&
+      (typeof window.AndroidApp.hasNativeExoPlayer !== 'function' ||
+        window.AndroidApp.hasNativeExoPlayer() === true)
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function hasBundledNativeFrontend(): boolean {
+  try {
+    if (typeof window === 'undefined' || !window.AndroidApp?.hasBundledFrontend) return false;
+    return window.AndroidApp.hasBundledFrontend() === true;
+  } catch {
+    return false;
+  }
+}
+
+export interface NativeCacheStats {
+  audioCacheMb: number;
+  artCacheMb: number;
+  apiCacheMb: number;
+  bundledFrontend: boolean;
+}
+
+export function getNativeCacheStats(): NativeCacheStats | null {
+  try {
+    if (typeof window === 'undefined' || !window.AndroidApp?.getNativeCacheStatsJson) return null;
+    const raw = window.AndroidApp.getNativeCacheStatsJson();
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return {
+      audioCacheMb: Number(parsed?.audioCacheMb || 0),
+      artCacheMb: Number(parsed?.artCacheMb || 0),
+      apiCacheMb: Number(parsed?.apiCacheMb || 0),
+      bundledFrontend: Boolean(parsed?.bundledFrontend),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function clearNativeAppCaches(): boolean {
+  try {
+    if (typeof window !== 'undefined' && typeof window.AndroidApp?.clearNativeCaches === 'function') {
+      window.AndroidApp.clearNativeCaches();
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
+function callNativeAsyncRaw(
+  invoke: (reqId: string) => void,
+  signal?: AbortSignal,
+  timeoutMs = 6000
+): Promise<string> {
+  ensureNativeAsyncResolverInstalled();
+  return new Promise<string>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+    const reqId = `nat_${Date.now()}_${++nativeReqCounter}`;
+
+    const cleanup = () => {
+      const item = pendingNativeRequests.get(reqId);
+      if (item) {
+        clearTimeout(item.timer);
+        pendingNativeRequests.delete(reqId);
+      }
+      if (signal) {
+        signal.removeEventListener('abort', onAbort);
+      }
+    };
+
+    const onAbort = () => {
+      cleanup();
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+
+    if (signal) {
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('Native async request timed out'));
+    }, timeoutMs);
+
+    pendingNativeRequests.set(reqId, {
+      resolve: (raw: string) => {
+        if (signal) signal.removeEventListener('abort', onAbort);
+        resolve(raw);
+      },
+      reject: (err: Error) => {
+        if (signal) signal.removeEventListener('abort', onAbort);
+        reject(err);
+      },
+      timer,
+    });
+
+    try {
+      invoke(reqId);
+    } catch (err: any) {
+      cleanup();
+      reject(err instanceof Error ? err : new Error(String(err || 'Native invoke failed')));
+    }
+  });
+}
+
+export async function searchNativeYouTubeMusicAsync(
+  query: string,
+  signal?: AbortSignal
+): Promise<any[]> {
+  if (typeof window === 'undefined' || typeof window.AndroidApp?.searchYouTubeMusicAsync !== 'function') {
+    throw new Error('Native async YTMusic search unavailable');
+  }
+  const raw = await callNativeAsyncRaw(
+    (reqId) => window.AndroidApp!.searchYouTubeMusicAsync!(reqId, query),
+    signal,
+    6500
+  );
+  const parsed = JSON.parse(raw || '[]');
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error('Empty native async YTMusic results');
+  }
+  return parsed;
+}
+
+export async function searchNativeYouTubeVideosAsync(
+  query: string,
+  signal?: AbortSignal
+): Promise<any[]> {
+  if (typeof window === 'undefined' || typeof window.AndroidApp?.searchYouTubeVideosAsync !== 'function') {
+    throw new Error('Native async YouTube videos search unavailable');
+  }
+  const raw = await callNativeAsyncRaw(
+    (reqId) => window.AndroidApp!.searchYouTubeVideosAsync!(reqId, query),
+    signal,
+    6500
+  );
+  const parsed = JSON.parse(raw || '[]');
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error('Empty native async YouTube video results');
+  }
+  return parsed;
+}
+
+export async function fetchNativeSuggestionsAsync(
+  query: string,
+  signal?: AbortSignal
+): Promise<string[]> {
+  if (typeof window === 'undefined' || typeof window.AndroidApp?.fetchYouTubeSuggestionsAsync !== 'function') {
+    throw new Error('Native async suggestions unavailable');
+  }
+  const raw = await callNativeAsyncRaw(
+    (reqId) => window.AndroidApp!.fetchYouTubeSuggestionsAsync!(reqId, query),
+    signal,
+    3500
+  );
+  const parsed = JSON.parse(raw || '[]');
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error('Empty native suggestions');
+  }
+  return parsed.map((s: any) => String(s || '').trim()).filter(Boolean);
+}
+
+export async function fetchNativeLyricsAsync(
+  title: string,
+  artist: string,
+  signal?: AbortSignal
+): Promise<{ syncedLyrics?: string; plainLyrics?: string } | null> {
+  if (typeof window === 'undefined' || typeof window.AndroidApp?.fetchLyricsAsync !== 'function') {
+    return null;
+  }
+  try {
+    const raw = await callNativeAsyncRaw(
+      (reqId) => window.AndroidApp!.fetchLyricsAsync!(reqId, title, artist),
+      signal,
+      5500
+    );
+    const parsed = JSON.parse(raw || '{}');
+    const synced = typeof parsed?.syncedLyrics === 'string' ? parsed.syncedLyrics.trim() : '';
+    const plain = typeof parsed?.plainLyrics === 'string' ? parsed.plainLyrics.trim() : '';
+    if (!synced && !plain) return null;
+    return { syncedLyrics: synced, plainLyrics: plain };
+  } catch {
+    return null;
+  }
+}
+
 
 

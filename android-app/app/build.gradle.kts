@@ -57,7 +57,7 @@ android {
         minSdk = 24
         targetSdk = 34
         versionCode = (project.findProperty("versionCodeProp")?.toString()?.toIntOrNull()) ?: 2000
-        versionName = (project.findProperty("versionNameProp")?.toString()) ?: "3.1.0"
+        versionName = (project.findProperty("versionNameProp")?.toString()) ?: "3.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -110,6 +110,12 @@ dependencies {
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.activity:activity-ktx:1.9.2")
     implementation("androidx.webkit:webkit:1.11.0")
+
+    // Native Media3 ExoPlayer + Disk Cache for zero-stutter background music & hardware Equalizer
+    implementation("androidx.media3:media3-exoplayer:1.4.1")
+    implementation("androidx.media3:media3-datasource:1.4.1")
+    implementation("androidx.media3:media3-database:1.4.1")
+    implementation("androidx.media3:media3-common:1.4.1")
 
     // Firebase Cloud Messaging for high-priority data push notifications
     implementation(platform("com.google.firebase:firebase-bom:33.1.2"))

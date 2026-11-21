@@ -1002,6 +1002,7 @@ object CallAndOverlayHelper {
         SoundCacheManager.ensureDefaultChannels(appCtx)
         if (isPlaying) {
             requestAudioFocus(appCtx)
+            reapplySavedEqualizerIfNeeded(appCtx)
         }
 
         val cleanThumb = thumbnailUrl.trim()
@@ -1046,6 +1047,123 @@ object CallAndOverlayHelper {
                 }
             }
         }
+    }
+
+    @Volatile
+    private var globalEqualizer: android.media.audiofx.Equalizer? = null
+
+    @Volatile
+    private var globalBassBoost: android.media.audiofx.BassBoost? = null
+
+    @Volatile
+    private var globalLoudnessEnhancer: android.media.audiofx.LoudnessEnhancer? = null
+
+    @Volatile
+    private var lastEqBassDb: Int = 0
+
+    @Volatile
+    private var lastEqMidDb: Int = 0
+
+    @Volatile
+    private var lastEqTrebleDb: Int = 0
+
+    @Volatile
+    private var lastEqPreset: String = "flat"
+
+    private fun reapplySavedEqualizerIfNeeded(context: Context) {
+        if (lastEqBassDb != 0 || lastEqMidDb != 0 || lastEqTrebleDb != 0 || lastEqPreset != "flat") {
+            applyEqualizerSettings(context, lastEqBassDb, lastEqMidDb, lastEqTrebleDb, lastEqPreset)
+        }
+    }
+
+    /**
+     * Applies 3-band EQ (Bass, Mid, Treble in dB: -12..+12) + BassBoost + LoudnessEnhancer
+     * to Android's output mix (session 0) so both WebView <audio> and embedded YouTube playback
+     * receive audible hardware DSP equalization.
+     */
+    @Synchronized
+    fun applyEqualizerSettings(
+        context: Context,
+        bassDb: Int,
+        midDb: Int,
+        trebleDb: Int,
+        presetName: String = "custom"
+    ) {
+        val clampedBass = bassDb.coerceIn(-12, 12)
+        val clampedMid = midDb.coerceIn(-12, 12)
+        val clampedTreble = trebleDb.coerceIn(-12, 12)
+        lastEqBassDb = clampedBass
+        lastEqMidDb = clampedMid
+        lastEqTrebleDb = clampedTreble
+        lastEqPreset = presetName.ifBlank { "custom" }
+
+        val isFlat = clampedBass == 0 && clampedMid == 0 && clampedTreble == 0
+
+        try {
+            var eq = globalEqualizer
+            if (eq == null) {
+                eq = android.media.audiofx.Equalizer(100, 0)
+                globalEqualizer = eq
+            }
+            eq.enabled = !isFlat
+            val numBands = eq.numberOfBands.toInt()
+            val range = eq.bandLevelRange
+            val minMb = if (range != null && range.size >= 2) range[0].toInt() else -1200
+            val maxMb = if (range != null && range.size >= 2) range[1].toInt() else 1200
+
+            for (b in 0 until numBands) {
+                val bandShort = b.toShort()
+                val centerFreqMilliHz = eq.getCenterFreq(bandShort)
+                val centerFreqHz = centerFreqMilliHz / 1000
+                val targetDb = when {
+                    centerFreqHz <= 250 -> clampedBass
+                    centerFreqHz >= 2500 -> clampedTreble
+                    else -> clampedMid
+                }
+                val targetMb = (targetDb * 100).coerceIn(minMb, maxMb).toShort()
+                eq.setBandLevel(bandShort, targetMb)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Hardware Equalizer note: ${e.message}")
+        }
+
+        try {
+            var bb = globalBassBoost
+            if (bb == null) {
+                bb = android.media.audiofx.BassBoost(100, 0)
+                globalBassBoost = bb
+            }
+            if (bb.strengthSupported) {
+                if (clampedBass > 0) {
+                    bb.enabled = true
+                    val strength = ((clampedBass.toFloat() / 12f) * 1000f).toInt().coerceIn(0, 1000).toShort()
+                    bb.setStrength(strength)
+                } else {
+                    bb.setStrength(0)
+                    bb.enabled = false
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Hardware BassBoost note: ${e.message}")
+        }
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+                var le = globalLoudnessEnhancer
+                if (le == null) {
+                    le = android.media.audiofx.LoudnessEnhancer(0)
+                    globalLoudnessEnhancer = le
+                }
+                val boostMb = ((maxOf(clampedBass, clampedMid, clampedTreble).coerceAtLeast(0)) * 45).coerceIn(0, 600)
+                if (boostMb > 0 && !isFlat) {
+                    le.setTargetGain(boostMb)
+                    le.enabled = true
+                } else {
+                    le.setTargetGain(0)
+                    le.enabled = false
+                }
+            }
+        } catch (_: Exception) {}
     }
 
     fun dismissMusicNotification(context: Context) {

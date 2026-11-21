@@ -448,6 +448,171 @@ export const CANONICAL_DISCOVERY_CATALOG = {
     mediaType: 'song' as const,
     catalogSource: 'youtube_music' as const,
   },
+  veKamleya: {
+    videoId: 'QXJyMpxd210',
+    title: 'Ve Kamleya',
+    artist: 'Arijit Singh, Shreya Ghoshal, Pritam',
+    album: 'Rocky Aur Rani Kii Prem Kahaani',
+    thumbnail: 'https://i.ytimg.com/vi/QXJyMpxd210/maxresdefault.jpg',
+    durationText: '4:07',
+    durationSeconds: 247,
+    mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
+  },
+  phirAurKyaChahiye: {
+    videoId: '8sLS2knUa6Y',
+    title: 'Phir Aur Kya Chahiye',
+    artist: 'Arijit Singh, Sachin-Jigar',
+    album: 'Zara Hatke Zara Bachke',
+    thumbnail: 'https://i.ytimg.com/vi/8sLS2knUa6Y/maxresdefault.jpg',
+    durationText: '4:26',
+    durationSeconds: 266,
+    mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
+  },
+  hawayein: {
+    videoId: 'cYOB941gyXI',
+    title: 'Hawayein',
+    artist: 'Arijit Singh, Pritam',
+    album: 'Jab Harry Met Sejal',
+    thumbnail: 'https://i.ytimg.com/vi/cYOB941gyXI/maxresdefault.jpg',
+    durationText: '4:50',
+    durationSeconds: 290,
+    mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
+  },
+  subhanallah: {
+    videoId: 'QYO6AlxiRE4',
+    title: 'Subhanallah',
+    artist: 'Sreerama Chandra, Shilpa Rao, Pritam',
+    album: 'Yeh Jawaani Hai Deewani',
+    thumbnail: 'https://i.ytimg.com/vi/QYO6AlxiRE4/maxresdefault.jpg',
+    durationText: '4:09',
+    durationSeconds: 249,
+    mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
+  },
+  dilDiyanGallan: {
+    videoId: 'SAcpESN_Fk4',
+    title: 'Dil Diyan Gallan',
+    artist: 'Atif Aslam, Vishal-Shekhar',
+    album: 'Tiger Zinda Hai',
+    thumbnail: 'https://i.ytimg.com/vi/SAcpESN_Fk4/maxresdefault.jpg',
+    durationText: '4:20',
+    durationSeconds: 260,
+    mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
+  },
+  zaraSa: {
+    videoId: '5I2sD8l_B4E',
+    title: 'Zara Sa',
+    artist: 'KK, Pritam',
+    album: 'Jannat',
+    thumbnail: 'https://i.ytimg.com/vi/5I2sD8l_B4E/maxresdefault.jpg',
+    durationText: '5:03',
+    durationSeconds: 303,
+    mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
+  },
+  mastMagan: {
+    videoId: 'xitSoRb5jq0',
+    title: 'Mast Magan',
+    artist: 'Arijit Singh, Chinmayi Sripada',
+    album: '2 States',
+    thumbnail: 'https://i.ytimg.com/vi/xitSoRb5jq0/maxresdefault.jpg',
+    durationText: '4:40',
+    durationSeconds: 280,
+    mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
+  },
+  zaalima: {
+    videoId: 'hhdSyBHuI88',
+    title: 'Zaalima',
+    artist: 'Arijit Singh, Harshdeep Kaur, JAM8',
+    album: 'Raees',
+    thumbnail: 'https://i.ytimg.com/vi/hhdSyBHuI88/maxresdefault.jpg',
+    durationText: '4:59',
+    durationSeconds: 299,
+    mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
+  },
+  channaMereya: {
+    videoId: '284Ov7ysmfA',
+    title: 'Channa Mereya',
+    artist: 'Arijit Singh, Pritam',
+    album: 'Ae Dil Hai Mushkil',
+    thumbnail: 'https://i.ytimg.com/vi/284Ov7ysmfA/maxresdefault.jpg',
+    durationText: '4:49',
+    durationSeconds: 289,
+    mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
+  },
+  bekhayali: {
+    videoId: 'VOLKJJvfAbg',
+    title: 'Bekhayali',
+    artist: 'Sachet Tandon, Sachet-Parampara',
+    album: 'Kabir Singh',
+    thumbnail: 'https://i.ytimg.com/vi/VOLKJJvfAbg/maxresdefault.jpg',
+    durationText: '6:11',
+    durationSeconds: 371,
+    mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
+  },
+  withYou: {
+    videoId: 'n2dVFdqMYGA',
+    title: 'With You',
+    artist: 'AP Dhillon',
+    album: 'With You Single',
+    thumbnail: 'https://i.ytimg.com/vi/n2dVFdqMYGA/maxresdefault.jpg',
+    durationText: '2:35',
+    durationSeconds: 155,
+    mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
+  },
+  hassHass: {
+    videoId: 'jADTdg-o8i0',
+    title: 'Hass Hass',
+    artist: 'Diljit Dosanjh, Sia',
+    album: 'Hass Hass Single',
+    thumbnail: 'https://i.ytimg.com/vi/jADTdg-o8i0/maxresdefault.jpg',
+    durationText: '2:33',
+    durationSeconds: 153,
+    mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
+  },
+  taubaTauba: {
+    videoId: 'LK7-_dgAVQE',
+    title: 'Tauba Tauba',
+    artist: 'Karan Aujla',
+    album: 'Bad Newz',
+    thumbnail: 'https://i.ytimg.com/vi/LK7-_dgAVQE/maxresdefault.jpg',
+    durationText: '3:27',
+    durationSeconds: 207,
+    mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
+  },
+  badtameezDil: {
+    videoId: 'II2EO3Nw4m0',
+    title: 'Badtameez Dil',
+    artist: 'Benny Dayal, Shefali Alvares, Pritam',
+    album: 'Yeh Jawaani Hai Deewani',
+    thumbnail: 'https://i.ytimg.com/vi/II2EO3Nw4m0/maxresdefault.jpg',
+    durationText: '4:12',
+    durationSeconds: 252,
+    mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
+  },
+  ghungroo: {
+    videoId: 'qFkNATtc3mc',
+    title: 'Ghungroo',
+    artist: 'Arijit Singh, Shilpa Rao, Vishal-Shekhar',
+    album: 'War',
+    thumbnail: 'https://i.ytimg.com/vi/qFkNATtc3mc/maxresdefault.jpg',
+    durationText: '5:02',
+    durationSeconds: 302,
+    mediaType: 'song' as const,
+    catalogSource: 'youtube_music' as const,
+  },
 } satisfies Record<string, YouTubeTrack>;
 
 export const CANONICAL_TRACKS_BY_ID: ReadonlyMap<string, YouTubeTrack> = new Map(
@@ -492,16 +657,28 @@ export const QUICK_PICKS_TRACKS: (DiscoveryTrackItem & { vibe: string })[] = [
     vibe: 'Pure Romance',
   },
   {
+    ...CANONICAL_DISCOVERY_CATALOG.satranga,
+    genreId: 'romantic',
+    secondaryGenres: ['bollywood', 'sad'],
+    vibe: 'Heartfelt Ballad',
+  },
+  {
+    ...CANONICAL_DISCOVERY_CATALOG.oMaahi,
+    genreId: 'romantic',
+    secondaryGenres: ['bollywood', 'sufi', 'happy'],
+    vibe: 'Eternal Love',
+  },
+  {
+    ...CANONICAL_DISCOVERY_CATALOG.pehleBhiMain,
+    genreId: 'romantic',
+    secondaryGenres: ['bollywood', 'lofi', 'sad'],
+    vibe: 'Midnight Emotion',
+  },
+  {
     ...CANONICAL_DISCOVERY_CATALOG.chaleya,
     genreId: 'bollywood',
     secondaryGenres: ['romantic', 'happy', 'energetic'],
     vibe: 'Chartbuster Groove',
-  },
-  {
-    ...CANONICAL_DISCOVERY_CATALOG.lover,
-    genreId: 'punjabi',
-    secondaryGenres: ['energetic', 'happy', 'workout'],
-    vibe: 'Upbeat Urban Punjabi',
   },
   {
     ...CANONICAL_DISCOVERY_CATALOG.heeriye,
@@ -510,22 +687,82 @@ export const QUICK_PICKS_TRACKS: (DiscoveryTrackItem & { vibe: string })[] = [
     vibe: 'Dreamy Pop Melody',
   },
   {
+    ...CANONICAL_DISCOVERY_CATALOG.raataanLambiyan,
+    genreId: 'romantic',
+    secondaryGenres: ['bollywood', 'acoustic', 'happy'],
+    vibe: 'Romantic Duet',
+  },
+  {
+    ...CANONICAL_DISCOVERY_CATALOG.tereHawaale,
+    genreId: 'romantic',
+    secondaryGenres: ['bollywood', 'sufi', 'chill'],
+    vibe: 'Soulful Devotion',
+  },
+  {
+    ...CANONICAL_DISCOVERY_CATALOG.sajni,
+    genreId: 'romantic',
+    secondaryGenres: ['bollywood', 'acoustic', 'chill'],
+    vibe: 'Tender Melody',
+  },
+  {
+    ...CANONICAL_DISCOVERY_CATALOG.veKamleya,
+    genreId: 'romantic',
+    secondaryGenres: ['bollywood', 'sufi', 'sad'],
+    vibe: 'Soulful Duet',
+  },
+  {
+    ...CANONICAL_DISCOVERY_CATALOG.phirAurKyaChahiye,
+    genreId: 'romantic',
+    secondaryGenres: ['bollywood', 'happy', 'chill'],
+    vibe: 'Warm Love Anthem',
+  },
+  {
+    ...CANONICAL_DISCOVERY_CATALOG.tumHiHo,
+    genreId: 'romantic',
+    secondaryGenres: ['bollywood', 'sad'],
+    vibe: 'Timeless Classic',
+  },
+  {
+    ...CANONICAL_DISCOVERY_CATALOG.shayad,
+    genreId: 'romantic',
+    secondaryGenres: ['bollywood', 'lofi', 'chill', 'happy'],
+    vibe: 'Breezy Romance',
+  },
+  {
+    ...CANONICAL_DISCOVERY_CATALOG.hawayein,
+    genreId: 'romantic',
+    secondaryGenres: ['bollywood', 'chill', 'acoustic'],
+    vibe: 'Magical Breeze',
+  },
+  {
+    ...CANONICAL_DISCOVERY_CATALOG.subhanallah,
+    genreId: 'romantic',
+    secondaryGenres: ['bollywood', 'happy', 'chill'],
+    vibe: 'Feel-Good Love',
+  },
+  {
+    ...CANONICAL_DISCOVERY_CATALOG.dilDiyanGallan,
+    genreId: 'romantic',
+    secondaryGenres: ['bollywood', 'punjabi', 'acoustic'],
+    vibe: 'Velvet Romance',
+  },
+  {
+    ...CANONICAL_DISCOVERY_CATALOG.zaraSa,
+    genreId: 'romantic',
+    secondaryGenres: ['bollywood', 'happy'],
+    vibe: 'KK Evergreen Magic',
+  },
+  {
     ...CANONICAL_DISCOVERY_CATALOG.husn,
     genreId: 'indie',
-    secondaryGenres: ['acoustic', 'lofi', 'sad', 'chill'],
+    secondaryGenres: ['acoustic', 'lofi', 'sad', 'chill', 'romantic'],
     vibe: 'Acoustic Poetry',
   },
   {
-    ...CANONICAL_DISCOVERY_CATALOG.pasoori,
-    genreId: 'sufi',
-    secondaryGenres: ['indie', 'punjabi', 'energetic'],
-    vibe: 'Global Fusion Anthem',
-  },
-  {
-    ...CANONICAL_DISCOVERY_CATALOG.zinda,
-    genreId: 'workout',
-    secondaryGenres: ['bollywood', 'energetic'],
-    vibe: 'High-Octane Energy',
+    ...CANONICAL_DISCOVERY_CATALOG.lover,
+    genreId: 'punjabi',
+    secondaryGenres: ['romantic', 'energetic', 'happy'],
+    vibe: 'Romantic Punjabi Vibe',
   },
 ];
 
@@ -1666,5 +1903,248 @@ export async function fetchNextRelatedTracksBatch(
     hasMore: entry.cursorIndex < entry.queries.length,
   };
 }
+
+export const VIBE_CURATED_POOLS: Record<string, YouTubeTrack[]> = {
+  Romantic: [
+    CANONICAL_DISCOVERY_CATALOG.apnaBanaLe,
+    CANONICAL_DISCOVERY_CATALOG.kesariya,
+    CANONICAL_DISCOVERY_CATALOG.satranga,
+    CANONICAL_DISCOVERY_CATALOG.oMaahi,
+    CANONICAL_DISCOVERY_CATALOG.tumHiHo,
+    CANONICAL_DISCOVERY_CATALOG.pehleBhiMain,
+    CANONICAL_DISCOVERY_CATALOG.raataanLambiyan,
+    CANONICAL_DISCOVERY_CATALOG.tereHawaale,
+    CANONICAL_DISCOVERY_CATALOG.sajni,
+    CANONICAL_DISCOVERY_CATALOG.veKamleya,
+    CANONICAL_DISCOVERY_CATALOG.phirAurKyaChahiye,
+    CANONICAL_DISCOVERY_CATALOG.chaleya,
+    CANONICAL_DISCOVERY_CATALOG.heeriye,
+    CANONICAL_DISCOVERY_CATALOG.shayad,
+    CANONICAL_DISCOVERY_CATALOG.hawayein,
+    CANONICAL_DISCOVERY_CATALOG.subhanallah,
+    CANONICAL_DISCOVERY_CATALOG.dilDiyanGallan,
+    CANONICAL_DISCOVERY_CATALOG.zaraSa,
+    CANONICAL_DISCOVERY_CATALOG.mastMagan,
+    CANONICAL_DISCOVERY_CATALOG.zaalima,
+  ],
+  Relax: [
+    CANONICAL_DISCOVERY_CATALOG.sajni,
+    CANONICAL_DISCOVERY_CATALOG.husn,
+    CANONICAL_DISCOVERY_CATALOG.kasoor,
+    CANONICAL_DISCOVERY_CATALOG.iraaday,
+    CANONICAL_DISCOVERY_CATALOG.shayad,
+    CANONICAL_DISCOVERY_CATALOG.tereHawaale,
+    CANONICAL_DISCOVERY_CATALOG.hawayein,
+    CANONICAL_DISCOVERY_CATALOG.heeriye,
+    CANONICAL_DISCOVERY_CATALOG.baarishein,
+    CANONICAL_DISCOVERY_CATALOG.alagAasmaan,
+    CANONICAL_DISCOVERY_CATALOG.gul,
+    CANONICAL_DISCOVERY_CATALOG.kunFayaKun,
+    CANONICAL_DISCOVERY_CATALOG.afreenAfreen,
+    CANONICAL_DISCOVERY_CATALOG.kabira,
+    CANONICAL_DISCOVERY_CATALOG.subhanallah,
+    CANONICAL_DISCOVERY_CATALOG.apnaBanaLe,
+    CANONICAL_DISCOVERY_CATALOG.phirAurKyaChahiye,
+    CANONICAL_DISCOVERY_CATALOG.raataanLambiyan,
+  ],
+  Sad: [
+    CANONICAL_DISCOVERY_CATALOG.agarTumSaathHo,
+    CANONICAL_DISCOVERY_CATALOG.channaMereya,
+    CANONICAL_DISCOVERY_CATALOG.pehleBhiMain,
+    CANONICAL_DISCOVERY_CATALOG.satranga,
+    CANONICAL_DISCOVERY_CATALOG.tumHiHo,
+    CANONICAL_DISCOVERY_CATALOG.bekhayali,
+    CANONICAL_DISCOVERY_CATALOG.kahaniSuno,
+    CANONICAL_DISCOVERY_CATALOG.faasle,
+    CANONICAL_DISCOVERY_CATALOG.kabira,
+    CANONICAL_DISCOVERY_CATALOG.veKamleya,
+    CANONICAL_DISCOVERY_CATALOG.husn,
+    CANONICAL_DISCOVERY_CATALOG.chooLo,
+    CANONICAL_DISCOVERY_CATALOG.baarishein,
+    CANONICAL_DISCOVERY_CATALOG.coldMess,
+    CANONICAL_DISCOVERY_CATALOG.tereHawaale,
+  ],
+  'Lo-Fi': [
+    CANONICAL_DISCOVERY_CATALOG.iraaday,
+    CANONICAL_DISCOVERY_CATALOG.faasle,
+    CANONICAL_DISCOVERY_CATALOG.husn,
+    CANONICAL_DISCOVERY_CATALOG.kasoor,
+    CANONICAL_DISCOVERY_CATALOG.baarishein,
+    CANONICAL_DISCOVERY_CATALOG.alagAasmaan,
+    CANONICAL_DISCOVERY_CATALOG.gul,
+    CANONICAL_DISCOVERY_CATALOG.kahaniSuno,
+    CANONICAL_DISCOVERY_CATALOG.shayad,
+    CANONICAL_DISCOVERY_CATALOG.sajni,
+    CANONICAL_DISCOVERY_CATALOG.pehleBhiMain,
+    CANONICAL_DISCOVERY_CATALOG.heeriye,
+    CANONICAL_DISCOVERY_CATALOG.hawayein,
+    CANONICAL_DISCOVERY_CATALOG.apnaBanaLe,
+  ],
+  Punjabi: [
+    CANONICAL_DISCOVERY_CATALOG.lover,
+    CANONICAL_DISCOVERY_CATALOG.softly,
+    CANONICAL_DISCOVERY_CATALOG.withYou,
+    CANONICAL_DISCOVERY_CATALOG.hassHass,
+    CANONICAL_DISCOVERY_CATALOG.taubaTauba,
+    CANONICAL_DISCOVERY_CATALOG.bornToShine,
+    CANONICAL_DISCOVERY_CATALOG.bars52,
+    CANONICAL_DISCOVERY_CATALOG.pasoori,
+    CANONICAL_DISCOVERY_CATALOG.dilDiyanGallan,
+    CANONICAL_DISCOVERY_CATALOG.heeriye,
+  ],
+  Party: [
+    CANONICAL_DISCOVERY_CATALOG.taubaTauba,
+    CANONICAL_DISCOVERY_CATALOG.badtameezDil,
+    CANONICAL_DISCOVERY_CATALOG.ghungroo,
+    CANONICAL_DISCOVERY_CATALOG.chaleya,
+    CANONICAL_DISCOVERY_CATALOG.lover,
+    CANONICAL_DISCOVERY_CATALOG.hassHass,
+    CANONICAL_DISCOVERY_CATALOG.softly,
+    CANONICAL_DISCOVERY_CATALOG.bornToShine,
+    CANONICAL_DISCOVERY_CATALOG.pasoori,
+    CANONICAL_DISCOVERY_CATALOG.kesariya,
+    CANONICAL_DISCOVERY_CATALOG.withYou,
+    CANONICAL_DISCOVERY_CATALOG.bars52,
+  ],
+  Workout: [
+    CANONICAL_DISCOVERY_CATALOG.zinda,
+    CANONICAL_DISCOVERY_CATALOG.karHarMaidaanFateh,
+    CANONICAL_DISCOVERY_CATALOG.bars52,
+    CANONICAL_DISCOVERY_CATALOG.bornToShine,
+    CANONICAL_DISCOVERY_CATALOG.taubaTauba,
+    CANONICAL_DISCOVERY_CATALOG.nadaanParinde,
+    CANONICAL_DISCOVERY_CATALOG.badtameezDil,
+    CANONICAL_DISCOVERY_CATALOG.ghungroo,
+    CANONICAL_DISCOVERY_CATALOG.chaleya,
+    CANONICAL_DISCOVERY_CATALOG.lover,
+  ],
+  Focus: [
+    CANONICAL_DISCOVERY_CATALOG.kunFayaKun,
+    CANONICAL_DISCOVERY_CATALOG.afreenAfreen,
+    CANONICAL_DISCOVERY_CATALOG.iraaday,
+    CANONICAL_DISCOVERY_CATALOG.kasoor,
+    CANONICAL_DISCOVERY_CATALOG.alagAasmaan,
+    CANONICAL_DISCOVERY_CATALOG.gul,
+    CANONICAL_DISCOVERY_CATALOG.baarishein,
+    CANONICAL_DISCOVERY_CATALOG.husn,
+    CANONICAL_DISCOVERY_CATALOG.tereHawaale,
+    CANONICAL_DISCOVERY_CATALOG.sajni,
+    CANONICAL_DISCOVERY_CATALOG.kabira,
+    CANONICAL_DISCOVERY_CATALOG.raanjhanaa,
+  ],
+};
+
+/**
+ * Returns a strictly vibe-matched Quick Picks song list:
+ * - When a specific mood chip (`Romantic`, `Relax`, `Sad`, `Lo-Fi`, `Punjabi`, `Party`, `Workout`, `Focus`) is selected,
+ *   ONLY songs belonging to that vibe are returned (live fetched songs + curated vibe pool), never polluted by mismatched fallback genres.
+ * - When `mood === 'All'`, dynamically adapts Quick Picks to the vibe of `seedTrack` (the currently playing / last played song)
+ *   and user's favorite melodies so Quick Picks always feels cohesive and never mixes jarring workout/random tracks.
+ */
+export function getVibeMatchedQuickPicks(
+  mood: string,
+  seedTrack?: YouTubeTrack | null,
+  fetchedMoodTracks: YouTubeTrack[] = [],
+  userId = 'guest'
+): YouTubeTrack[] {
+  const seen = new Set<string>();
+  const seenTitles = new Set<string>();
+  const result: YouTubeTrack[] = [];
+
+  const pushSong = (t: YouTubeTrack | undefined | null) => {
+    if (!t || !t.videoId || !t.title) return;
+    if (!isGenuineYouTubeMusicSong(t)) return;
+    const canonical = resolveCanonicalTrack(t);
+    if (seen.has(canonical.videoId)) return;
+    const tk = normalizeTrackTitleKey(canonical.title);
+    if (tk && seenTitles.has(tk)) return;
+    seen.add(canonical.videoId);
+    if (tk) seenTitles.add(tk);
+    result.push({
+      ...canonical,
+      thumbnail: normalizeSquareThumbnail(canonical.thumbnail, canonical.videoId),
+      mediaType: 'song',
+      catalogSource: 'youtube_music',
+    });
+  };
+
+  if (mood && mood !== 'All') {
+    const curatedForMood = VIBE_CURATED_POOLS[mood] || VIBE_CURATED_POOLS.Romantic;
+    // Place curated beloved hits for this vibe first, interleaved with fresh live YTMusic songs for this mood
+    const maxLen = Math.max(curatedForMood.length, fetchedMoodTracks.length);
+    for (let i = 0; i < maxLen; i++) {
+      if (i < curatedForMood.length) pushSong(curatedForMood[i]);
+      if (i < fetchedMoodTracks.length) pushSong(fetchedMoodTracks[i]);
+      if (result.length >= 24) break;
+    }
+    return result.slice(0, 20);
+  }
+
+  // When mood === 'All', adapt to the currently playing / active song's vibe!
+  if (seedTrack?.videoId) {
+    const ctx = inferTrackMusicalContext(seedTrack);
+    let primaryPool: YouTubeTrack[] = VIBE_CURATED_POOLS.Romantic;
+    if (ctx.language === 'punjabi' || ctx.primaryGenre === 'punjabi') {
+      primaryPool = [
+        ...VIBE_CURATED_POOLS.Punjabi,
+        ...VIBE_CURATED_POOLS.Party,
+        ...VIBE_CURATED_POOLS.Romantic,
+      ];
+    } else if (ctx.primaryGenre === 'sad') {
+      primaryPool = [
+        ...VIBE_CURATED_POOLS.Sad,
+        ...VIBE_CURATED_POOLS.Romantic,
+        ...VIBE_CURATED_POOLS['Lo-Fi'],
+      ];
+    } else if (ctx.primaryGenre === 'lofi' || ctx.primaryGenre === 'acoustic') {
+      primaryPool = [
+        ...VIBE_CURATED_POOLS['Lo-Fi'],
+        ...VIBE_CURATED_POOLS.Relax,
+        ...VIBE_CURATED_POOLS.Romantic,
+      ];
+    } else if (ctx.primaryGenre === 'workout') {
+      primaryPool = [
+        ...VIBE_CURATED_POOLS.Workout,
+        ...VIBE_CURATED_POOLS.Party,
+        ...VIBE_CURATED_POOLS.Punjabi,
+      ];
+    } else if (ctx.primaryGenre === 'sufi') {
+      primaryPool = [
+        ...VIBE_CURATED_POOLS.Focus,
+        ...VIBE_CURATED_POOLS.Relax,
+        ...VIBE_CURATED_POOLS.Romantic,
+      ];
+    } else {
+      primaryPool = [
+        ...VIBE_CURATED_POOLS.Romantic,
+        ...VIBE_CURATED_POOLS.Relax,
+      ];
+    }
+
+    // Also include instant related songs for the seedTrack so Quick Picks feels personally tailored to what's playing
+    const related = getInstantRelatedTracks(seedTrack, 8, 'context', userId);
+    for (const r of related) {
+      // Avoid injecting jarring workout songs into a non-workout vibe
+      if (ctx.primaryGenre !== 'workout') {
+        const rCtx = inferTrackMusicalContext(r);
+        if (rCtx.primaryGenre === 'workout') continue;
+      }
+      pushSong(r);
+      if (result.length >= 6) break;
+    }
+    for (const p of primaryPool) {
+      pushSong(p);
+      if (result.length >= 20) break;
+    }
+  }
+
+  for (const qp of QUICK_PICKS_TRACKS) {
+    pushSong(qp);
+    if (result.length >= 20) break;
+  }
+
+  return result.slice(0, 20);
+}
+
 
 

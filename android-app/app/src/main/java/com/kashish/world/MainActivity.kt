@@ -6,6 +6,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -18,12 +19,16 @@ import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.media3.common.util.UnstableApi
+import org.json.JSONObject
 import java.io.File
 import java.io.IOException
 import java.lang.ref.WeakReference
@@ -50,6 +55,8 @@ class KeepAliveWebView(context: Context) : WebView(context) {
     }
 }
 
+@androidx.annotation.OptIn(UnstableApi::class)
+@Suppress("UnsafeOptInUsageError")
 class MainActivity : AppCompatActivity() {
 
     companion object {
@@ -63,8 +70,36 @@ class MainActivity : AppCompatActivity() {
                 try {
                     wv.onResume()
                     wv.resumeTimers()
+                    val safeAction = JSONObject.quote(action)
                     wv.evaluateJavascript(
-                        "window.dispatchEvent(new CustomEvent('kashish-native-media-action', { detail: '$action' }));",
+                        "window.dispatchEvent(new CustomEvent('kashish-native-media-action', { detail: $safeAction }));",
+                        null
+                    )
+                } catch (_: Exception) {}
+            }
+        }
+
+        fun dispatchNativeAudioState(jsonPayload: String) {
+            mainHandler.post {
+                val wv = activeWebViewRef?.get() ?: return@post
+                try {
+                    val safeJson = JSONObject.quote(jsonPayload)
+                    wv.evaluateJavascript(
+                        "try { window.dispatchEvent(new CustomEvent('kashish-native-audio-state', { detail: JSON.parse($safeJson) })); } catch(e) {}",
+                        null
+                    )
+                } catch (_: Exception) {}
+            }
+        }
+
+        fun resolveNativeAsyncCallback(reqId: String, jsonPayload: String) {
+            mainHandler.post {
+                val wv = activeWebViewRef?.get() ?: return@post
+                try {
+                    val safeId = JSONObject.quote(reqId)
+                    val safePayload = JSONObject.quote(jsonPayload)
+                    wv.evaluateJavascript(
+                        "try { if (window.__kashishResolveNativeReq) { window.__kashishResolveNativeReq($safeId, $safePayload); } } catch(e) {}",
                         null
                     )
                 } catch (_: Exception) {}
@@ -110,19 +145,55 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        window.decorView.setBackgroundColor(Color.parseColor("#050507"))
+
         // Create high-importance notification channels & start the Truecaller Background Service
         SoundCacheManager.ensureDefaultChannels(this)
         FirestoreOverlayBackgroundService.startServiceSafely(this)
 
         // Setup KeepAliveWebView so music continues playing in background & lock screen
-        webView = KeepAliveWebView(this)
+        webView = KeepAliveWebView(this).apply {
+            setBackgroundColor(Color.parseColor("#050507"))
+            overScrollMode = View.OVER_SCROLL_NEVER
+            setLayerType(View.LAYER_TYPE_HARDWARE, null)
+        }
         activeWebViewRef = WeakReference(webView)
         setContentView(webView)
 
         configureWebView()
+        setupSmartBackButton()
 
-        // Load the app URL
+        // Load app URL (bundled APK assets/www/* are intercepted & served in <2ms on exact https://kashishji.web.app origin)
         webView.loadUrl(PermissionReporter.getWebBaseUrl(this))
+    }
+
+    private fun setupSmartBackButton() {
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                try {
+                    webView.evaluateJavascript(
+                        "(function(){ try { if (typeof window.__kashishConsumeMusicPlayerBack === 'function' && window.__kashishConsumeMusicPlayerBack()) return 'consumed'; return 'pass'; } catch(e) { return 'pass'; } })()"
+                    ) { result ->
+                        val cleaned = result?.trim('"') ?: "pass"
+                        if (cleaned == "consumed") {
+                            return@evaluateJavascript
+                        }
+                        if (webView.canGoBack()) {
+                            webView.goBack()
+                        } else {
+                            // Minimize app to background smoothly instead of killing music playback
+                            moveTaskToBack(true)
+                        }
+                    }
+                } catch (_: Exception) {
+                    if (webView.canGoBack()) {
+                        webView.goBack()
+                    } else {
+                        moveTaskToBack(true)
+                    }
+                }
+            }
+        })
     }
 
     override fun onPause() {
@@ -160,6 +231,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun keepWebViewRendererHighPriority(isBackgrounded: Boolean) {
+        NativeMusicPlayerEngine.isAppInBackground = isBackgrounded
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
@@ -180,7 +252,7 @@ class MainActivity : AppCompatActivity() {
             incoming.removeExtra("open_section")
             try {
                 webView.evaluateJavascript(
-                    "window.dispatchEvent(new CustomEvent('kashish-open-section', { detail: '$section' }));",
+                    "window.dispatchEvent(new CustomEvent('kashish-open-section', { detail: ${JSONObject.quote(section)} }));",
                     null
                 )
             } catch (_: Exception) {}
@@ -201,6 +273,15 @@ class MainActivity : AppCompatActivity() {
         settings.mediaPlaybackRequiresUserGesture = false
         settings.allowFileAccess = true
         settings.allowContentAccess = true
+        settings.cacheMode = WebSettings.LOAD_DEFAULT
+        settings.useWideViewPort = true
+        settings.loadWithOverviewMode = true
+        settings.loadsImagesAutomatically = true
+        @Suppress("DEPRECATION")
+        settings.setRenderPriority(WebSettings.RenderPriority.HIGH)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+        }
 
         try {
             val cookieManager = android.webkit.CookieManager.getInstance()
@@ -211,6 +292,14 @@ class MainActivity : AppCompatActivity() {
         webView.addJavascriptInterface(AndroidAppInterface(this), "AndroidApp")
 
         webView.webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(
+                view: WebView?,
+                request: WebResourceRequest?
+            ): WebResourceResponse? {
+                return LocalBundleAssetInterceptor.intercept(applicationContext, request)
+                    ?: super.shouldInterceptRequest(view, request)
+            }
+
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val url = request?.url?.toString() ?: return false
                 if (url.startsWith("tel:")) {
@@ -296,6 +385,7 @@ class MainActivity : AppCompatActivity() {
         try {
             val js = """
                 (function() {
+                  window.isNativeApp = true;
                   if (window.__kashishBgKeepAliveInjected) return;
                   window.__kashishBgKeepAliveInjected = true;
                   try {
@@ -366,16 +456,6 @@ class MainActivity : AppCompatActivity() {
             File.createTempFile("JPEG_${timeStamp}_", ".jpg", storageDir)
         } catch (_: IOException) {
             null
-        }
-    }
-
-    @Deprecated("Deprecated in Java")
-    override fun onBackPressed() {
-        if (webView.canGoBack()) {
-            webView.goBack()
-        } else {
-            @Suppress("DEPRECATION")
-            super.onBackPressed()
         }
     }
 }

@@ -47,6 +47,45 @@ function parseDurationToSeconds(text: string): number {
   return 0;
 }
 
+function sanitizeServerSongTitle(rawTitle: string): string {
+  let clean = String(rawTitle || '').trim();
+  if (!clean) return '';
+  clean = clean
+    .replace(/\s*[\(\[\{]\s*(?:official\s*(?:music\s*)?video|full\s*video(?:\s*song)?|video\s*song|lyrical(?:\s*video)?|lyric\s*video|official\s*lyric\s*video|official\s*audio|audio\s*song|full\s*audio|4k\s*video|hd\s*video|8k\s*video|full\s*song(?:\s*with\s*lyrics)?)\s*[\)\]\}]\s*/gi, ' ')
+    .replace(/\s*(?:[-|•:]\s*)?(?:full\s*video(?:\s*song)?|official\s*(?:music\s*)?video|video\s*song|lyrical\s*video)\b.*$/i, '')
+    .trim();
+  if (clean.includes('|')) {
+    const firstPipe = clean.split('|')[0].trim();
+    if (firstPipe.length >= 2) {
+      clean = firstPipe;
+    }
+  }
+  return clean.replace(/\s+/g, ' ').trim() || String(rawTitle || '').trim();
+}
+
+function sanitizeServerSongArtist(rawArtist: string): string {
+  const clean = String(rawArtist || '')
+    .replace(/\s*-\s*Topic$/i, '')
+    .replace(/\bVEVO$/i, '')
+    .trim();
+  return clean || 'YouTube Music Artist';
+}
+
+function isNonSongJunkTitle(rawTitle: string, durationSec?: number): boolean {
+  const lower = String(rawTitle || '').toLowerCase();
+  if (
+    /\b(official\s*trailer|movie\s*trailer|teaser|making\s*of|behind\s*the\s*scenes|dialogue\s*promo|full\s*movie|whatsapp\s*status|status\s*video|reaction\s*to|interview|press\s*conference|#shorts|yt\s*shorts)\b/i.test(
+      lower
+    )
+  ) {
+    return true;
+  }
+  if (typeof durationSec === 'number' && durationSec > 0 && (durationSec < 45 || durationSec > 960)) {
+    return true;
+  }
+  return false;
+}
+
 function parseShelfItems(
   items: any[],
   seen: Set<string>,
@@ -72,8 +111,8 @@ function parseShelfItems(
 
     if (!videoId || seen.has(videoId)) continue;
 
-    const title: string = col0Runs.map((r) => r?.text || '').join('').trim();
-    if (!title) continue;
+    const rawTitle: string = col0Runs.map((r) => r?.text || '').join('').trim();
+    if (!rawTitle) continue;
 
     const artists: string[] = [];
     let album = '';
@@ -122,6 +161,16 @@ function parseShelfItems(
       }
     }
 
+    const durationSeconds = durationText ? parseDurationToSeconds(durationText) : undefined;
+    if (mediaType === 'song' && isNonSongJunkTitle(rawTitle, durationSeconds)) {
+      continue;
+    }
+
+    const title = mediaType === 'song' ? sanitizeServerSongTitle(rawTitle) : rawTitle;
+    const rawArtistJoined =
+      artists.join(', ') || (mediaType === 'video' ? 'YouTube Video' : 'YouTube Music Artist');
+    const artist = mediaType === 'song' ? sanitizeServerSongArtist(rawArtistJoined) : rawArtistJoined;
+
     const thumbs: Array<{ url?: string; width?: number; height?: number }> =
       m?.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails || [];
     const rawThumb =
@@ -135,13 +184,12 @@ function parseShelfItems(
       (rawThumb.includes('googleusercontent.com') || rawThumb.includes('ggpht.com'))
         ? rawThumb.replace(/=w\d+-h\d+[^&?]*/, '=w512-h512-l90-rj')
         : `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`;
-    const durationSeconds = durationText ? parseDurationToSeconds(durationText) : undefined;
 
     seen.add(videoId);
     results.push({
       videoId,
       title,
-      artist: artists.join(', ') || (mediaType === 'video' ? 'YouTube Video' : 'YouTube Music Artist'),
+      artist,
       album: album || undefined,
       thumbnail,
       durationText,

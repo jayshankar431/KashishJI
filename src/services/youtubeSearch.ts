@@ -1,3 +1,9 @@
+import {
+  searchNativeYouTubeMusicAsync,
+  searchNativeYouTubeVideosAsync,
+  fetchNativeSuggestionsAsync,
+} from '../androidBridge';
+
 export interface YouTubeTrack {
   videoId: string;
   title: string;
@@ -467,6 +473,52 @@ async function searchVideosViaBackendApi(
   }));
 }
 
+export function sanitizeSongTitle(rawTitle: string): string {
+  let clean = String(rawTitle || '').trim();
+  if (!clean) return 'Untitled Song';
+  clean = clean
+    .replace(
+      /\s*[\(\[\{]\s*(?:official\s*(?:music\s*)?video|full\s*video(?:\s*song)?|video\s*song|lyrical(?:\s*video)?|lyric\s*video|official\s*lyric\s*video|official\s*audio|audio\s*song|full\s*audio|4k\s*video|hd\s*video|8k\s*video|full\s*song(?:\s*with\s*lyrics)?)\s*[\)\]\}]\s*/gi,
+      ' '
+    )
+    .replace(
+      /\s*(?:[-|•:]\s*)?(?:full\s*video(?:\s*song)?|official\s*(?:music\s*)?video|video\s*song|lyrical\s*video)\b.*$/i,
+      ''
+    )
+    .trim();
+  if (clean.includes('|')) {
+    const firstPipe = clean.split('|')[0].trim();
+    if (firstPipe.length >= 2) {
+      clean = firstPipe;
+    }
+  }
+  return clean.replace(/\s+/g, ' ').trim() || String(rawTitle || '').trim();
+}
+
+export function sanitizeSongArtist(rawArtist: string): string {
+  const clean = String(rawArtist || '')
+    .replace(/\s*-\s*Topic$/i, '')
+    .replace(/\bVEVO$/i, '')
+    .trim();
+  return clean || 'Music Artist';
+}
+
+export function isGenuineSongItem(title: string, durationSec?: number): boolean {
+  const lower = String(title || '').toLowerCase();
+  if (!lower) return false;
+  if (
+    /\b(official\s*trailer|movie\s*trailer|teaser|making\s*of|behind\s*the\s*scenes|dialogue\s*promo|full\s*movie|whatsapp\s*status|status\s*video|reaction\s*to|interview|press\s*conference|#shorts|yt\s*shorts)\b/i.test(
+      lower
+    )
+  ) {
+    return false;
+  }
+  if (typeof durationSec === 'number' && durationSec > 0 && (durationSec < 45 || durationSec > 960)) {
+    return false;
+  }
+  return true;
+}
+
 /**
  * Secondary YouTube Music catalog search (`filter=music_songs` ONLY — never generic YouTube videos)
  * used if running in a standalone static WebView where `/api/ytmusic/search` is not local.
@@ -490,13 +542,16 @@ async function searchViaPipedMusicSongsOnly(
       rawUrl.match(/[?&]v=([a-zA-Z0-9_-]{11})/) || rawUrl.match(/\/([a-zA-Z0-9_-]{11})$/);
     const videoId = item?.id || (idMatch ? idMatch[1] : '');
     if (!videoId || seen.has(videoId)) continue;
-    seen.add(videoId);
 
+    const rawTitle = String(item?.title || '').trim();
     const durSec = typeof item.duration === 'number' ? item.duration : 0;
+    if (!isGenuineSongItem(rawTitle, durSec)) continue;
+
+    seen.add(videoId);
     tracks.push({
       videoId,
-      title: item.title || 'Untitled Song',
-      artist: item.uploaderName || 'YouTube Music Artist',
+      title: sanitizeSongTitle(rawTitle),
+      artist: sanitizeSongArtist(item.uploaderName || 'YouTube Music Artist'),
       thumbnail: normalizeSquareThumbnail(item.thumbnail, videoId),
       durationText: formatDuration(durSec),
       durationSeconds: durSec,
@@ -521,12 +576,15 @@ async function searchViaPipedMusicSongsOnly(
             rawUrl.match(/[?&]v=([a-zA-Z0-9_-]{11})/) || rawUrl.match(/\/([a-zA-Z0-9_-]{11})$/);
           const videoId = item?.id || (idMatch ? idMatch[1] : '');
           if (!videoId || seen.has(videoId)) continue;
-          seen.add(videoId);
+          const rawTitle = String(item?.title || '').trim();
           const durSec = typeof item.duration === 'number' ? item.duration : 0;
+          if (!isGenuineSongItem(rawTitle, durSec)) continue;
+
+          seen.add(videoId);
           tracks.push({
             videoId,
-            title: item.title || 'Untitled Song',
-            artist: item.uploaderName || 'YouTube Music Artist',
+            title: sanitizeSongTitle(rawTitle),
+            artist: sanitizeSongArtist(item.uploaderName || 'YouTube Music Artist'),
             thumbnail: normalizeSquareThumbnail(item.thumbnail, videoId),
             durationText: formatDuration(durSec),
             durationSeconds: durSec,
@@ -683,8 +741,21 @@ export async function searchYouTubeSongs(
   const searchPromise = (async () => {
     try {
       const nativeBridgeSearch = async (): Promise<YouTubeTrack[]> => {
-        const bridge = typeof window !== 'undefined' ? (window as any).AndroidApp : null;
-        if (!bridge || typeof bridge.searchYouTubeMusic !== 'function') {
+        const bridge = typeof window !== 'undefined' ? window.AndroidApp : null;
+        if (!bridge) {
+          throw new Error('Native bridge search unavailable');
+        }
+        // Prefer non-blocking 4-thread Kotlin pool + disk cache on v3.2+ APK
+        if (typeof bridge.searchYouTubeMusicAsync === 'function') {
+          const parsed = await searchNativeYouTubeMusicAsync(query, raceController.signal);
+          return parsed.map((t: any) => ({
+            ...t,
+            mediaType: 'song' as const,
+            thumbnail: normalizeSquareThumbnail(t.thumbnail, t.videoId),
+          }));
+        }
+        // Legacy fallback for older APK versions
+        if (typeof bridge.searchYouTubeMusic !== 'function') {
           throw new Error('Native bridge search unavailable');
         }
         const rawJson = bridge.searchYouTubeMusic(query);
@@ -729,11 +800,15 @@ export async function searchYouTubeSongs(
         delayedPipedFallback('https://api.piped.private.coffee'),
       ];
 
-      const winner = (await Promise.any(catalogProviders)).map((t) => ({
-        ...t,
-        mediaType: 'song' as const,
-        thumbnail: normalizeSquareThumbnail(t.thumbnail, t.videoId),
-      }));
+      const winner = (await Promise.any(catalogProviders))
+        .filter((t) => isGenuineSongItem(t.title, t.durationSeconds))
+        .map((t) => ({
+          ...t,
+          title: sanitizeSongTitle(t.title),
+          artist: sanitizeSongArtist(t.artist),
+          mediaType: 'song' as const,
+          thumbnail: normalizeSquareThumbnail(t.thumbnail, t.videoId),
+        }));
       raceController.abort();
       saveToCache(normalizedKey, winner);
       return winner;
@@ -822,7 +897,17 @@ export async function searchYouTubeVideos(
           );
         });
 
+      const nativeVideoSearch = async (): Promise<YouTubeTrack[]> => {
+        const parsed = await searchNativeYouTubeVideosAsync(query, raceController.signal);
+        return parsed.map((t: any) => ({
+          ...t,
+          mediaType: 'video' as const,
+          thumbnail: getHighResThumbnailUrl(t.videoId),
+        }));
+      };
+
       const videoProviders: Promise<YouTubeTrack[]>[] = [
+        nativeVideoSearch(),
         ...(isStaticHost
           ? []
           : [searchVideosViaBackendApi(query, Boolean(options?.bypassCache), raceController.signal)]),
@@ -1013,8 +1098,12 @@ export async function preloadNextTrackResources(
 
   if (signal?.aborted) return playableId;
 
-  // 3. Warm server/native audio stream resolver & pre-buffer initial ~30s audio chunk (~480KB) when available
+  // 3. Warm native ExoPlayer or server audio stream resolver in background so Next starts instantly
   try {
+    if (typeof window !== 'undefined' && typeof window.AndroidApp?.nativePreloadTrack === 'function') {
+      window.AndroidApp.nativePreloadTrack(playableId);
+    }
+
     const isStaticHost =
       typeof window !== 'undefined' &&
       (window.location.hostname.endsWith('.web.app') ||
@@ -1074,9 +1163,30 @@ const POPULAR_MUSIC_SUGGESTIONS: string[] = [
 
 const suggestionMemoryCache = new Map<string, string[]>();
 
+function sanitizeSuggestionQueryToSong(rawText: string): string {
+  const cleaned = String(rawText || '')
+    .replace(/\b(?:full\s*video(?:\s*song)?|official\s*(?:music\s*)?video|video\s*song|music\s*video|hd\s*video|4k\s*video|lyrical\s*video|whatsapp\s*status|status\s*video|movie\s*trailer|official\s*trailer|teaser|#shorts|shorts)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned;
+}
+
+function isVideoSuggestionNoise(rawText: string): boolean {
+  const lower = String(rawText || '').toLowerCase().trim();
+  if (!lower) return true;
+  if (
+    /\b(trailer|teaser|full\s*movie|episode|interview|reaction|behind\s*the\s*scenes|making\s*of|whatsapp\s*status|status\s*video|shorts|vlog|gameplay)\b/i.test(
+      lower
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * Returns instant 0ms search suggestions combining recent user searches,
- * cached track titles/artists, and popular music queries.
+ * cached track titles/artists, and popular music queries — strictly filtered for Songs (no video noise).
  */
 export function getInstantSuggestions(
   rawQuery: string,
@@ -1095,8 +1205,9 @@ export function getInstantSuggestions(
       .toLowerCase();
 
   const pushUnique = (text: string) => {
-    const clean = text.replace(/\s+/g, ' ').trim();
-    if (!clean) return;
+    if (isVideoSuggestionNoise(text)) return;
+    const clean = sanitizeSuggestionQueryToSong(text);
+    if (!clean || clean.length < 2) return;
     const key = normalizeKey(clean);
     if (!key || seen.has(key)) return;
     seen.add(key);
@@ -1147,11 +1258,12 @@ export function getInstantSuggestions(
     }
   }
 
-  // 4. Cached song/video titles from session memory
+  // 4. Cached song titles from session memory (only song mediaType)
   for (const [, entry] of memoryCache.entries()) {
     for (const t of entry.tracks) {
+      if (t.mediaType === 'video') continue;
       if (t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q)) {
-        pushUnique(`${t.title} - ${t.artist}`);
+        pushUnique(`${sanitizeSongTitle(t.title)} - ${sanitizeSongArtist(t.artist)}`);
         if (results.length >= limit) return results;
       }
     }
@@ -1161,8 +1273,83 @@ export function getInstantSuggestions(
 }
 
 /**
- * Fetches live YouTube search autocomplete suggestions combined with instant local matches
- * using pure fetch (never injecting cross-origin <script> tags).
+ * Returns instant playable Song objects matching the current search query from session cache
+ * and the provided discovery song catalog so the Suggestions dropdown shows real Songs
+ * (with 1:1 album art, song title, and artist) instead of videos.
+ */
+export function getSuggestedSongsForQuery(
+  rawQuery: string,
+  catalogTracks: YouTubeTrack[] = [],
+  limit = 5
+): YouTubeTrack[] {
+  const q = rawQuery.replace(/\s+/g, ' ').trim().toLowerCase();
+  const seenIds = new Set<string>();
+  const seenTitleKeys = new Set<string>();
+  const prefixMatches: YouTubeTrack[] = [];
+  const substringMatches: YouTubeTrack[] = [];
+
+  const addCandidate = (t: YouTubeTrack, isPrefix: boolean) => {
+    if (!t?.videoId || t.mediaType === 'video') return;
+    if (!isGenuineSongItem(t.title, t.durationSeconds)) return;
+    if (seenIds.has(t.videoId)) return;
+    const cleanTitle = sanitizeSongTitle(t.title);
+    const cleanArtist = sanitizeSongArtist(t.artist);
+    const titleKey = `${cleanTitle.toLowerCase()}::${cleanArtist.toLowerCase()}`;
+    if (seenTitleKeys.has(titleKey)) return;
+
+    seenIds.add(t.videoId);
+    seenTitleKeys.add(titleKey);
+    const normalizedTrack: YouTubeTrack = {
+      ...t,
+      title: cleanTitle,
+      artist: cleanArtist,
+      mediaType: 'song',
+      thumbnail: normalizeSquareThumbnail(t.thumbnail, t.videoId),
+    };
+    if (isPrefix) {
+      prefixMatches.push(normalizedTrack);
+    } else {
+      substringMatches.push(normalizedTrack);
+    }
+  };
+
+  if (!q) {
+    for (const t of catalogTracks) {
+      addCandidate(t, true);
+      if (prefixMatches.length >= limit) break;
+    }
+    return prefixMatches.slice(0, limit);
+  }
+
+  const allPools: YouTubeTrack[] = [...catalogTracks];
+  for (const [, entry] of memoryCache.entries()) {
+    for (const t of entry.tracks) {
+      if (t.mediaType !== 'video') {
+        allPools.push(t);
+      }
+    }
+  }
+
+  const tokens = q.split(/\s+/).filter(Boolean);
+
+  for (const t of allPools) {
+    const titleLower = sanitizeSongTitle(t.title).toLowerCase();
+    const artistLower = sanitizeSongArtist(t.artist).toLowerCase();
+    const combined = `${titleLower} ${artistLower}`;
+    if (titleLower.startsWith(q) || artistLower.startsWith(q)) {
+      addCandidate(t, true);
+    } else if (tokens.every((tok) => combined.includes(tok))) {
+      addCandidate(t, false);
+    }
+    if (prefixMatches.length >= limit) break;
+  }
+
+  return [...prefixMatches, ...substringMatches].slice(0, limit);
+}
+
+/**
+ * Fetches live YouTube Music song search autocomplete suggestions combined with instant local matches
+ * using pure fetch (never injecting cross-origin <script> tags) and stripping video clutter.
  */
 export async function fetchYouTubeSuggestions(
   rawQuery: string,
@@ -1189,11 +1376,26 @@ export async function fetchYouTubeSuggestions(
     if (!res.ok) throw new Error('Piped suggestions failed');
     const data = await res.json();
     if (!Array.isArray(data) || data.length === 0) throw new Error('Empty suggestions');
-    return data.map((s: any) => String(s || '').trim()).filter(Boolean);
+    return data
+      .map((s: any) => String(s || '').trim())
+      .filter((s: string) => Boolean(s) && !isVideoSuggestionNoise(s))
+      .map((s: string) => sanitizeSuggestionQueryToSong(s))
+      .filter((s: string) => s.length >= 2);
+  };
+
+  const fetchNativeMusicSuggestions = async (): Promise<string[]> => {
+    const list = await fetchNativeSuggestionsAsync(query, signal);
+    const cleaned = list
+      .filter((s: string) => Boolean(s) && !isVideoSuggestionNoise(s))
+      .map((s: string) => sanitizeSuggestionQueryToSong(s))
+      .filter((s: string) => s.length >= 2);
+    if (cleaned.length === 0) throw new Error('Empty native music suggestions');
+    return cleaned;
   };
 
   try {
     const liveList = await Promise.any([
+      fetchNativeMusicSuggestions(),
       fetchPipedSuggestions('https://pipedapi.ducks.party'),
       fetchPipedSuggestions('https://api.piped.private.coffee'),
     ]);
@@ -1211,8 +1413,9 @@ export async function fetchYouTubeSuggestions(
         .toLowerCase();
 
     const add = (val: string) => {
-      const clean = val.replace(/\s+/g, ' ').trim();
-      if (!clean) return;
+      if (isVideoSuggestionNoise(val)) return;
+      const clean = sanitizeSuggestionQueryToSong(val);
+      if (!clean || clean.length < 2) return;
       const k = normalizeKey(clean);
       if (!k || seen.has(k)) return;
       seen.add(k);

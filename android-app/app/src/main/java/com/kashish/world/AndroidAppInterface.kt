@@ -19,6 +19,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import org.json.JSONObject
 
+@Suppress("UnsafeOptInUsageError")
 class AndroidAppInterface(private val context: Context) {
 
     @JavascriptInterface
@@ -410,148 +411,155 @@ class AndroidAppInterface(private val context: Context) {
     }
 
     @JavascriptInterface
+    fun isNativeApp(): Boolean = true
+
+    @JavascriptInterface
+    fun hasNativeExoPlayer(): Boolean = true
+
+    @JavascriptInterface
+    fun hasBundledFrontend(): Boolean {
+        return LocalBundleAssetInterceptor.hasBundledFrontend(context.applicationContext)
+    }
+
+    @JavascriptInterface
+    fun nativePlayTrack(
+        videoId: String,
+        title: String,
+        artist: String,
+        thumbnailUrl: String,
+        startSeconds: Double
+    ) {
+        NativeMusicPlayerEngine.playTrack(
+            context = context.applicationContext,
+            videoId = videoId,
+            title = title,
+            artist = artist,
+            thumbnail = thumbnailUrl,
+            startSeconds = startSeconds
+        )
+    }
+
+    @JavascriptInterface
+    fun nativePauseTrack() {
+        NativeMusicPlayerEngine.pause()
+    }
+
+    @JavascriptInterface
+    fun nativeResumeTrack() {
+        NativeMusicPlayerEngine.resume()
+    }
+
+    @JavascriptInterface
+    fun nativeStopTrack() {
+        NativeMusicPlayerEngine.stop()
+    }
+
+    @JavascriptInterface
+    fun nativeSeekTrack(seconds: Double) {
+        NativeMusicPlayerEngine.seekTo(seconds)
+    }
+
+    @JavascriptInterface
+    fun nativeSetVolume(volume0To1: Float) {
+        NativeMusicPlayerEngine.setVolume(volume0To1)
+    }
+
+    @JavascriptInterface
+    fun nativePreloadTrack(videoId: String) {
+        NativeMusicPlayerEngine.preloadTrack(videoId)
+    }
+
+    @JavascriptInterface
+    fun nativeGetPlaybackState(): String {
+        return NativeMusicPlayerEngine.getStateJson()
+    }
+
+    @JavascriptInterface
+    fun setEqualizerBands(bassDb: Int, midDb: Int, trebleDb: Int, presetName: String = "custom") {
+        NativeMusicPlayerEngine.applyEqualizer(
+            context = context.applicationContext,
+            bassDb = bassDb,
+            midDb = midDb,
+            trebleDb = trebleDb,
+            presetName = presetName
+        )
+    }
+
+    @JavascriptInterface
     fun resolveYouTubeAudioStream(videoId: String): String {
-        val cleanId = videoId.trim()
-        if (cleanId.isEmpty()) return "{}"
-        var conn: java.net.HttpURLConnection? = null
-        return try {
-            val url = java.net.URL("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
-            conn = (url.openConnection() as java.net.HttpURLConnection).apply {
-                requestMethod = "POST"
-                connectTimeout = 6000
-                readTimeout = 6000
-                doOutput = true
-                setRequestProperty("Content-Type", "application/json")
-                setRequestProperty(
-                    "User-Agent",
-                    "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 14; en_US; Quest 3; Build/UP1A.231005.007.A1; Cronet/132.0.6808.3)"
-                )
-                setRequestProperty("X-Goog-Api-Format-Version", "2")
-            }
-            val payload = JSONObject().apply {
-                put(
-                    "context",
-                    JSONObject().apply {
-                        put(
-                            "client",
-                            JSONObject().apply {
-                                put("clientName", "ANDROID_VR")
-                                put("clientVersion", "1.60.19")
-                                put("androidSdkVersion", 34)
-                                put("osName", "Android")
-                                put("osVersion", "14")
-                                put("hl", "en")
-                                put("gl", "IN")
-                            }
-                        )
-                    }
-                )
-                put("videoId", cleanId)
-                put("contentCheckOk", true)
-                put("racyCheckOk", true)
-            }
-            java.io.OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { writer ->
-                writer.write(payload.toString())
-                writer.flush()
-            }
-            if (conn.responseCode in 200..299) {
-                val raw = java.io.BufferedReader(java.io.InputStreamReader(conn.inputStream, Charsets.UTF_8)).use {
-                    it.readText()
-                }
-                val data = JSONObject(raw)
-                val streamingData = data.optJSONObject("streamingData")
-                val adaptive = streamingData?.optJSONArray("adaptiveFormats")
-                var bestUrl = ""
-                var bestMime = ""
-                var bestBitrate = -1
-                var bestIsMp4 = false
-                if (adaptive != null) {
-                    for (i in 0 until adaptive.length()) {
-                        val fmt = adaptive.optJSONObject(i) ?: continue
-                        val mime = fmt.optString("mimeType", "")
-                        val streamUrl = fmt.optString("url", "")
-                        if (!mime.startsWith("audio/") || !streamUrl.startsWith("http")) continue
-                        val isMp4 = mime.contains("audio/mp4")
-                        val bitrate = fmt.optInt("bitrate", 0)
-                        if (bestUrl.isEmpty() || (isMp4 && !bestIsMp4) || (isMp4 == bestIsMp4 && bitrate > bestBitrate)) {
-                            bestUrl = streamUrl
-                            bestMime = mime.substringBefore(";").trim()
-                            bestBitrate = bitrate
-                            bestIsMp4 = isMp4
-                        }
-                    }
-                }
-                if (bestUrl.isNotEmpty()) {
-                    JSONObject().apply {
-                        put("videoId", cleanId)
-                        put("url", bestUrl)
-                        put("mimeType", bestMime)
-                        put("bitrate", bestBitrate)
-                    }.toString()
-                } else {
-                    "{}"
-                }
-            } else {
-                "{}"
-            }
-        } catch (_: Exception) {
-            "{}"
-        } finally {
-            try {
-                conn?.disconnect()
-            } catch (_: Exception) {}
-        }
+        return NativeMusicPlayerEngine.resolveAudioStreamJsonSync(videoId)
+    }
+
+    @JavascriptInterface
+    fun searchYouTubeMusic(query: String): String {
+        return NativeMediaDataService.searchYouTubeMusicSongsSync(context.applicationContext, query)
+    }
+
+    @JavascriptInterface
+    fun searchYouTubeMusicAsync(reqId: String, query: String) {
+        NativeMediaDataService.searchYouTubeMusicSongsAsync(context.applicationContext, reqId, query)
+    }
+
+    @JavascriptInterface
+    fun searchYouTubeVideosAsync(reqId: String, query: String) {
+        NativeMediaDataService.searchYouTubeVideosAsync(context.applicationContext, reqId, query)
+    }
+
+    @JavascriptInterface
+    fun fetchYouTubeSuggestionsAsync(reqId: String, query: String) {
+        NativeMediaDataService.fetchYouTubeMusicSuggestionsAsync(context.applicationContext, reqId, query)
+    }
+
+    @JavascriptInterface
+    fun fetchLyricsAsync(reqId: String, title: String, artist: String) {
+        NativeMediaDataService.fetchLyricsAsync(context.applicationContext, reqId, title, artist)
     }
 
     @JavascriptInterface
     fun fetchCloudinaryFolder(cloudName: String, apiKey: String, apiSecret: String, folder: String): String {
-        val cleanCloud = cloudName.trim()
-        val cleanKey = apiKey.trim()
-        val cleanSecret = apiSecret.trim()
-        val cleanFolder = folder.trim().trim('/').ifEmpty { "memories_of_kashish" }
-        if (cleanCloud.isEmpty() || cleanKey.isEmpty() || cleanSecret.isEmpty()) {
-            return "{}"
-        }
-        var conn: java.net.HttpURLConnection? = null
-        return try {
-            val authToken = android.util.Base64.encodeToString(
-                "$cleanKey:$cleanSecret".toByteArray(Charsets.UTF_8),
-                android.util.Base64.NO_WRAP
-            )
-            val url = java.net.URL("https://api.cloudinary.com/v1_1/$cleanCloud/resources/search")
-            conn = (url.openConnection() as java.net.HttpURLConnection).apply {
-                requestMethod = "POST"
-                connectTimeout = 8000
-                readTimeout = 8000
-                doOutput = true
-                setRequestProperty("Authorization", "Basic $authToken")
-                setRequestProperty("Content-Type", "application/json")
-            }
-            val payload = JSONObject().apply {
-                put(
-                    "expression",
-                    "folder=\"$cleanFolder\" OR folder=\"$cleanFolder/*\" OR asset_folder=\"$cleanFolder\" OR asset_folder=\"$cleanFolder/*\" OR public_id:$cleanFolder/* OR tags=\"$cleanFolder\""
-                )
-                put("max_results", 100)
-            }
-            java.io.OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { writer ->
-                writer.write(payload.toString())
-                writer.flush()
-            }
-            if (conn.responseCode in 200..299) {
-                java.io.BufferedReader(java.io.InputStreamReader(conn.inputStream, Charsets.UTF_8)).use {
-                    it.readText()
-                }
-            } else {
-                "{}"
-            }
-        } catch (_: Exception) {
-            "{}"
-        } finally {
-            try {
-                conn?.disconnect()
-            } catch (_: Exception) {}
-        }
+        return NativeMediaDataService.fetchCloudinaryFolderSync(
+            context = context.applicationContext,
+            cloudName = cloudName,
+            apiKey = apiKey,
+            apiSecret = apiSecret,
+            folder = folder
+        )
+    }
+
+    @JavascriptInterface
+    fun getNativePref(key: String): String {
+        val cleanKey = key.trim()
+        if (cleanKey.isEmpty()) return ""
+        return context.applicationContext
+            .getSharedPreferences("kashish_native_kv_store", Context.MODE_PRIVATE)
+            .getString(cleanKey, "") ?: ""
+    }
+
+    @JavascriptInterface
+    fun setNativePref(key: String, value: String) {
+        val cleanKey = key.trim()
+        if (cleanKey.isEmpty()) return
+        context.applicationContext
+            .getSharedPreferences("kashish_native_kv_store", Context.MODE_PRIVATE)
+            .edit()
+            .putString(cleanKey, value)
+            .apply()
+    }
+
+    @JavascriptInterface
+    fun getNativeCacheStatsJson(): String {
+        val appCtx = context.applicationContext
+        return JSONObject().apply {
+            put("audioCacheMb", Math.round(NativeMusicPlayerEngine.getAudioCacheSizeMb(appCtx) * 10.0) / 10.0)
+            put("artCacheMb", Math.round(LocalBundleAssetInterceptor.getArtCacheSizeMb(appCtx) * 10.0) / 10.0)
+            put("apiCacheMb", Math.round(NativeMediaDataService.getApiCacheSizeMb(appCtx) * 10.0) / 10.0)
+            put("bundledFrontend", LocalBundleAssetInterceptor.hasBundledFrontend(appCtx))
+        }.toString()
+    }
+
+    @JavascriptInterface
+    fun clearNativeCaches() {
+        NativeMediaDataService.clearAllNativeCaches(context.applicationContext)
     }
 }
 

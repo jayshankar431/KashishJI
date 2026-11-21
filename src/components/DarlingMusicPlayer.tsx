@@ -58,6 +58,7 @@ import {
   RELATED_MOOD_CHIPS,
   recordTrackPlayEvent,
   recordTrackListenDuration,
+  getVibeMatchedQuickPicks,
 } from '../services/musicDiscoveryData';
 import {
   YouTubeTrack,
@@ -81,9 +82,16 @@ import {
   normalizeSquareThumbnail,
   getHighResThumbnailUrl,
   getInstantSuggestions,
+  getSuggestedSongsForQuery,
   fetchYouTubeSuggestions,
 } from '../services/youtubeSearch';
-import { triggerHaptic, showNativeToast, logNativeActivity } from '../androidBridge';
+import {
+  triggerHaptic,
+  showNativeToast,
+  logNativeActivity,
+  hasNativeExoPlayer,
+  fetchNativeLyricsAsync,
+} from '../androidBridge';
 import type { NavTab } from './Navbar';
 
 export interface EqBandSettings {
@@ -495,10 +503,24 @@ function computeEqLoudnessMultiplier(bands: EqBandSettings): number {
   return Math.max(0.45, 0.8 + (weightedDb / 12) * 0.35);
 }
 
-function applyEqualizerToWebAudio(bands: EqBandSettings): boolean {
+function applyEqualizerToWebAudio(bands: EqBandSettings, presetName = 'Custom'): boolean {
+  try {
+    if (typeof window !== 'undefined' && typeof window.AndroidApp?.setEqualizerBands === 'function') {
+      window.AndroidApp.setEqualizerBands(
+        Math.round(bands.bass),
+        Math.round(bands.mid),
+        Math.round(bands.treble),
+        presetName
+      );
+    }
+  } catch {}
+
   const graph = ensureWebAudioEqGraph();
   if (!graph) return false;
   try {
+    if (graph.ctx.state === 'suspended') {
+      graph.ctx.resume().catch(() => {});
+    }
     const now = graph.ctx.currentTime;
     graph.bassFilter.gain.setTargetAtTime(bands.bass, now, 0.015);
     graph.midFilter.gain.setTargetAtTime(bands.mid, now, 0.015);
@@ -1014,6 +1036,28 @@ async function fetchTrackLyrics(
     .split('-')[0]
     .trim();
   const primaryArtist = (track.artist || '').split(',')[0].split('&')[0].trim();
+
+  // 1. On Android APK, use native Kotlin 30-day disk-cached LRCLIB fetcher (instant on repeat plays)
+  try {
+    const nativeHit = await fetchNativeLyricsAsync(
+      cleanTitle || track.title,
+      primaryArtist,
+      signal
+    );
+    if (nativeHit && (nativeHit.syncedLyrics || nativeHit.plainLyrics)) {
+      const syncedLines = nativeHit.syncedLyrics ? parseLrcLyrics(nativeHit.syncedLyrics) : [];
+      const plainLyrics =
+        nativeHit.plainLyrics || syncedLines.map((l) => l.text).join('\n') || null;
+      const result: TrackLyricsData = {
+        videoId: track.videoId,
+        syncedLines,
+        plainLyrics,
+        source: 'LRCLIB (Cached)',
+      };
+      lyricsCache.set(track.videoId, result);
+      return result;
+    }
+  } catch {}
 
   try {
     const searchUrl = `https://lrclib.net/api/search?track_name=${encodeURIComponent(
@@ -1549,9 +1593,16 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     };
   }, []);
 
-  // Active playback backend: 'yt' (YouTube IFrame Player with top-level MediaSession audio carrier)
-  const playbackBackendRef = useRef<'native' | 'yt'>('yt');
+  // Active playback backend: 'exo' (Native Android Media3 ExoPlayer), 'native' (Web HTML5 Audio), or 'yt' (YouTube IFrame)
+  const playbackBackendRef = useRef<'native' | 'yt' | 'exo'>('yt');
   const loadedNativeVideoIdRef = useRef<string | null>(null);
+  const loadedExoVideoIdRef = useRef<string | null>(null);
+  const exoMetricsRef = useRef<{ videoId: string; currentTime: number; duration: number; state: string }>({
+    videoId: '',
+    currentTime: 0,
+    duration: 0,
+    state: 'idle',
+  });
 
   // Official YouTube IFrame Player API singleton refs
   const playerRef = useRef<any>(null);
@@ -1607,10 +1658,10 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     isHighQualityRef.current = isHighQuality;
   }, [isHighQuality]);
 
-  // Apply 3-Band Equalizer to Web Audio API graph and scale YouTube IFrame preamp contour immediately
+  // Apply 3-Band Equalizer to Android Hardware DSP, Web Audio API graph, and YouTube IFrame preamp contour immediately
   useEffect(() => {
     eqBandsRef.current = eqBands;
-    applyEqualizerToWebAudio(eqBands);
+    applyEqualizerToWebAudio(eqBands, activeEqPreset);
     if (playerRef.current && isPlayerReadyRef.current && !isMutedRef.current) {
       try {
         const eqMult = computeEqLoudnessMultiplier(eqBands);
@@ -1628,12 +1679,18 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     }
   }, [eqBands, activeEqPreset]);
 
+  const switchActiveTrackToWebAudioEqRef = useRef<() => void>(() => {});
+
   const handleSelectEqPreset = useCallback((presetName: string) => {
     triggerHaptic(15);
     ensureWebAudioEqGraph();
     const presetBands = EQ_PRESETS[presetName] || EQ_PRESETS.Flat;
     setActiveEqPreset(presetName);
     setEqBands({ ...presetBands });
+    applyEqualizerToWebAudio(presetBands, presetName);
+    if (presetName !== 'Flat') {
+      switchActiveTrackToWebAudioEqRef.current();
+    }
     showNativeToast(`Equalizer: ${presetName} active 🎚️`);
   }, []);
 
@@ -1641,7 +1698,12 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     ensureWebAudioEqGraph();
     const clamped = Math.max(-12, Math.min(12, Math.round(dbValue)));
     setActiveEqPreset('Custom');
-    setEqBands((prev) => ({ ...prev, [band]: clamped }));
+    setEqBands((prev) => {
+      const next = { ...prev, [band]: clamped };
+      applyEqualizerToWebAudio(next, 'Custom');
+      return next;
+    });
+    switchActiveTrackToWebAudioEqRef.current();
   }, []);
 
   // Toggle Low Quality (Data Saver, glow OFF) vs High Quality (HD Audio/Video, glow ON)
@@ -1734,6 +1796,13 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
         loadedNativeVideoIdRef.current = null;
       } catch {}
     }
+    if (hasNativeExoPlayer()) {
+      try {
+        window.AndroidApp?.nativeStopTrack?.();
+        loadedExoVideoIdRef.current = null;
+        exoMetricsRef.current = { videoId: '', currentTime: 0, duration: 0, state: 'idle' };
+      } catch {}
+    }
     if (playerRef.current && isPlayerReadyRef.current) {
       try {
         playerRef.current.stopVideo?.();
@@ -1801,6 +1870,15 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
 
   // Unified playback metrics getter for progress scrubber and Media Session
   const getPlaybackMetrics = useCallback((): { currentTime: number; duration: number } => {
+    if (playbackBackendRef.current === 'exo') {
+      const m = exoMetricsRef.current;
+      const cur = Number.isFinite(m.currentTime) ? m.currentTime : 0;
+      const dur =
+        Number.isFinite(m.duration) && m.duration > 0
+          ? m.duration
+          : currentTrackRef.current?.durationSeconds || 0;
+      return { currentTime: cur, duration: dur };
+    }
     if (playbackBackendRef.current === 'native') {
       const nativeAudio = getTopLevelNativeAudioElement();
       if (nativeAudio && loadedNativeVideoIdRef.current) {
@@ -1823,12 +1901,23 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     return { currentTime: 0, duration: currentTrackRef.current?.durationSeconds || 0 };
   }, []);
 
-  // Seek handler for both Native HTML5 <audio> and YouTube IFrame Player API + MediaSession position sync
+  // Seek handler for Native ExoPlayer, HTML5 <audio>, and YouTube IFrame Player API + MediaSession position sync
   const handleSeekTo = useCallback((seconds: number) => {
     const safeSec = Math.max(0, seconds);
     let effectiveDur = currentTrackRef.current?.durationSeconds || 0;
 
-    if (playbackBackendRef.current === 'native') {
+    if (playbackBackendRef.current === 'exo') {
+      try {
+        window.AndroidApp?.nativeSeekTrack?.(safeSec);
+        exoMetricsRef.current.currentTime = safeSec;
+        if (exoMetricsRef.current.duration > 0) {
+          effectiveDur = exoMetricsRef.current.duration;
+        }
+        if (effectiveDur > 0) {
+          updateMediaSessionPosition(safeSec, effectiveDur);
+        }
+      } catch {}
+    } else if (playbackBackendRef.current === 'native') {
       const nativeAudio = getTopLevelNativeAudioElement();
       if (nativeAudio && loadedNativeVideoIdRef.current) {
         try {
@@ -2071,6 +2160,12 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     nativeNotifiedPlayingKeyRef.current = null;
     setIsPlaying(false);
     setIsBuffering(false);
+
+    if (hasNativeExoPlayer()) {
+      try {
+        window.AndroidApp?.nativePauseTrack?.();
+      } catch {}
+    }
 
     const nativeAudio = getTopLevelNativeAudioElement();
     if (nativeAudio && !nativeAudio.paused) {
@@ -2420,6 +2515,11 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
   const startYouTubeIframePlayback = useCallback(
     (track: YouTubeTrack, startSeconds = 0) => {
       playbackBackendRef.current = 'yt';
+      if (hasNativeExoPlayer()) {
+        try {
+          window.AndroidApp?.nativePauseTrack?.();
+        } catch {}
+      }
       const nativeAudio = getTopLevelNativeAudioElement();
       if (nativeAudio && !nativeAudio.paused) {
         try {
@@ -2514,6 +2614,176 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     [ensureYouTubePlayer]
   );
 
+  // Primary Native Media3 ExoPlayer (on Android APK Song Mode) or Web HTML5 <audio> + BiquadFilterNode EQ playback
+  // (Automatically falls back to YouTube IFrame Player for Video Mode or if direct stream is unavailable)
+  const startNativeAudioStreamWithEqFallback = useCallback(
+    (track: YouTubeTrack, startSeconds = 0) => {
+      const bands = eqBandsRef.current;
+
+      // 1. On Android APK in Song Mode: use Native Media3 ExoPlayer (150MB disk cache, 60s anti-stutter buffer, real hardware EQ)
+      if (hasNativeExoPlayer() && !showVideoViewportRef.current) {
+        const playableVideoId = getKnownPlayableVideoId(track.videoId);
+        if (playerRef.current && isPlayerReadyRef.current) {
+          try {
+            playerRef.current.pauseVideo?.();
+          } catch {}
+        }
+        const nativeAudio = getTopLevelNativeAudioElement();
+        if (nativeAudio && !nativeAudio.paused) {
+          try {
+            nativeAudio.pause();
+          } catch {}
+        }
+        const carrier = getTopLevelAudioCarrier();
+        if (carrier && !carrier.paused) {
+          try {
+            carrier.pause();
+          } catch {}
+        }
+
+        playbackBackendRef.current = 'exo';
+        loadedExoVideoIdRef.current = playableVideoId;
+        exoMetricsRef.current = {
+          videoId: playableVideoId,
+          currentTime: startSeconds > 0 ? startSeconds : 0,
+          duration: track.durationSeconds || 0,
+          state: 'buffering',
+        };
+
+        try {
+          const targetVol = isMutedRef.current ? 0 : Math.max(0, Math.min(1, volumeRef.current / 100));
+          window.AndroidApp?.nativeSetVolume?.(targetVol);
+          window.AndroidApp?.setEqualizerBands?.(bands.bass, bands.mid, bands.treble, 'Custom');
+          const thumbUrl = normalizeSquareThumbnail(track.thumbnail, track.videoId);
+          window.AndroidApp?.nativePlayTrack?.(
+            playableVideoId,
+            track.title,
+            track.artist,
+            thumbUrl,
+            startSeconds > 0 ? startSeconds : 0
+          );
+        } catch {
+          startYouTubeIframePlayback(track, startSeconds);
+          return;
+        }
+
+        if (playbackWatchdogTimerRef.current) {
+          window.clearTimeout(playbackWatchdogTimerRef.current);
+        }
+        playbackWatchdogTimerRef.current = window.setTimeout(() => {
+          if (
+            playbackBackendRef.current === 'exo' &&
+            userWantPlayingRef.current &&
+            currentTrackRef.current?.videoId === track.videoId &&
+            !firstAudioReachedRef.current &&
+            exoMetricsRef.current.state !== 'playing'
+          ) {
+            try {
+              window.AndroidApp?.nativePauseTrack?.();
+            } catch {}
+            startYouTubeIframePlayback(track, startSeconds);
+          }
+        }, 7000);
+        return;
+      }
+
+      const hasAndroidHardwareEq =
+        typeof window !== 'undefined' && typeof window.AndroidApp?.setEqualizerBands === 'function';
+      const isStaticFirebaseHost =
+        typeof window !== 'undefined' &&
+        (window.location.hostname.endsWith('.web.app') ||
+          window.location.hostname.endsWith('.firebaseapp.com'));
+      const isEqNonFlat = bands.bass !== 0 || bands.mid !== 0 || bands.treble !== 0;
+
+      // Use YouTube IFrame when Video mode is visible, or on older Android APKs without ExoPlayer,
+      // or when EQ is Flat, or on static hosts without `/api/ytmusic/stream`
+      if (showVideoViewportRef.current || hasAndroidHardwareEq || !isEqNonFlat || isStaticFirebaseHost) {
+        startYouTubeIframePlayback(track, startSeconds);
+        return;
+      }
+
+      const nativeAudio = getTopLevelNativeAudioElement();
+      if (!nativeAudio) {
+        startYouTubeIframePlayback(track, startSeconds);
+        return;
+      }
+
+      ensureWebAudioEqGraph();
+      applyEqualizerToWebAudio(bands);
+
+      if (playerRef.current && isPlayerReadyRef.current) {
+        try {
+          playerRef.current.pauseVideo?.();
+        } catch {}
+      }
+
+      const playableVideoId = getKnownPlayableVideoId(track.videoId);
+      playbackBackendRef.current = 'native';
+      loadedNativeVideoIdRef.current = playableVideoId;
+      nativeAudio.volume = isMutedRef.current ? 0 : Math.max(0, Math.min(1, volumeRef.current / 100));
+      nativeAudio.muted = isMutedRef.current;
+
+      const streamUrl = `/api/ytmusic/stream?videoId=${encodeURIComponent(playableVideoId)}`;
+      if (nativeAudio.src !== new URL(streamUrl, window.location.origin).href) {
+        nativeAudio.src = streamUrl;
+      }
+
+      const applyStartSeek = () => {
+        if (startSeconds > 0) {
+          try {
+            nativeAudio.currentTime = startSeconds;
+          } catch {}
+        }
+      };
+
+      if (nativeAudio.readyState >= 1) {
+        applyStartSeek();
+      } else {
+        nativeAudio.addEventListener('loadedmetadata', applyStartSeek, { once: true });
+      }
+
+      if (playbackWatchdogTimerRef.current) {
+        window.clearTimeout(playbackWatchdogTimerRef.current);
+      }
+      playbackWatchdogTimerRef.current = window.setTimeout(() => {
+        if (
+          playbackBackendRef.current === 'native' &&
+          userWantPlayingRef.current &&
+          currentTrackRef.current?.videoId === track.videoId &&
+          nativeAudio.paused
+        ) {
+          startYouTubeIframePlayback(track, startSeconds);
+        }
+      }, 2800);
+
+      nativeAudio.play().catch(() => {
+        if (userWantPlayingRef.current && currentTrackRef.current?.videoId === track.videoId) {
+          startYouTubeIframePlayback(track, startSeconds);
+        }
+      });
+    },
+    [startYouTubeIframePlayback]
+  );
+
+  useEffect(() => {
+    switchActiveTrackToWebAudioEqRef.current = () => {
+      const cur = currentTrackRef.current;
+      if (!cur || !userWantPlayingRef.current || showVideoViewportRef.current) return;
+      if (playbackBackendRef.current === 'yt') {
+        const hasAndroidHardwareEq =
+          typeof window !== 'undefined' && typeof window.AndroidApp?.setEqualizerBands === 'function';
+        const isStaticFirebaseHost =
+          typeof window !== 'undefined' &&
+          (window.location.hostname.endsWith('.web.app') ||
+            window.location.hostname.endsWith('.firebaseapp.com'));
+        if (!hasAndroidHardwareEq && !isStaticFirebaseHost) {
+          const { currentTime } = getPlaybackMetrics();
+          startNativeAudioStreamWithEqFallback(cur, currentTime);
+        }
+      }
+    };
+  }, [getPlaybackMetrics, startNativeAudioStreamWithEqFallback]);
+
   // Bind event listeners to the singleton top-level <audio> element once
   useEffect(() => {
     const nativeAudio = getTopLevelNativeAudioElement();
@@ -2601,6 +2871,76 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     };
   }, [applyMediaMetadata, startYouTubeIframePlayback]);
 
+  // Listen for Native Android Media3 ExoPlayer state, position, ended & fallback error events
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onNativeAudioState = (e: Event) => {
+      if (playbackBackendRef.current !== 'exo') return;
+      const detail = (e as CustomEvent)?.detail;
+      if (!detail || typeof detail !== 'object') return;
+      const vid = String(detail.videoId || '');
+      if (vid && loadedExoVideoIdRef.current && vid !== loadedExoVideoIdRef.current) {
+        return;
+      }
+      const nextState = String(detail.state || 'idle');
+      const curSec = Number(detail.currentTime);
+      const durSec = Number(detail.duration);
+
+      exoMetricsRef.current = {
+        videoId: vid || exoMetricsRef.current.videoId,
+        currentTime: Number.isFinite(curSec) ? curSec : exoMetricsRef.current.currentTime,
+        duration:
+          Number.isFinite(durSec) && durSec > 0 ? durSec : exoMetricsRef.current.duration,
+        state: nextState,
+      };
+
+      if (nextState === 'playing') {
+        if (playbackWatchdogTimerRef.current) {
+          window.clearTimeout(playbackWatchdogTimerRef.current);
+          playbackWatchdogTimerRef.current = null;
+        }
+        if (!firstAudioReachedRef.current) {
+          firstAudioReachedRef.current = true;
+          if (tapTimestampRef.current !== null) {
+            const firstAudioMs = Math.round(performance.now() - tapTimestampRef.current);
+            if (activeTelemetryEntryRef.current) {
+              activeTelemetryEntryRef.current.tapToFirstAudioMs = firstAudioMs;
+            }
+          }
+        }
+        if (sharedCarrierAudio && !sharedCarrierAudio.paused) {
+          try {
+            sharedCarrierAudio.pause();
+          } catch {}
+        }
+        setIsPlaying(true);
+        setIsBuffering(false);
+        setStatusNotice(null);
+      } else if (nextState === 'buffering') {
+        if (userWantPlayingRef.current) {
+          setIsBuffering(true);
+        }
+      } else if (nextState === 'paused') {
+        setIsPlaying(false);
+        setIsBuffering(false);
+      } else if (nextState === 'ended') {
+        setIsPlaying(false);
+        setIsBuffering(false);
+        playNextTrackRef.current();
+      } else if (nextState === 'error') {
+        const cur = currentTrackRef.current;
+        if (cur && userWantPlayingRef.current) {
+          startYouTubeIframePlayback(cur, exoMetricsRef.current.currentTime || 0);
+        }
+      }
+    };
+
+    window.addEventListener('kashish-native-audio-state', onNativeAudioState);
+    return () => {
+      window.removeEventListener('kashish-native-audio-state', onNativeAudioState);
+    };
+  }, [startYouTubeIframePlayback]);
+
   const handleSelectTrack = useCallback(
     (
       incomingTrack: YouTubeTrack,
@@ -2668,8 +3008,29 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
 
       const resolvedPlayableId = getKnownPlayableVideoId(unifiedTrack.videoId);
 
-      // If tapping the exact song that is already loaded in the player, toggle play/pause immediately
+      // If tapping the exact song that is already loaded in Native ExoPlayer, toggle play/pause immediately
       if (
+        playbackBackendRef.current === 'exo' &&
+        hasNativeExoPlayer() &&
+        currentTrackRef.current?.videoId === unifiedTrack.videoId &&
+        (loadedExoVideoIdRef.current === unifiedTrack.videoId ||
+          loadedExoVideoIdRef.current === resolvedPlayableId)
+      ) {
+        if (exoMetricsRef.current.state === 'playing') {
+          pausePlayback();
+        } else {
+          try {
+            window.AndroidApp?.nativeResumeTrack?.();
+            setIsPlaying(true);
+            setIsBuffering(false);
+          } catch {}
+        }
+        return;
+      }
+
+      // If tapping the exact song that is already loaded in the YouTube player, toggle play/pause immediately
+      if (
+        playbackBackendRef.current === 'yt' &&
         currentTrackRef.current?.videoId === unifiedTrack.videoId &&
         (loadedVideoIdInPlayerRef.current === unifiedTrack.videoId ||
           loadedVideoIdInPlayerRef.current === resolvedPlayableId) &&
@@ -2739,14 +3100,14 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       nativeNotifiedPlayingKeyRef.current = null;
       applyMediaMetadata(unifiedTrack, true);
 
-      // Start playback synchronously inside the user's click/tap gesture
-      startYouTubeIframePlayback(unifiedTrack, 0);
+      // Start playback synchronously inside the user's click/tap gesture (uses Web Audio EQ stream when Equalizer is active on Web, or YouTube IFrame + Android Hardware EQ)
+      startNativeAudioStreamWithEqFallback(unifiedTrack, 0);
 
       void logNativeActivity(
         `🎵 ${recipientName} played song: <b>${unifiedTrack.title}</b> (${unifiedTrack.artist})`
       );
     },
-    [applyMediaMetadata, pausePlayback, recipientName, startYouTubeIframePlayback]
+    [applyMediaMetadata, pausePlayback, recipientName, startNativeAudioStreamWithEqFallback]
   );
 
   // Resume helper (used by UI and Media Session)
@@ -2761,6 +3122,36 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     primeAndPlayAudioCarrier();
 
     const playableId = getKnownPlayableVideoId(cur.videoId);
+    if (playbackBackendRef.current === 'exo' && hasNativeExoPlayer()) {
+      if (
+        loadedExoVideoIdRef.current === cur.videoId ||
+        loadedExoVideoIdRef.current === playableId
+      ) {
+        try {
+          window.AndroidApp?.nativeResumeTrack?.();
+          setIsPlaying(true);
+          return;
+        } catch {}
+      }
+    }
+
+    if (playbackBackendRef.current === 'native') {
+      const nativeAudio = getTopLevelNativeAudioElement();
+      if (
+        nativeAudio &&
+        (loadedNativeVideoIdRef.current === cur.videoId ||
+          loadedNativeVideoIdRef.current === playableId)
+      ) {
+        ensureWebAudioEqGraph();
+        applyEqualizerToWebAudio(eqBandsRef.current);
+        nativeAudio.play().catch(() => {
+          startYouTubeIframePlayback(cur, nativeAudio.currentTime || 0);
+        });
+        setIsPlaying(true);
+        return;
+      }
+    }
+
     if (
       playerRef.current &&
       isPlayerReadyRef.current &&
@@ -2775,7 +3166,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     }
 
     handleSelectTrack(cur);
-  }, [applyMediaMetadata, handleSelectTrack]);
+  }, [applyMediaMetadata, handleSelectTrack, startYouTubeIframePlayback]);
 
   const getActivePlaybackQueue = useCallback((): YouTubeTrack[] => {
     const cur = currentTrackRef.current;
@@ -2989,6 +3380,11 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     const handleVisibilityChange = () => {
       if (!userWantPlayingRef.current || !currentTrackRef.current) return;
 
+      if (playbackBackendRef.current === 'exo') {
+        // Native Media3 ExoPlayer handles background playback in hardware with 0 WebView involvement
+        return;
+      }
+
       if (playbackBackendRef.current === 'native') {
         const nativeAudio = getTopLevelNativeAudioElement();
         if (nativeAudio && nativeAudio.paused && !nativeAudio.ended) {
@@ -3060,6 +3456,11 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     setVolume(clamped);
     volumeRef.current = clamped;
     setIsMuted(clamped === 0);
+    if (hasNativeExoPlayer()) {
+      try {
+        window.AndroidApp?.nativeSetVolume?.(clamped / 100);
+      } catch {}
+    }
     const nativeAudio = getTopLevelNativeAudioElement();
     if (nativeAudio) {
       nativeAudio.volume = clamped / 100;
@@ -3181,6 +3582,12 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     triggerHaptic(15);
     const nextMuted = !isMuted;
     setIsMuted(nextMuted);
+    if (hasNativeExoPlayer()) {
+      try {
+        const nextVol = nextMuted ? 0 : (volume === 0 ? 80 : volume) / 100;
+        window.AndroidApp?.nativeSetVolume?.(nextVol);
+      } catch {}
+    }
     const nativeAudio = getTopLevelNativeAudioElement();
     if (nativeAudio) {
       nativeAudio.muted = nextMuted;
@@ -3203,12 +3610,39 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     }
   };
 
-  // Toggle video viewport seamlessly without interrupting the active YouTube IFrame Player
+  // Toggle video viewport seamlessly without interrupting playback (hands off between ExoPlayer <-> YouTube IFrame)
   const handleToggleVideoViewport = () => {
     triggerHaptic(15);
     const nextShow = !showVideoViewport;
     setShowVideoViewport(nextShow);
     showVideoViewportRef.current = nextShow;
+
+    if (
+      nextShow &&
+      (playbackBackendRef.current === 'native' || playbackBackendRef.current === 'exo') &&
+      currentTrackRef.current
+    ) {
+      const { currentTime } = getPlaybackMetrics();
+      if (playbackBackendRef.current === 'exo') {
+        try {
+          window.AndroidApp?.nativePauseTrack?.();
+        } catch {}
+      }
+      startYouTubeIframePlayback(currentTrackRef.current, currentTime);
+      return;
+    }
+
+    if (
+      !nextShow &&
+      hasNativeExoPlayer() &&
+      playbackBackendRef.current === 'yt' &&
+      currentTrackRef.current &&
+      userWantPlayingRef.current
+    ) {
+      const { currentTime } = getPlaybackMetrics();
+      startNativeAudioStreamWithEqFallback(currentTrackRef.current, currentTime);
+      return;
+    }
 
     if (playerRef.current && isPlayerReadyRef.current) {
       try {
@@ -3836,13 +4270,14 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
   // Mood Chips Filtering & Dynamic YouTube Music Catalog Fetch for Home Page
   const HOME_MOOD_CHIPS = [
     { id: 'All', label: 'All', query: '' },
-    { id: 'Relax', label: 'Relax', query: 'Relaxing chill hindi acoustic lofi songs' },
-    { id: 'Workout', label: 'Workout', query: 'Energetic bollywood punjabi workout gym hits' },
-    { id: 'Focus', label: 'Focus', query: 'Deep focus study instrumental lofi chill beats' },
-    { id: 'Party', label: 'Party', query: 'Bollywood punjabi party dance hits songs' },
-    { id: 'Romantic', label: 'Romantic', query: 'Romantic bollywood love songs Arijit Singh' },
-    { id: 'Lo-Fi', label: 'Lo-Fi', query: 'Bollywood lofi chill slowed reverb songs' },
-    { id: 'Punjabi', label: 'Punjabi', query: 'Top punjabi hits Diljit Dosanjh AP Dhillon Karan Aujla' },
+    { id: 'Romantic', label: 'Romantic', query: 'Romantic bollywood love songs Arijit Singh Pritam' },
+    { id: 'Relax', label: 'Relax', query: 'Relaxing soulful hindi acoustic melody songs' },
+    { id: 'Sad', label: 'Sad', query: 'Sad emotional hindi heartbreak songs Arijit Singh' },
+    { id: 'Lo-Fi', label: 'Lo-Fi', query: 'Bollywood lofi chill slowed reverb hindi songs' },
+    { id: 'Punjabi', label: 'Punjabi', query: 'Top punjabi hit songs Diljit Dosanjh Karan Aujla AP Dhillon' },
+    { id: 'Party', label: 'Party', query: 'Bollywood punjabi party dance chartbuster songs' },
+    { id: 'Workout', label: 'Workout', query: 'High energy bollywood punjabi workout motivation songs' },
+    { id: 'Focus', label: 'Focus', query: 'Peaceful sufi acoustic hindi focus songs' },
   ];
 
   useEffect(() => {
@@ -3879,50 +4314,35 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     listenAgain: YouTubeTrack[];
     quickPicks: YouTubeTrack[];
   } => {
+    const activeSeedTrack =
+      currentTrack ||
+      recentPlayedTracks[0] ||
+      QUICK_PICKS_TRACKS[0];
+
+    const fetchedForMood = moodTracksCache[homeMood] || [];
+    const vibeQuickPicks = getVibeMatchedQuickPicks(
+      homeMood,
+      activeSeedTrack,
+      fetchedForMood,
+      userId
+    );
+
     if (homeMood === 'All') {
       const baseListenAgain =
         recentPlayedTracks.length > 0
           ? recentPlayedTracks
-          : QUICK_PICKS_TRACKS.slice(0, 12);
+          : vibeQuickPicks.slice(0, 12);
       return {
         listenAgain: baseListenAgain,
-        quickPicks: ALL_DISCOVERY_TRACKS.slice(0, 20),
+        quickPicks: vibeQuickPicks,
       };
     }
 
-    const fetched = moodTracksCache[homeMood] || [];
-    const moodLower = homeMood.toLowerCase();
-    const localMatches = ALL_DISCOVERY_TRACKS.filter((t) => {
-      const hay = `${t.title} ${t.artist} ${t.album || ''}`.toLowerCase();
-      if (moodLower === 'relax') {
-        return /apna|kesariya|tum hi ho|heeriye|raataan|satranga|agar tum|kabira|shayad|tera yaar|channa|hawayein/i.test(hay);
-      }
-      if (moodLower === 'workout' || moodLower === 'party') {
-        return /chaleya|lover|diljit|ap dhillon|karan|badshah|brown munde|excuses|softly|tauba|illuminati|kala chashma/i.test(hay);
-      }
-      if (moodLower === 'focus' || moodLower === 'lo-fi') {
-        return /pehle bhi|tu hai kahan|husn|anuv|prateek|local train|pasoori|iraaday|faasle|gul/i.test(hay);
-      }
-      if (moodLower === 'punjabi') {
-        return /diljit|ap dhillon|karan|shubh|sidhu|punjabi|lover|softly|excuses|with you|hass hass/i.test(hay);
-      }
-      return true;
-    });
-
-    const combined: YouTubeTrack[] = [];
-    const seen = new Set<string>();
-    for (const item of [...fetched, ...localMatches, ...QUICK_PICKS_TRACKS]) {
-      if (!seen.has(item.videoId)) {
-        seen.add(item.videoId);
-        combined.push(item);
-      }
-    }
-
     return {
-      listenAgain: combined.slice(0, 10),
-      quickPicks: combined.slice(2, 22),
+      listenAgain: vibeQuickPicks.slice(0, 10),
+      quickPicks: vibeQuickPicks,
     };
-  }, [homeMood, moodTracksCache, recentPlayedTracks]);
+  }, [currentTrack, homeMood, moodTracksCache, recentPlayedTracks, userId]);
 
   const isMelodiesPage = activeTab === 'melodies';
   const filteredPool =
@@ -4696,85 +5116,127 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
             </div>
           </header>
 
-          {/* In-Flow Live Search Suggestions Panel (anchored directly below search input, pushes results heading down cleanly) */}
-          {isSearchFocused && searchSuggestions.length > 0 && (
-            <div className="px-2.5 sm:px-5 pb-2.5 pt-0.5 bg-black/95 border-t border-white/10">
-              <div
-                aria-label="Search suggestions"
-                className="max-w-xl mx-auto rounded-xl bg-[#161616] border border-white/15 shadow-lg overflow-hidden"
-              >
-                <div className="flex items-center justify-between px-3.5 py-1.5 bg-[#1c1c1c] border-b border-white/10 text-[10px] font-bold uppercase tracking-wider text-neutral-400">
-                  <span>{searchQuery.trim() ? 'Live Suggestions' : 'Recent & Trending'}</span>
-                  <button
-                    type="button"
-                    tabIndex={-1}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      setIsSearchFocused(false);
-                      searchInputRef.current?.blur();
-                    }}
-                    className="text-neutral-300 hover:text-white cursor-pointer"
-                  >
-                    Close
-                  </button>
-                </div>
-                <div className="max-h-[28vh] overflow-y-auto overscroll-contain divide-y divide-white/5">
-                  {searchSuggestions.slice(0, 6).map((suggestion) => {
-                    const isRecentItem = recentSearches.some(
-                      (r) => r.toLowerCase() === suggestion.toLowerCase()
-                    );
-                    return (
+          {/* In-Flow Live Song Suggestions Panel (displays Playable Songs with 1:1 cover art + clean song queries) */}
+          {isSearchFocused && (searchSuggestions.length > 0 || tracks.length > 0) && (() => {
+            const suggestedSongItems = getSuggestedSongsForQuery(
+              searchQuery,
+              [...tracks, ...ALL_DISCOVERY_TRACKS],
+              4
+            );
+            return (
+              <div className="px-2.5 sm:px-5 pb-2.5 pt-0.5 bg-black/95 border-t border-white/10">
+                <div
+                  aria-label="Search suggestions"
+                  className="max-w-xl mx-auto rounded-xl bg-[#161616] border border-white/15 shadow-lg overflow-hidden"
+                >
+                  <div className="flex items-center justify-between px-3.5 py-1.5 bg-[#1c1c1c] border-b border-white/10 text-[10px] font-bold uppercase tracking-wider text-neutral-400">
+                    <span>
+                      {searchQuery.trim() ? 'Suggested Songs & Searches' : 'Top Songs & Recent Searches'}
+                    </span>
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        setIsSearchFocused(false);
+                        searchInputRef.current?.blur();
+                      }}
+                      className="text-neutral-300 hover:text-white cursor-pointer"
+                    >
+                      Close
+                    </button>
+                  </div>
+                  <div className="max-h-[34vh] overflow-y-auto overscroll-contain divide-y divide-white/5">
+                    {suggestedSongItems.map((song) => (
                       <div
-                        key={suggestion}
+                        key={`sug-song-${song.videoId}`}
                         tabIndex={-1}
                         onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => handleSelectSuggestion(suggestion)}
-                        className="px-3.5 py-2 flex items-center justify-between gap-2 text-xs sm:text-sm text-white hover:bg-white/10 cursor-pointer transition-colors"
+                        onClick={() => {
+                          setIsSearchFocused(false);
+                          searchInputRef.current?.blur();
+                          handleSelectTrack(song, suggestedSongItems, 'SUGGESTED SONGS');
+                        }}
+                        className="px-3.5 py-2 flex items-center justify-between gap-2.5 text-xs sm:text-sm text-white hover:bg-white/10 cursor-pointer transition-colors"
                       >
                         <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                          {isRecentItem ? (
-                            <Clock className="w-3.5 h-3.5 text-[#ff0033] shrink-0" />
-                          ) : (
-                            <Search className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
-                          )}
-                          <span className="truncate">{suggestion}</span>
+                          <img
+                            src={normalizeSquareThumbnail(song.thumbnail, song.videoId)}
+                            alt={song.title}
+                            className="w-9 h-9 rounded-lg object-cover shrink-0 bg-neutral-800 border border-white/10"
+                            loading="lazy"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs sm:text-sm font-semibold text-white truncate">
+                              {song.title}
+                            </p>
+                            <p className="text-[11px] text-neutral-400 truncate">
+                              Song • {song.artist}
+                            </p>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-1 shrink-0">
-                          {isRecentItem && (
+                        <span className="px-2 py-0.5 rounded-full bg-[#ff0033]/20 border border-[#ff0033]/40 text-[10px] font-bold text-[#ff4d70] shrink-0">
+                          Play Song
+                        </span>
+                      </div>
+                    ))}
+                    {searchSuggestions.slice(0, 5).map((suggestion) => {
+                      const isRecentItem = recentSearches.some(
+                        (r) => r.toLowerCase() === suggestion.toLowerCase()
+                      );
+                      return (
+                        <div
+                          key={suggestion}
+                          tabIndex={-1}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => handleSelectSuggestion(suggestion)}
+                          className="px-3.5 py-2 flex items-center justify-between gap-2 text-xs sm:text-sm text-white hover:bg-white/10 cursor-pointer transition-colors"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                            {isRecentItem ? (
+                              <Clock className="w-3.5 h-3.5 text-[#ff0033] shrink-0" />
+                            ) : (
+                              <Music className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                            )}
+                            <span className="truncate">{suggestion}</span>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            {isRecentItem && (
+                              <button
+                                type="button"
+                                tabIndex={-1}
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={(e) => handleRemoveRecentQuery(e, suggestion)}
+                                className="p-1 rounded-full text-neutral-400 hover:text-white"
+                                aria-label={`Remove ${suggestion}`}
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                             <button
                               type="button"
                               tabIndex={-1}
                               onMouseDown={(e) => e.preventDefault()}
-                              onClick={(e) => handleRemoveRecentQuery(e, suggestion)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                triggerHaptic(10);
+                                setSearchQuery(suggestion);
+                                searchInputRef.current?.focus();
+                              }}
                               className="p-1 rounded-full text-neutral-400 hover:text-white"
-                              aria-label={`Remove ${suggestion}`}
+                              title="Fill search bar"
                             >
-                              <X className="w-3.5 h-3.5" />
+                              <ArrowUpLeft className="w-3.5 h-3.5" />
                             </button>
-                          )}
-                          <button
-                            type="button"
-                            tabIndex={-1}
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              triggerHaptic(10);
-                              setSearchQuery(suggestion);
-                              searchInputRef.current?.focus();
-                            }}
-                            className="p-1 rounded-full text-neutral-400 hover:text-white"
-                            title="Fill search bar"
-                          >
-                            <ArrowUpLeft className="w-3.5 h-3.5" />
-                          </button>
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       )}
 
@@ -5227,7 +5689,28 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     </button>
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        triggerHaptic(15);
+                        ensureWebAudioEqGraph();
+                        setIsEqMenuOpen(true);
+                      }}
+                      className={`relative w-9 h-9 rounded-full flex items-center justify-center cursor-pointer transition-colors shrink-0 ${
+                        activeEqPreset !== 'Flat'
+                          ? 'bg-[#ff0033]/25 text-[#ff0033] border border-[#ff0033]/50 shadow-[0_0_10px_rgba(255,0,51,0.35)]'
+                          : 'bg-white/15 hover:bg-white/25 text-white'
+                      }`}
+                      title={`Studio Equalizer (${activeEqPreset})`}
+                      aria-label="Studio Equalizer"
+                    >
+                      <Sliders className="w-4 h-4" />
+                      {activeEqPreset !== 'Flat' && (
+                        <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-[#ff0033] border border-black" />
+                      )}
+                    </button>
+
                     <button
                       type="button"
                       onClick={() => setTrackForPlaylistModal(displayTrack)}
@@ -5883,7 +6366,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       {isMelodiesPage && isCreatePlaylistOpen && (
         <div
           onClick={() => setIsCreatePlaylistOpen(false)}
-          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4"
+          className="fixed inset-0 z-[170] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4"
         >
           <div
             onClick={(e) => e.stopPropagation()}
@@ -5933,7 +6416,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       {isMelodiesPage && trackForPlaylistModal && (
         <div
           onClick={() => setTrackForPlaylistModal(null)}
-          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4"
+          className="fixed inset-0 z-[170] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4"
         >
           <div
             onClick={(e) => e.stopPropagation()}
@@ -6000,7 +6483,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       {isMelodiesPage && isEqMenuOpen && (
         <div
           onClick={() => setIsEqMenuOpen(false)}
-          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4"
+          className="fixed inset-0 z-[170] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4"
         >
           <div
             onClick={(e) => e.stopPropagation()}
@@ -6009,15 +6492,31 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Sliders className="w-4 h-4 text-[#ff0033]" />
-                <h3 className="text-base font-bold text-white">Studio Equalizer</h3>
+                <div>
+                  <h3 className="text-base font-bold text-white leading-tight">Studio Equalizer</h3>
+                  <p className="text-[11px] text-neutral-400">
+                    Active: <span className="text-[#ff0033] font-semibold">{activeEqPreset}</span>
+                  </p>
+                </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setIsEqMenuOpen(false)}
-                className="text-neutral-400 hover:text-white cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-2">
+                {activeEqPreset !== 'Flat' && (
+                  <button
+                    type="button"
+                    onClick={() => handleSelectEqPreset('Flat')}
+                    className="px-2.5 py-1 rounded-full bg-white/10 hover:bg-white/15 text-[11px] font-semibold text-neutral-200 cursor-pointer"
+                  >
+                    Reset
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setIsEqMenuOpen(false)}
+                  className="text-neutral-400 hover:text-white cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
             <div className="flex flex-wrap gap-1.5">
@@ -6073,7 +6572,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       {isMelodiesPage && isSleepMenuOpen && (
         <div
           onClick={() => setIsSleepMenuOpen(false)}
-          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4"
+          className="fixed inset-0 z-[170] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4"
         >
           <div
             onClick={(e) => e.stopPropagation()}
