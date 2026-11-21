@@ -60,15 +60,15 @@ object LocalBundleAssetInterceptor {
     }
 
     fun intercept(context: Context, request: WebResourceRequest?): WebResourceResponse? {
-        val uri = request?.url ?: return null
+        if (request == null) return null
+        val uri = request.url ?: return null
         val scheme = uri.scheme?.lowercase(Locale.US) ?: return null
         if (scheme != "https" && scheme != "http") return null
         val host = uri.host?.lowercase(Locale.US) ?: return null
+        val isGetMethod = request.method?.equals("GET", ignoreCase = true) != false
 
         // 1. Serve bundled frontend from APK `assets/www/` for instant 0ms launch & offline resilience
-        if ((host == "kashishji.web.app" || host == "kashishji.firebaseapp.com") &&
-            (request.method?.equals("GET", ignoreCase = true) != false)
-        ) {
+        if ((host == "kashishji.web.app" || host == "kashishji.firebaseapp.com") && isGetMethod) {
             val rawPath = (uri.path ?: "/").trimStart('/')
             // Never intercept API or Firebase auth handler paths
             if (rawPath.startsWith("api/") || rawPath.startsWith("__/")) {
@@ -105,9 +105,7 @@ object LocalBundleAssetInterceptor {
         }
 
         // 2. Native Disk Cache for Music Cover Art & Thumbnails (instant repeat loads, zero flicker)
-        if (isCacheableAlbumArtHost(host, uri) &&
-            (request.method?.equals("GET", ignoreCase = true) != false)
-        ) {
+        if (isCacheableAlbumArtHost(host, uri) && isGetMethod) {
             return serveOrCacheArtwork(context, uri.toString())
         }
 

@@ -245,7 +245,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleIncomingSectionIntent(incoming: Intent?) {
-        val section = incoming?.getStringExtra("open_section")?.trim() ?: return
+        if (incoming == null) return
+        val section = incoming.getStringExtra("open_section")?.trim() ?: return
         if (section.isNotEmpty()) {
             incoming.removeExtra("open_section")
             try {
@@ -337,7 +338,7 @@ class MainActivity : AppCompatActivity() {
             override fun onPermissionRequest(request: PermissionRequest?) {
                 runOnUiThread {
                     try {
-                        request?.grant(request.resources)
+                        request?.let { it.grant(it.resources) }
                     } catch (_: Exception) {}
                 }
             }
@@ -418,13 +419,12 @@ class MainActivity : AppCompatActivity() {
 
     private val resultLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            val data = result.data
-            val results = if (data?.data != null) {
-                arrayOf(data.data!!)
-            } else if (cameraImageUri != null) {
-                arrayOf(cameraImageUri!!)
-            } else {
-                null
+            val pickedUri = result.data?.data
+            val camUri = cameraImageUri
+            val results = when {
+                pickedUri != null -> arrayOf(pickedUri)
+                camUri != null -> arrayOf(camUri)
+                else -> null
             }
             filePickerCallback?.onReceiveValue(results)
         } else {

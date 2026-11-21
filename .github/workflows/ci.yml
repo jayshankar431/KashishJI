@@ -107,6 +107,7 @@ jobs:
           rm -rf android-app/app/src/main/assets/www
           mkdir -p android-app/app/src/main/assets/www
           cp -r dist/* android-app/app/src/main/assets/www/
+          rm -rf android-app/app/src/main/assets/www/assets/aistudio
           echo "Bundled $(find android-app/app/src/main/assets/www -type f | wc -l) web files into APK assets/www"
 
       - name: Build Signed Release APK (Consistent Certificate)

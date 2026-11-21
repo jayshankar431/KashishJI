@@ -330,12 +330,13 @@ object NativeMusicPlayerEngine {
                 return@execute
             }
 
+            val streamUrl = resolved.url
             mainHandler.post {
                 if (token != playTokenCounter.get()) return@post
                 try {
                     val player = ensurePlayerOnMain(appCtx)
                     val mediaItem = MediaItem.Builder()
-                        .setUri(resolved.url)
+                        .setUri(streamUrl)
                         .setMediaId(cleanId)
                         .setCustomCacheKey("yt_audio_$cleanId")
                         .build()
