@@ -27,7 +27,6 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
-import androidx.media3.common.util.UnstableApi
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
@@ -55,7 +54,6 @@ class KeepAliveWebView(context: Context) : WebView(context) {
     }
 }
 
-@androidx.annotation.OptIn(UnstableApi::class)
 @Suppress("UnsafeOptInUsageError")
 class MainActivity : AppCompatActivity() {
 

@@ -111,6 +111,8 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.9.2")
     implementation("androidx.webkit:webkit:1.11.0")
 
+    implementation("androidx.annotation:annotation-experimental:1.4.0")
+
     // Native Media3 ExoPlayer + Disk Cache for zero-stutter background music & hardware Equalizer
     implementation("androidx.media3:media3-exoplayer:1.4.1")
     implementation("androidx.media3:media3-datasource:1.4.1")

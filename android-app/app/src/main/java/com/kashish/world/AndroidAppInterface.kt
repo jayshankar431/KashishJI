@@ -474,6 +474,7 @@ class AndroidAppInterface(private val context: Context) {
         return NativeMusicPlayerEngine.getStateJson()
     }
 
+    @JvmOverloads
     @JavascriptInterface
     fun setEqualizerBands(bassDb: Int, midDb: Int, trebleDb: Int, presetName: String = "custom") {
         NativeMusicPlayerEngine.applyEqualizer(

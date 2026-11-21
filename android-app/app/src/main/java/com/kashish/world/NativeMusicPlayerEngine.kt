@@ -15,12 +15,14 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
+import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import org.json.JSONObject
 import java.io.BufferedReader
@@ -41,7 +43,7 @@ import java.util.concurrent.atomic.AtomicLong
  * - Multi-client InnerTube background stream resolver with 20-min URL cache + next-track preloading
  * - Zero JS bridge chatter while app is backgrounded to eliminate CPU usage during heavy multitasking
  */
-@androidx.annotation.OptIn(UnstableApi::class)
+@androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 @Suppress("UnsafeOptInUsageError")
 object NativeMusicPlayerEngine {
     private const val TAG = "NativeMusicEngine"
@@ -140,7 +142,7 @@ object NativeMusicPlayerEngine {
             .setAllowCrossProtocolRedirects(true)
 
         val cache = getOrCreateSimpleCache(appCtx)
-        val dataSourceFactory = if (cache != null) {
+        val dataSourceFactory: DataSource.Factory = if (cache != null) {
             CacheDataSource.Factory()
                 .setCache(cache)
                 .setUpstreamDataSourceFactory(httpFactory)
@@ -214,15 +216,20 @@ object NativeMusicPlayerEngine {
                 }
             }
 
-            override fun onAudioSessionIdChanged(audioSessionId: Int) {
-                attachEqualizerToSession(audioSessionId)
-            }
-
             override fun onPlayerError(error: PlaybackException) {
                 Log.w(TAG, "ExoPlayer error for $currentVideoId: ${error.message}")
                 stopForegroundPositionTicker()
                 streamCache.remove(currentVideoId)
                 emitStateToWebView("error", error.message ?: "Native stream playback failed")
+            }
+        })
+
+        player.addAnalyticsListener(object : AnalyticsListener {
+            override fun onAudioSessionIdChanged(
+                eventTime: AnalyticsListener.EventTime,
+                audioSessionId: Int
+            ) {
+                attachEqualizerToSession(audioSessionId)
             }
         })
 
@@ -521,7 +528,7 @@ object NativeMusicPlayerEngine {
                         val strength = ((eqBassDb.toFloat() / 12f) * 1000f).toInt().coerceIn(0, 1000).toShort()
                         bb.setStrength(strength)
                     } else {
-                        bb.setStrength(0)
+                        bb.setStrength(0.toShort())
                         bb.enabled = false
                     }
                 }
