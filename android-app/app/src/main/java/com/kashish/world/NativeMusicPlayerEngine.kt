@@ -61,6 +61,8 @@ object NativeMusicPlayerEngine {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val resolverExecutor = Executors.newFixedThreadPool(3)
     private val streamCache = ConcurrentHashMap<String, CachedStream>()
+    // Prevent repeated UI preload requests from queuing duplicate resolver work.
+    private val preloadInFlight = ConcurrentHashMap.newKeySet<String>()
     private val playTokenCounter = AtomicLong(0L)
 
     @Volatile
@@ -359,11 +361,28 @@ object NativeMusicPlayerEngine {
 
     fun preloadTrack(videoId: String) {
         val cleanId = videoId.trim()
-        if (cleanId.isEmpty()) return
+        // YouTube video IDs are 11 characters; reject invalid values before
+        // occupying one of the limited resolver threads.
+        if (cleanId.length != 11) return
+
         val cached = streamCache[cleanId]
         if (cached != null && System.currentTimeMillis() < cached.expiresAtMs) return
-        resolverExecutor.execute {
-            resolveAudioStreamSync(cleanId, forceRefresh = false)
+
+        // Rapid track changes or repeated UI events can request the same preload.
+        // Keep only one resolver job per video ID at a time.
+        if (!preloadInFlight.add(cleanId)) return
+
+        try {
+            resolverExecutor.execute {
+                try {
+                    resolveAudioStreamSync(cleanId, forceRefresh = false)
+                } finally {
+                    preloadInFlight.remove(cleanId)
+                }
+            }
+        } catch (e: java.util.concurrent.RejectedExecutionException) {
+            preloadInFlight.remove(cleanId)
+            Log.w(TAG, "Preload queue rejected for $cleanId: ${e.message}")
         }
     }
 
