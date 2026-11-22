@@ -61,6 +61,8 @@ object NativeMusicPlayerEngine {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val resolverExecutor = Executors.newFixedThreadPool(3)
     private val streamCache = ConcurrentHashMap<String, CachedStream>()
+    // Prevent repeated UI preload requests from queuing duplicate resolver work.
+    private val preloadInFlight = ConcurrentHashMap.newKeySet<String>()
     private val playTokenCounter = AtomicLong(0L)
 
     @Volatile
@@ -359,11 +361,28 @@ object NativeMusicPlayerEngine {
 
     fun preloadTrack(videoId: String) {
         val cleanId = videoId.trim()
-        if (cleanId.isEmpty()) return
+        // YouTube video IDs are 11 characters; reject invalid values before
+        // occupying one of the limited resolver threads.
+        if (cleanId.length != 11) return
+
         val cached = streamCache[cleanId]
         if (cached != null && System.currentTimeMillis() < cached.expiresAtMs) return
-        resolverExecutor.execute {
-            resolveAudioStreamSync(cleanId, forceRefresh = false)
+
+        // Rapid track changes or repeated UI events can request the same preload.
+        // Keep only one resolver job per video ID at a time.
+        if (!preloadInFlight.add(cleanId)) return
+
+        try {
+            resolverExecutor.execute {
+                try {
+                    resolveAudioStreamSync(cleanId, forceRefresh = false)
+                } finally {
+                    preloadInFlight.remove(cleanId)
+                }
+            }
+        } catch (e: java.util.concurrent.RejectedExecutionException) {
+            preloadInFlight.remove(cleanId)
+            Log.w(TAG, "Preload queue rejected for $cleanId: ${e.message}")
         }
     }
 
@@ -422,27 +441,48 @@ object NativeMusicPlayerEngine {
     }
 
     fun getStateJson(): String {
-        val p = exoPlayer
         var posSec = 0.0
         var durSec = 0.0
         var isPlaying = false
         var isBuffering = false
+
+        // ExoPlayer is application-looper confined. Read it directly when already
+        // on that looper; posting and waiting here would block the very thread
+        // needed to run the posted task and return an empty/stale state.
+        val readPlayerState = {
+            val player = exoPlayer
+            if (player != null) {
+                posSec = (player.currentPosition.toDouble() / 1000.0).coerceAtLeast(0.0)
+                val durationMs = player.duration
+                durSec = if (durationMs > 0L && durationMs != C.TIME_UNSET) {
+                    durationMs.toDouble() / 1000.0
+                } else {
+                    0.0
+                }
+                isPlaying = player.isPlaying
+                isBuffering = player.playbackState == Player.STATE_BUFFERING
+            }
+        }
+
         try {
-            if (p != null) {
+            if (Looper.myLooper() == mainHandler.looper) {
+                readPlayerState()
+            } else {
                 val latch = java.util.concurrent.CountDownLatch(1)
                 mainHandler.post {
                     try {
-                        posSec = (p.currentPosition.toDouble() / 1000.0).coerceAtLeast(0.0)
-                        val durMs = p.duration
-                        durSec = if (durMs > 0L && durMs != C.TIME_UNSET) durMs.toDouble() / 1000.0 else 0.0
-                        isPlaying = p.isPlaying
-                        isBuffering = p.playbackState == Player.STATE_BUFFERING
-                    } catch (_: Exception) {}
-                    latch.countDown()
+                        readPlayerState()
+                    } catch (_: Exception) {
+                        // Return the best state snapshot available.
+                    } finally {
+                        latch.countDown()
+                    }
                 }
                 latch.await(150, java.util.concurrent.TimeUnit.MILLISECONDS)
             }
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+            // Keep safe defaults if the player is being torn down.
+        }
 
         return JSONObject().apply {
             put("videoId", currentVideoId)
