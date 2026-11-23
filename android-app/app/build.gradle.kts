@@ -15,36 +15,42 @@ if (file("google-services.json").exists() && file("google-services.json").length
     apply(plugin = "com.google.gms.google-services")
 }
 
-// Deterministic, permanent PKCS12 keystore generated from committed PEM key & certificate.
-// Guarantees every GitHub Actions build and local build uses the exact same signing key,
-// permanently preventing "App not installed as package conflicts with an existing package" (INSTALL_FAILED_UPDATE_INCOMPATIBLE).
-val fixedKeystoreFile = file("keystore/release.keystore")
+// Existing production PKCS12 keystore (`keystore/release.keystore`) is preserved as-is so every
+// GitHub Actions and local release build uses the exact same certificate (preventing INSTALL_FAILED_UPDATE_INCOMPATIBLE).
+// Supports environment/Gradle property overrides without hardcoding secrets in CI workflows.
+val keystorePathOverride = System.getenv("ANDROID_KEYSTORE_PATH")?.takeIf { it.isNotBlank() }
+    ?: project.findProperty("androidKeystorePath")?.toString()?.takeIf { it.isNotBlank() }
+val fixedKeystoreFile = if (keystorePathOverride != null) file(keystorePathOverride) else file("keystore/release.keystore")
 val keyPemFile = file("kashish-signing-key.pem")
 val certPemFile = file("kashish-signing-cert.pem")
-val fixedStorePassword = "kashish123456"
-val fixedKeyAlias = "kashish_key"
+val resolvedStorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() }
+    ?: project.findProperty("androidKeystorePassword")?.toString()?.takeIf { it.isNotBlank() }
+    ?: "kashish123456"
+val resolvedKeyAlias = System.getenv("ANDROID_KEY_ALIAS")?.takeIf { it.isNotBlank() }
+    ?: project.findProperty("androidKeyAlias")?.toString()?.takeIf { it.isNotBlank() }
+    ?: "kashish_key"
+val resolvedKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")?.takeIf { it.isNotBlank() }
+    ?: project.findProperty("androidKeyPassword")?.toString()?.takeIf { it.isNotBlank() }
+    ?: resolvedStorePassword
 
-if (keyPemFile.exists() && certPemFile.exists()) {
-    try {
-        fixedKeystoreFile.parentFile?.mkdirs()
-        val keyBase64 = keyPemFile.readText()
-            .replace("-----BEGIN PRIVATE KEY-----", "")
-            .replace("-----END PRIVATE KEY-----", "")
-            .replace("\\s+".toRegex(), "")
-        val keyBytes = Base64.getDecoder().decode(keyBase64)
-        val privateKey = KeyFactory.getInstance("RSA").generatePrivate(PKCS8EncodedKeySpec(keyBytes))
+// Never overwrite an existing production keystore; only reconstruct from PEM if keystore is absent.
+if (!fixedKeystoreFile.exists() && keyPemFile.exists() && certPemFile.exists()) {
+    fixedKeystoreFile.parentFile?.mkdirs()
+    val keyBase64 = keyPemFile.readText()
+        .replace("-----BEGIN PRIVATE KEY-----", "")
+        .replace("-----END PRIVATE KEY-----", "")
+        .replace("\\s+".toRegex(), "")
+    val keyBytes = Base64.getDecoder().decode(keyBase64)
+    val privateKey = KeyFactory.getInstance("RSA").generatePrivate(PKCS8EncodedKeySpec(keyBytes))
 
-        val certFactory = CertificateFactory.getInstance("X.509")
-        val cert = certFactory.generateCertificate(ByteArrayInputStream(certPemFile.readBytes()))
+    val certFactory = CertificateFactory.getInstance("X.509")
+    val cert = certFactory.generateCertificate(ByteArrayInputStream(certPemFile.readBytes()))
 
-        val ks = KeyStore.getInstance("PKCS12")
-        ks.load(null, null)
-        ks.setKeyEntry(fixedKeyAlias, privateKey, fixedStorePassword.toCharArray(), arrayOf(cert))
-        FileOutputStream(fixedKeystoreFile).use { out ->
-            ks.store(out, fixedStorePassword.toCharArray())
-        }
-    } catch (e: Exception) {
-        println("Warning: Could not regenerate PKCS12 from PEM, using existing keystore: ${e.message}")
+    val ks = KeyStore.getInstance("PKCS12")
+    ks.load(null, null)
+    ks.setKeyEntry(resolvedKeyAlias, privateKey, resolvedKeyPassword.toCharArray(), arrayOf(cert))
+    FileOutputStream(fixedKeystoreFile).use { out ->
+        ks.store(out, resolvedStorePassword.toCharArray())
     }
 }
 
@@ -65,9 +71,9 @@ android {
     signingConfigs {
         create("release") {
             storeFile = fixedKeystoreFile
-            storePassword = fixedStorePassword
-            keyAlias = fixedKeyAlias
-            keyPassword = fixedStorePassword
+            storePassword = resolvedStorePassword
+            keyAlias = resolvedKeyAlias
+            keyPassword = resolvedKeyPassword
             enableV1Signing = true
             enableV2Signing = true
             enableV3Signing = true

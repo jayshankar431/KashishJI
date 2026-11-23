@@ -14,7 +14,7 @@ import java.util.Locale
 
 /**
  * Local Offline-First Bundle & Native Album Art Disk Cache Interceptor:
- * 1. Serves bundled app UI assets (`assets/www/*`) directly from the APK in <2ms while preserving
+ * 1. Serves bundled app UI assets (`assets/www/`) directly from the APK in <2ms while preserving
  *    the exact HTTPS origin (`https://kashishji.web.app`) so Firebase Auth, Firestore, IndexedDB,
  *    localStorage, and YouTube IFrame API work identically to live web hosting — with instant startup!
  * 2. Caches YouTube & Google Music cover artwork (`i.ytimg.com`, `lh3.googleusercontent.com`)
