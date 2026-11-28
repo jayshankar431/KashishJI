@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { collection, doc, onSnapshot, query, orderBy, limit, updateDoc } from 'firebase/firestore';
-import { onIdTokenChanged } from 'firebase/auth';
+import { onAuthStateChanged, onIdTokenChanged } from 'firebase/auth';
 import { Heart, Phone, Sparkles, ExternalLink, X } from 'lucide-react';
 import { auth, db, ADMIN_EMAIL } from '../firebase';
 import {
@@ -171,9 +171,30 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
     const seenNotifIds = new Set<string>(
       JSON.parse(localStorage.getItem('kashish_seen_notifs') || '[]')
     );
+    const seenOverlayIds = new Set<string>(
+      JSON.parse(localStorage.getItem('kashish_seen_overlays') || '[]')
+    );
 
-    const qNotifs = query(collection(db, 'notifications'), orderBy('createdAt', 'desc'), limit(8));
-    const unsubNotifs = onSnapshot(
+    let unsubNotifs: (() => void) | null = null;
+    let unsubOverlays: (() => void) | null = null;
+
+    const cleanupFirestoreListeners = () => {
+      if (unsubNotifs) {
+        unsubNotifs();
+        unsubNotifs = null;
+      }
+      if (unsubOverlays) {
+        unsubOverlays();
+        unsubOverlays = null;
+      }
+    };
+
+    const unsubAuth = onAuthStateChanged(auth, (user) => {
+      cleanupFirestoreListeners();
+      if (!user) return;
+
+      const qNotifs = query(collection(db, 'notifications'), orderBy('createdAt', 'desc'), limit(8));
+      unsubNotifs = onSnapshot(
       qNotifs,
       (snap) => {
         // Never allow the Admin's own device to consume or mark notifications as seen:true in Firestore!
@@ -244,12 +265,8 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
       () => {}
     );
 
-    const seenOverlayIds = new Set<string>(
-      JSON.parse(localStorage.getItem('kashish_seen_overlays') || '[]')
-    );
-
     const qOverlays = query(collection(db, 'overlays'), orderBy('createdAt', 'desc'), limit(8));
-    const unsubOverlays = onSnapshot(
+    unsubOverlays = onSnapshot(
       qOverlays,
       (snap) => {
         // Never allow the Admin's own device to consume or auto-dismiss overlays meant for users
@@ -356,8 +373,11 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
           }
         }
       },
-      () => {}
+      (err) => {
+        console.error('[LiveOverlays] overlays sync error:', err?.message || err);
+      }
     );
+    });
 
     const unsubToken = onIdTokenChanged(auth, async (user) => {
       if (user) {
@@ -377,8 +397,8 @@ export const LiveOverlaysAndNotifications: React.FC<LiveOverlaysAndNotifications
     window.addEventListener('kashish-open-section', handleNativeOpenSection);
 
     return () => {
-      unsubNotifs();
-      unsubOverlays();
+      cleanupFirestoreListeners();
+      unsubAuth();
       unsubToken();
       stopOverlayAudio();
       window.removeEventListener('kashish-open-section', handleNativeOpenSection);

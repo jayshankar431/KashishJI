@@ -18,6 +18,7 @@ import {
   signInWithEmailAndPassword,
   updatePassword,
   onAuthStateChanged,
+  sendEmailVerification,
   signOut,
   User as FirebaseUser,
 } from 'firebase/auth';
@@ -455,13 +456,53 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
   const [cloudinaryStatusMsg, setCloudinaryStatusMsg] = useState<string>('');
   const [showCloudinaryBox, setShowCloudinaryBox] = useState<boolean>(false);
 
+  const [emailVerifiedState, setEmailVerifiedState] = useState<boolean>(
+    () => auth.currentUser?.emailVerified ?? true
+  );
+  const [authRefreshKey, setAuthRefreshKey] = useState<number>(0);
+  const [sendingVerifyEmail, setSendingVerifyEmail] = useState<boolean>(false);
+
   // Auth listener
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
       setCurrentUser(u);
+      setEmailVerifiedState(u ? Boolean(u.emailVerified) : true);
     });
     return () => unsub();
   }, []);
+
+  const handleSendAdminVerificationEmail = async () => {
+    const user = auth.currentUser;
+    if (!user) return;
+    setSendingVerifyEmail(true);
+    try {
+      await sendEmailVerification(user);
+      notifyStatus(`Verification link sent to ${user.email}. Verify it, then tap "Refresh Sync".`);
+    } catch (err: any) {
+      notifyStatus(`Verification email error: ${err?.message || 'Failed'}`, true);
+    } finally {
+      setSendingVerifyEmail(false);
+    }
+  };
+
+  const handleRefreshAdminAuth = async () => {
+    const user = auth.currentUser;
+    if (!user) return;
+    try {
+      await user.reload();
+      await user.getIdToken(true);
+      const isNowVerified = Boolean(auth.currentUser?.emailVerified);
+      setEmailVerifiedState(isNowVerified);
+      setAuthRefreshKey((k) => k + 1);
+      if (isNowVerified) {
+        notifyStatus('Admin email verified & live Firestore sync refreshed!');
+      } else {
+        notifyStatus('Email still shows unverified. Open the link in your inbox, then tap Refresh Sync.', true);
+      }
+    } catch (err: any) {
+      notifyStatus(`Auth refresh error: ${err?.message || 'Failed'}`, true);
+    }
+  };
 
   // Sync local editor fields ONCE when Admin Panel opens (prevents 22-state re-render storms on every live save)
   useEffect(() => {
@@ -498,6 +539,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     if (site.cloudinaryUploadPreset !== undefined) setUploadPresetInput(site.cloudinaryUploadPreset);
     if (site.cloudinaryApiKey !== undefined) setApiKeyInput(site.cloudinaryApiKey);
     if (site.cloudinaryApiSecret !== undefined) setApiSecretInput(site.cloudinaryApiSecret);
+    if (site.cloudinaryGalleryFolder) setGalleryFolderInput(site.cloudinaryGalleryFolder);
     if (Array.isArray(site.savedSounds) && site.savedSounds.length > 0) {
       const defaultUrls = new Set(DEFAULT_SAVED_SOUNDS.map((d) => d.url));
       setCustomSounds(site.savedSounds.filter((s) => s.url && !defaultUrls.has(s.url)));
@@ -531,7 +573,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
         snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
         setActivities(list);
       },
-      () => {}
+      (err) => {
+        console.error('[AdminPanel] activity sync error:', err?.message || err);
+        setErrorText(`Activity sync error: ${err.message}`);
+      }
     );
 
     const unsubMedia = onSnapshot(
@@ -554,7 +599,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
         });
         setMediaItems(list);
       },
-      () => {}
+      (err) => {
+        console.error('[AdminPanel] media sync error:', err?.message || err);
+        setErrorText(`Media sync error: ${err.message}`);
+      }
     );
 
     const unsubInbox = onSnapshot(
@@ -564,7 +612,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
         snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
         setInboxItems(list);
       },
-      () => {}
+      (err) => {
+        console.error('[AdminPanel] inbox sync error:', err?.message || err);
+        setErrorText(`Inbox sync error: ${err.message}`);
+      }
     );
 
     const unsubNotifs = onSnapshot(
@@ -574,7 +625,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
         snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
         setNotificationsList(list);
       },
-      () => {}
+      (err) => {
+        console.error('[AdminPanel] notifications sync error:', err?.message || err);
+        setErrorText(`Notifications sync error: ${err.message}`);
+      }
     );
 
     const unsubOverlays = onSnapshot(
@@ -584,7 +638,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
         snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
         setOverlaysList(list);
       },
-      () => {}
+      (err) => {
+        console.error('[AdminPanel] overlays sync error:', err?.message || err);
+        setErrorText(`Overlays sync error: ${err.message}`);
+      }
     );
     const unsubUsers = onSnapshot(
       collection(db, 'users'),
@@ -594,7 +651,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
         list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
         setUsersList(list);
       },
-      () => {}
+      (err) => {
+        console.error('[AdminPanel] users sync error:', err?.message || err);
+        setErrorText(`Users sync error: ${err.message}`);
+      }
     );
 
     const unsubContacts = onSnapshot(
@@ -604,7 +664,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
         snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
         setContactsList(list);
       },
-      () => {}
+      (err) => {
+        console.error('[AdminPanel] contacts sync error:', err?.message || err);
+        setErrorText(`Contacts sync error: ${err.message}`);
+      }
     );
 
     const unsubDeviceStatus = onSnapshot(
@@ -612,7 +675,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       (snap) => {
         if (snap.exists()) setDeviceStatusDoc(snap.data());
       },
-      () => {}
+      (err) => {
+        console.error('[AdminPanel] device_status sync error:', err?.message || err);
+      }
     );
 
     // Real-time listener for Content Editor (content/main) to guarantee last saved values persist
@@ -628,7 +693,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
         if (Array.isArray(d.nameMeanings) && d.nameMeanings.length > 0) setEditNameMeanings(d.nameMeanings);
         if (Array.isArray(d.compliments)) setEditCompliments(d.compliments);
       },
-      () => {}
+      (err) => {
+        console.error('[AdminPanel] content/main sync error:', err?.message || err);
+        setErrorText(`Content sync error: ${err.message}`);
+      }
     );
 
     // Real-time listener for Settings & App Control (settings/config) to guarantee last saved values persist
@@ -668,7 +736,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
           setCustomSounds(d.savedSounds.filter((s: any) => s.url && !defaultUrls.has(s.url)));
         }
       },
-      () => {}
+      (err) => {
+        console.error('[AdminPanel] settings/config sync error:', err?.message || err);
+        setErrorText(`Settings sync error: ${err.message}`);
+      }
     );
 
     return () => {
@@ -684,7 +755,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       unsubContentDoc();
       unsubSettingsConfig();
     };
-  }, [isOpen, isAdminAuthenticated]);
+  }, [isOpen, isAdminAuthenticated, authRefreshKey]);
 
   const isUserAdminAccount = (u: any) =>
     String(u?.email || '').toLowerCase() === ADMIN_EMAIL.toLowerCase();
@@ -782,60 +853,72 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     };
   };
 
-  const handleApproveUser = (userItem: any) => {
+  const handleApproveUser = async (userItem: any) => {
     const uid = userItem.id;
-    setUsersList((prev) =>
-      prev.map((u) => (u.id === uid ? { ...u, approved: true, status: 'approved', approvedAt: Date.now() } : u))
-    );
-    notifyStatus(`Approved ${userItem.email || userItem.displayName}! They can now access the app.`);
-    void setDoc(
-      doc(db, 'users', uid),
-      {
-        approved: true,
-        status: 'approved',
-        approvedAt: Date.now(),
-        approvedBy: ADMIN_EMAIL,
-      },
-      { merge: true }
-    ).catch((err) => notifyStatus(`Approve failed: ${err.message}`, true));
+    try {
+      await setDoc(
+        doc(db, 'users', uid),
+        {
+          approved: true,
+          status: 'approved',
+          approvedAt: Date.now(),
+          approvedBy: ADMIN_EMAIL,
+        },
+        { merge: true }
+      );
+      setUsersList((prev) =>
+        prev.map((u) => (u.id === uid ? { ...u, approved: true, status: 'approved', approvedAt: Date.now() } : u))
+      );
+      notifyStatus(`Approved ${userItem.email || userItem.displayName}! They can now access the app.`);
+    } catch (err: any) {
+      notifyStatus(`Approve failed: ${err?.message || 'Permission denied'}`, true);
+    }
   };
 
-  const handleRejectUser = (userItem: any) => {
+  const handleRejectUser = async (userItem: any) => {
     if (isUserAdminAccount(userItem)) {
       notifyStatus('Admin account cannot be blocked.', true);
       return;
     }
     const uid = userItem.id;
-    setUsersList((prev) =>
-      prev.map((u) => (u.id === uid ? { ...u, approved: false, status: 'rejected', rejectedAt: Date.now() } : u))
-    );
-    notifyStatus(`Blocked / revoked access for ${userItem.email || userItem.displayName}.`);
-    void setDoc(
-      doc(db, 'users', uid),
-      {
-        approved: false,
-        status: 'rejected',
-        rejectedAt: Date.now(),
-      },
-      { merge: true }
-    ).catch((err) => notifyStatus(`Block failed: ${err.message}`, true));
+    try {
+      await setDoc(
+        doc(db, 'users', uid),
+        {
+          approved: false,
+          status: 'rejected',
+          rejectedAt: Date.now(),
+        },
+        { merge: true }
+      );
+      setUsersList((prev) =>
+        prev.map((u) => (u.id === uid ? { ...u, approved: false, status: 'rejected', rejectedAt: Date.now() } : u))
+      );
+      notifyStatus(`Blocked / revoked access for ${userItem.email || userItem.displayName}.`);
+    } catch (err: any) {
+      notifyStatus(`Block failed: ${err?.message || 'Permission denied'}`, true);
+    }
   };
 
-  const handleSetPendingUser = (userItem: any) => {
+  const handleSetPendingUser = async (userItem: any) => {
     if (isUserAdminAccount(userItem)) return;
     const uid = userItem.id;
-    setUsersList((prev) =>
-      prev.map((u) => (u.id === uid ? { ...u, approved: false, status: 'pending' } : u))
-    );
-    notifyStatus(`Moved ${userItem.email || userItem.displayName} back to Pending Approval.`);
-    void setDoc(
-      doc(db, 'users', uid),
-      {
-        approved: false,
-        status: 'pending',
-      },
-      { merge: true }
-    ).catch((err) => notifyStatus(`Update failed: ${err.message}`, true));
+    try {
+      await setDoc(
+        doc(db, 'users', uid),
+        {
+          approved: false,
+          status: 'pending',
+        },
+        { merge: true }
+      );
+      setUsersList((prev) =>
+        prev.map((u) => (u.id === uid ? { ...u, approved: false, status: 'pending' } : u))
+      );
+      notifyStatus(`Moved ${userItem.email || userItem.displayName} back to Pending Approval.`);
+    } catch (err: any) {
+      notifyStatus(`Update failed: ${err?.message || 'Permission denied'}`, true);
+    }
   };
 
   const handleDeleteUserRecord = (userItem: any) => {
@@ -845,32 +928,41 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     }
     askConfirm(
       `Remove user record for "${userItem.email || userItem.displayName}"? If they sign in again, they will have to wait for approval again.`,
-      () => {
-        setUsersList((prev) => prev.filter((u) => u.id !== userItem.id));
-        notifyStatus('User record deleted.');
-        void deleteDoc(doc(db, 'users', userItem.id)).catch((err) =>
-          notifyStatus(`Delete failed: ${err.message}`, true)
-        );
+      async () => {
+        try {
+          await deleteDoc(doc(db, 'users', userItem.id));
+          setUsersList((prev) => prev.filter((u) => u.id !== userItem.id));
+          notifyStatus('User record deleted.');
+        } catch (err: any) {
+          notifyStatus(`Delete failed: ${err?.message || 'Permission denied'}`, true);
+        }
       }
     );
   };
 
-  const handleApproveAllPendingUsers = () => {
+  const handleApproveAllPendingUsers = async () => {
     if (pendingUsersList.length === 0) return;
     const idsToApprove = pendingUsersList.map((u) => u.id);
-    setUsersList((prev) =>
-      prev.map((u) =>
-        idsToApprove.includes(u.id) ? { ...u, approved: true, status: 'approved', approvedAt: Date.now() } : u
-      )
-    );
-    notifyStatus(`Approved all ${idsToApprove.length} pending user(s)!`);
-    idsToApprove.forEach((uid) => {
-      void setDoc(
-        doc(db, 'users', uid),
-        { approved: true, status: 'approved', approvedAt: Date.now(), approvedBy: ADMIN_EMAIL },
-        { merge: true }
-      ).catch(() => {});
-    });
+    try {
+      const batch = writeBatch(db);
+      const now = Date.now();
+      idsToApprove.forEach((uid) => {
+        batch.set(
+          doc(db, 'users', uid),
+          { approved: true, status: 'approved', approvedAt: now, approvedBy: ADMIN_EMAIL },
+          { merge: true }
+        );
+      });
+      await batch.commit();
+      setUsersList((prev) =>
+        prev.map((u) =>
+          idsToApprove.includes(u.id) ? { ...u, approved: true, status: 'approved', approvedAt: now } : u
+        )
+      );
+      notifyStatus(`Approved all ${idsToApprove.length} pending user(s)!`);
+    } catch (err: any) {
+      notifyStatus(`Bulk approve failed: ${err?.message || 'Permission denied'}`, true);
+    }
   };
 
   const notifyStatus = (msg: string, isErr = false) => {
@@ -993,30 +1085,34 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     }
   };
 
-  const handleAddDirectUrlMedia = (e: React.FormEvent) => {
+  const handleAddDirectUrlMedia = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!directMediaUrl.trim()) return;
     const cleanUrl = directMediaUrl.trim();
     const itemName = directMediaName.trim() || `Media_${Date.now()}`;
-    setDirectMediaUrl('');
-    setDirectMediaName('');
-    notifyStatus(`Added direct URL to ${uploadCategory}.`);
 
-    void addDoc(collection(db, 'media'), {
-      name: itemName,
-      url: cleanUrl,
-      storagePath: '',
-      type: directMediaType,
-      category: uploadCategory,
-      uploadedBy: 'admin',
-      views: 0,
-      likes: 1,
-      createdAt: Date.now(),
-      dateIso: new Date().toISOString(),
-    }).catch((err: any) => notifyStatus(`Error: ${err.message}`, true));
+    try {
+      await addDoc(collection(db, 'media'), {
+        name: itemName,
+        url: cleanUrl,
+        storagePath: '',
+        type: directMediaType,
+        category: uploadCategory,
+        uploadedBy: 'admin',
+        views: 0,
+        likes: 1,
+        createdAt: Date.now(),
+        dateIso: new Date().toISOString(),
+      });
 
-    if (uploadCategory === 'Home photo') {
-      void setDoc(doc(db, 'content', 'main'), { lockPhotoUrl: cleanUrl }, { merge: true });
+      if (uploadCategory === 'Home photo') {
+        await setDoc(doc(db, 'content', 'main'), { lockPhotoUrl: cleanUrl }, { merge: true });
+      }
+      setDirectMediaUrl('');
+      setDirectMediaName('');
+      notifyStatus(`Added direct URL to ${uploadCategory}.`);
+    } catch (err: any) {
+      notifyStatus(`Error: ${err?.message || 'Permission denied'}`, true);
     }
   };
 
@@ -1128,31 +1224,41 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
     a.remove();
   };
 
-  const handleSendInboxReply = (e: React.FormEvent) => {
+  const handleSendInboxReply = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!replyMessage.trim()) return;
     const targetId = replyTarget?.id || null;
+    const targetUid = String(replyTarget?.senderUid || '').trim();
+    const targetEmail = String(replyTarget?.senderEmail || '').trim();
+    const targetName = targetEmail ? targetEmail.split('@')[0] : 'Kashish';
     const titleVal = replyTitle.trim() || 'Message from Jay';
     const msgVal = replyMessage.trim();
 
-    setReplyTarget(null);
-    setReplyMessage('');
-    notifyStatus('Reply notification sent to her app.');
+    try {
+      await addDoc(collection(db, 'notifications'), {
+        title: titleVal,
+        message: msgVal,
+        imageUrl: '',
+        soundUrl: DEFAULT_SAVED_SOUNDS[0].url,
+        targetUser: targetUid || targetEmail || 'ALL',
+        targetUserName: targetUid || targetEmail ? targetName : 'All Users',
+        targetUserEmail: targetEmail,
+        targetUserUid: targetUid,
+        createdAt: Date.now(),
+        scheduledFor: null,
+        status: 'sent',
+        seen: false,
+        replyToInboxId: targetId,
+      });
 
-    void addDoc(collection(db, 'notifications'), {
-      title: titleVal,
-      message: msgVal,
-      imageUrl: '',
-      soundUrl: DEFAULT_SAVED_SOUNDS[0].url,
-      createdAt: Date.now(),
-      scheduledFor: null,
-      status: 'sent',
-      seen: false,
-      replyToInboxId: targetId,
-    }).catch((err: any) => notifyStatus(`Failed to send reply: ${err.message}`, true));
-
-    if (targetId) {
-      void updateDoc(doc(db, 'inbox', targetId), { read: true }).catch(() => {});
+      if (targetId) {
+        await updateDoc(doc(db, 'inbox', targetId), { read: true }).catch(() => {});
+      }
+      setReplyTarget(null);
+      setReplyMessage('');
+      notifyStatus(`Reply notification sent to ${targetUid || targetEmail ? targetName : 'her app'}.`);
+    } catch (err: any) {
+      notifyStatus(`Failed to send reply: ${err?.message || 'Permission denied'}`, true);
     }
   };
 
@@ -1256,7 +1362,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
   };
 
   // Section 5: Send or Schedule Notification
-  const handleSendNotification = (e: React.FormEvent) => {
+  const handleSendNotification = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!notifTitle.trim() || !notifMessage.trim()) {
       notifyStatus('Title and message are required.', true);
@@ -1296,19 +1402,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       seen: false,
     };
 
-    setNotifTitle('');
-    setNotifMessage('');
-    setNotifImage('');
-    setNotifScheduleTime('');
-    notifyStatus(
-      scheduledMs
-        ? `Notification scheduled for ${targetMeta.targetUserName}.`
-        : `Notification sent live to ${targetMeta.targetUserName}!`
-    );
-
-    void addDoc(collection(db, 'notifications'), payload).catch((err: any) =>
-      notifyStatus(`Error: ${err.message}`, true)
-    );
+    try {
+      await addDoc(collection(db, 'notifications'), payload);
+      setNotifTitle('');
+      setNotifMessage('');
+      setNotifImage('');
+      setNotifScheduleTime('');
+      notifyStatus(
+        scheduledMs
+          ? `Notification scheduled for ${targetMeta.targetUserName}.`
+          : `Notification sent live to ${targetMeta.targetUserName}!`
+      );
+    } catch (err: any) {
+      notifyStatus(`Notification error: ${err?.message || 'Permission denied'}`, true);
+    }
   };
 
   // Section 6: Send or Schedule Truecaller-Style Overlay
@@ -1374,18 +1481,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       dismissed: false,
     };
 
-    notifyStatus(
-      scheduledMs && scheduledMs > now
-        ? `Overlay scheduled for ${targetMeta.targetUserName}.`
-        : `Live overlay sent to ${targetMeta.targetUserName}!`
-    );
-    void addDoc(collection(db, 'overlays'), payload).catch((err: any) =>
-      notifyStatus(`Overlay error: ${err.message}`, true)
-    );
+    try {
+      await addDoc(collection(db, 'overlays'), payload);
+      notifyStatus(
+        scheduledMs && scheduledMs > now
+          ? `Overlay scheduled for ${targetMeta.targetUserName}.`
+          : `Live overlay sent to ${targetMeta.targetUserName}!`
+      );
+    } catch (err: any) {
+      notifyStatus(`Overlay error: ${err?.message || 'Permission denied'}`, true);
+    }
   };
 
   // Section 8: Save Live Content Editor
-  const handleSaveContentEditor = () => {
+  const handleSaveContentEditor = async () => {
     const payload = {
       name: editRecipientName.trim() || 'Kashish',
       birthday: editCountdownDate.trim() || '2026-12-17',
@@ -1395,14 +1504,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       compliments: editCompliments,
       updatedAt: Date.now(),
     };
-    notifyStatus('Live content saved! Reflected in app immediately.');
-    void setDoc(doc(db, 'content', 'main'), payload, { merge: true }).catch((err: any) =>
-      notifyStatus(`Save content failed: ${err.message}`, true)
-    );
+    try {
+      await setDoc(doc(db, 'content', 'main'), payload, { merge: true });
+      notifyStatus('Live content saved! Reflected in app immediately.');
+    } catch (err: any) {
+      notifyStatus(`Save content failed: ${err?.message || 'Permission denied'}`, true);
+    }
   };
 
   // Section 10: Save App Control Settings
-  const handleSaveAppControl = () => {
+  const handleSaveAppControl = async () => {
     const payload = {
       features: {
         games: featGames,
@@ -1429,10 +1540,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       apkApplyToWeb: apkApplyWeb,
       updatedAt: Date.now(),
     };
-    notifyStatus('App Control, Maintenance & APK Update settings saved live!');
-    void setDoc(doc(db, 'settings', 'config'), payload, { merge: true }).catch((err: any) =>
-      notifyStatus(`App Control error: ${err.message}`, true)
-    );
+    try {
+      await setDoc(doc(db, 'settings', 'config'), payload, { merge: true });
+      notifyStatus('App Control, Maintenance & APK Update settings saved live!');
+    } catch (err: any) {
+      notifyStatus(`App Control error: ${err?.message || 'Permission denied'}`, true);
+    }
   };
 
   const handleForcePushApkUpdateAndNotify = async () => {
@@ -1474,6 +1587,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
         buttons: [
           { label: 'Download Update APK 📲', action: 'open_url', payload: targetUrl },
         ],
+        targetUser: 'ALL',
+        targetUserName: 'All Users',
+        targetUserEmail: '',
+        targetUserUid: '',
         createdAt: Date.now(),
         scheduledFor: null,
         status: 'sent',
@@ -1529,23 +1646,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
       notifyStatus('No activity logs to delete.', true);
       return;
     }
-    askConfirm(`Delete all ${activities.length} activity logs from Firestore permanently?`, () => {
-      setActivities([]);
-      notifyStatus('All activity logs deleted.');
-      void (async () => {
-        try {
-          const snap = await getDocs(collection(db, 'activity'));
-          const docs = snap.docs;
-          const chunkSize = 450;
-          for (let i = 0; i < docs.length; i += chunkSize) {
-            const batch = writeBatch(db);
-            docs.slice(i, i + chunkSize).forEach((d) => batch.delete(d.ref));
-            await batch.commit();
-          }
-        } catch (err: any) {
-          notifyStatus(`Clear logs failed: ${err.message}`, true);
+    askConfirm(`Delete all ${activities.length} activity logs from Firestore permanently?`, async () => {
+      try {
+        const snap = await getDocs(collection(db, 'activity'));
+        const docs = snap.docs;
+        const chunkSize = 450;
+        for (let i = 0; i < docs.length; i += chunkSize) {
+          const batch = writeBatch(db);
+          docs.slice(i, i + chunkSize).forEach((d) => batch.delete(d.ref));
+          await batch.commit();
         }
-      })();
+        setActivities([]);
+        notifyStatus('All activity logs deleted.');
+      } catch (err: any) {
+        notifyStatus(`Clear logs failed: ${err?.message || 'Permission denied'}`, true);
+      }
     });
   };
 
@@ -1747,12 +1862,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
   const handleDeleteContact = (contactItem: any) => {
     askConfirm(
       `Delete "${contactItem.name || contactItem.phoneNumber}" from the cloud vault?`,
-      () => {
-        setContactsList((prev) => prev.filter((c) => c.id !== contactItem.id));
-        notifyStatus(`Deleted contact: ${contactItem.name || contactItem.phoneNumber}`);
-        void deleteDoc(doc(db, 'contacts', contactItem.id)).catch((err) =>
-          notifyStatus(`Delete failed: ${err.message}`, true)
-        );
+      async () => {
+        try {
+          await deleteDoc(doc(db, 'contacts', contactItem.id));
+          setContactsList((prev) => prev.filter((c) => c.id !== contactItem.id));
+          notifyStatus(`Deleted contact: ${contactItem.name || contactItem.phoneNumber}`);
+        } catch (err: any) {
+          notifyStatus(`Delete failed: ${err?.message || 'Permission denied'}`, true);
+        }
       }
     );
   };
@@ -2325,6 +2442,32 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
           </button>
         </div>
       </header>
+
+      {/* Email Verification Warning Banner (required by hardened Firestore rules) */}
+      {!emailVerifiedState && (
+        <div className="px-3 py-2 border-b border-amber-500/35 bg-amber-500/15 text-amber-200 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+          <span className="font-medium">
+            Admin email ({currentUser?.email}) is not verified yet — Firestore rules require a verified email for live Admin writes.
+          </span>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => void handleSendAdminVerificationEmail()}
+              disabled={sendingVerifyEmail}
+              className="px-2.5 py-1 rounded-lg bg-amber-500 text-black font-bold text-[10px] cursor-pointer disabled:opacity-50"
+            >
+              {sendingVerifyEmail ? 'Sending...' : 'Send Verification Email'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleRefreshAdminAuth()}
+              className="px-2.5 py-1 rounded-lg border border-amber-400/50 text-amber-100 font-semibold text-[10px] cursor-pointer"
+            >
+              Refresh Sync
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Notification Toast Strip for Mobile/Desktop */}
       {(statusText || errorText) && (
@@ -3204,16 +3347,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                                     className={inputCls}
                                   />
                                   <button
-                                    onClick={() => {
+                                    onClick={async () => {
                                       const newName = renameValue.trim();
+                                      const prevName = item.name;
                                       setMediaItems((prev) =>
                                         prev.map((m) => (m.id === item.id ? { ...m, name: newName } : m))
                                       );
                                       setRenamingId(null);
-                                      notifyStatus('Renamed.');
-                                      void updateDoc(doc(db, 'media', item.id), { name: newName }).catch(
-                                        (err: any) => notifyStatus(`Rename failed: ${err.message}`, true)
-                                      );
+                                      try {
+                                        await updateDoc(doc(db, 'media', item.id), { name: newName });
+                                        notifyStatus('Renamed.');
+                                      } catch (err: any) {
+                                        setMediaItems((prev) =>
+                                          prev.map((m) => (m.id === item.id ? { ...m, name: prevName } : m))
+                                        );
+                                        notifyStatus(`Rename failed: ${err?.message || 'Permission denied'}`, true);
+                                      }
                                     }}
                                     className={btnPrimary}
                                   >
@@ -3241,15 +3390,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                             <div className={`flex items-center justify-between gap-1 pt-1 border-t ${borderCol}`}>
                               <select
                                 value={item.category || 'Gallery'}
-                                onChange={(e) => {
+                                onChange={async (e) => {
                                   const newCat = e.target.value;
+                                  const prevCat = item.category;
                                   setMediaItems((prev) =>
                                     prev.map((m) => (m.id === item.id ? { ...m, category: newCat } : m))
                                   );
-                                  notifyStatus(`Moved to ${newCat}`);
-                                  void updateDoc(doc(db, 'media', item.id), { category: newCat }).catch(() => {});
-                                  if (newCat === 'Home photo') {
-                                    void setDoc(doc(db, 'content', 'main'), { lockPhotoUrl: item.url }, { merge: true }).catch(() => {});
+                                  try {
+                                    await updateDoc(doc(db, 'media', item.id), { category: newCat });
+                                    if (newCat === 'Home photo') {
+                                      await setDoc(doc(db, 'content', 'main'), { lockPhotoUrl: item.url }, { merge: true });
+                                    }
+                                    notifyStatus(`Moved to ${newCat}`);
+                                  } catch (err: any) {
+                                    setMediaItems((prev) =>
+                                      prev.map((m) => (m.id === item.id ? { ...m, category: prevCat } : m))
+                                    );
+                                    notifyStatus(`Category update failed: ${err?.message || 'Permission denied'}`, true);
                                   }
                                 }}
                                 className={`text-[11px] px-1.5 py-0.5 rounded-[10px] border ${borderCol} bg-[var(--admin-input-bg)] text-[var(--admin-text)]`}
@@ -3442,12 +3599,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                         </td>
                         <td className="py-1.5 px-2.5 text-right whitespace-nowrap space-x-1">
                           <button
-                            onClick={() => {
+                            onClick={async () => {
                               const nextRead = !item.read;
                               setInboxItems((prev) =>
                                 prev.map((x) => (x.id === item.id ? { ...x, read: nextRead } : x))
                               );
-                              void updateDoc(doc(db, 'inbox', item.id), { read: nextRead }).catch(() => {});
+                              try {
+                                await updateDoc(doc(db, 'inbox', item.id), { read: nextRead });
+                              } catch (err: any) {
+                                setInboxItems((prev) =>
+                                  prev.map((x) => (x.id === item.id ? { ...x, read: !nextRead } : x))
+                                );
+                                notifyStatus(`Inbox status update failed: ${err?.message || 'Permission denied'}`, true);
+                              }
                             }}
                             className={btnSecondary}
                           >
@@ -3467,26 +3631,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                           </button>
                           <button
                             onClick={() =>
-                              askConfirm('Delete this inbox item permanently from App & Storage?', () => {
-                                setInboxItems((prev) => prev.filter((x) => x.id !== item.id));
-                                notifyStatus('Inbox item deleted.');
-                                void (async () => {
-                                  try {
-                                    await deleteDoc(doc(db, 'inbox', item.id));
-                                    if (item.mediaUrl || item.storagePath) {
-                                      const delRes = await deleteFirestoreMediaChunks(
-                                        item.storagePath || item.mediaUrl,
-                                        item.mediaUrl,
-                                        item.type
-                                      );
-                                      if (delRes?.cloudinaryDeleted) {
-                                        notifyStatus('Inbox item deleted from App & Cloudinary!');
-                                      }
+                              askConfirm('Delete this inbox item permanently from App & Storage?', async () => {
+                                try {
+                                  await deleteDoc(doc(db, 'inbox', item.id));
+                                  setInboxItems((prev) => prev.filter((x) => x.id !== item.id));
+                                  if (item.mediaUrl || item.storagePath) {
+                                    const delRes = await deleteFirestoreMediaChunks(
+                                      item.storagePath || item.mediaUrl,
+                                      item.mediaUrl,
+                                      item.type
+                                    );
+                                    if (delRes?.cloudinaryDeleted) {
+                                      notifyStatus('Inbox item deleted from App & Cloudinary!');
+                                      return;
                                     }
-                                  } catch (err: any) {
-                                    notifyStatus(`Delete error: ${err.message}`, true);
                                   }
-                                })();
+                                  notifyStatus('Inbox item deleted.');
+                                } catch (err: any) {
+                                  notifyStatus(`Delete error: ${err?.message || 'Permission denied'}`, true);
+                                }
                               })
                             }
                             className={btnDanger}
@@ -3989,21 +4152,26 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                           </td>
                           <td className="py-2 px-2.5 text-right space-x-1 align-top whitespace-nowrap">
                             <button
-                              onClick={() => {
-                                notifyStatus(`Notification resent to ${targetDisplay}.`);
-                                void addDoc(collection(db, 'notifications'), {
-                                  title: n.title,
-                                  message: n.message,
-                                  imageUrl: n.imageUrl || '',
-                                  soundUrl: n.soundUrl || '',
-                                  buttons: Array.isArray(n.buttons) ? n.buttons : [],
-                                  targetUser: n.targetUser || 'ALL',
-                                  targetUserName: n.targetUserName || 'All Users',
-                                  targetUserEmail: n.targetUserEmail || '',
-                                  createdAt: Date.now(),
-                                  status: 'sent',
-                                  seen: false,
-                                }).catch((err: any) => notifyStatus(`Resend error: ${err.message}`, true));
+                              onClick={async () => {
+                                try {
+                                  await addDoc(collection(db, 'notifications'), {
+                                    title: n.title,
+                                    message: n.message,
+                                    imageUrl: n.imageUrl || '',
+                                    soundUrl: n.soundUrl || '',
+                                    buttons: Array.isArray(n.buttons) ? n.buttons : [],
+                                    targetUser: n.targetUser || 'ALL',
+                                    targetUserName: n.targetUserName || 'All Users',
+                                    targetUserEmail: n.targetUserEmail || '',
+                                    targetUserUid: n.targetUserUid || '',
+                                    createdAt: Date.now(),
+                                    status: 'sent',
+                                    seen: false,
+                                  });
+                                  notifyStatus(`Notification resent to ${targetDisplay}.`);
+                                } catch (err: any) {
+                                  notifyStatus(`Resend error: ${err?.message || 'Permission denied'}`, true);
+                                }
                               }}
                               className={btnSecondary}
                             >
@@ -4011,10 +4179,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                             </button>
                             <button
                               onClick={() =>
-                                askConfirm('Delete notification from history?', () => {
-                                  setNotificationsList((prev) => prev.filter((x) => x.id !== n.id));
-                                  notifyStatus('Notification deleted.');
-                                  void deleteDoc(doc(db, 'notifications', n.id)).catch(() => {});
+                                askConfirm('Delete notification from history?', async () => {
+                                  try {
+                                    await deleteDoc(doc(db, 'notifications', n.id));
+                                    setNotificationsList((prev) => prev.filter((x) => x.id !== n.id));
+                                    notifyStatus('Notification deleted.');
+                                  } catch (err: any) {
+                                    notifyStatus(`Delete failed: ${err?.message || 'Permission denied'}`, true);
+                                  }
                                 })
                               }
                               className={btnDanger}
@@ -4051,7 +4223,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
               </div>
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={async () => {
                     const effectiveUser =
                       ovTargetMode === 'USER'
                         ? ovTargetUser.trim() || selectableTargetUsers[0]?.username || editRecipientName.trim() || 'Kashish'
@@ -4067,42 +4239,46 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                         (!ov.scheduledFor || ov.scheduledFor <= now) &&
                         (targetMeta.targetUser === 'ALL' || (ov.targetUser || 'ALL') === targetMeta.targetUser)
                     );
-                    void Promise.all(
-                      pendingOld.map((oldOv) => {
-                        const hasExistingResponse =
-                          Boolean(oldOv.clickedAction) && oldOv.clickedAction !== 'replaced_by_new_overlay';
-                        return updateDoc(
-                          doc(db, 'overlays', oldOv.id),
-                          hasExistingResponse
-                            ? { dismissed: true }
-                            : {
-                                dismissed: true,
-                                clickedAction: 'replaced_by_new_overlay',
-                                seenAt: now,
-                              }
-                        ).catch(() => {});
-                      })
-                    );
-                    notifyStatus(`Instant Truecaller Wakeup + Overlay popup sent to ${targetMeta.targetUserName}!`);
-                    void addDoc(collection(db, 'overlays'), {
-                      title: ovTitle.trim() || 'Thinking of You, Kashish 💖',
-                      message:
-                        ovMessage.trim() ||
-                        'Just wanted to remind you how special you are to me right now!',
-                      imageUrl: ovImage.trim(),
-                      theme: ovTheme,
-                      fontStyle: ovFontStyle,
-                      soundUrl: ovSoundUrl || '',
-                      buttons: ovButtons.slice(0, 3),
-                      targetUser: targetMeta.targetUser,
-                      targetUserName: targetMeta.targetUserName,
-                      targetUserEmail: targetMeta.targetUserEmail,
-                      targetUserUid: targetMeta.targetUserUid,
-                      createdAt: Date.now(),
-                      scheduledFor: null,
-                      status: 'sent',
-                      dismissed: false,
-                    }).catch((err: any) => notifyStatus(`Overlay error: ${err.message}`, true));
+                    try {
+                      await Promise.all(
+                        pendingOld.map((oldOv) => {
+                          const hasExistingResponse =
+                            Boolean(oldOv.clickedAction) && oldOv.clickedAction !== 'replaced_by_new_overlay';
+                          return updateDoc(
+                            doc(db, 'overlays', oldOv.id),
+                            hasExistingResponse
+                              ? { dismissed: true }
+                              : {
+                                  dismissed: true,
+                                  clickedAction: 'replaced_by_new_overlay',
+                                  seenAt: now,
+                                }
+                          ).catch(() => {});
+                        })
+                      );
+                      await addDoc(collection(db, 'overlays'), {
+                        title: ovTitle.trim() || 'Thinking of You, Kashish 💖',
+                        message:
+                          ovMessage.trim() ||
+                          'Just wanted to remind you how special you are to me right now!',
+                        imageUrl: ovImage.trim(),
+                        theme: ovTheme,
+                        fontStyle: ovFontStyle,
+                        soundUrl: ovSoundUrl || '',
+                        buttons: ovButtons.slice(0, 3),
+                        targetUser: targetMeta.targetUser,
+                        targetUserName: targetMeta.targetUserName,
+                        targetUserEmail: targetMeta.targetUserEmail,
+                        targetUserUid: targetMeta.targetUserUid,
+                        createdAt: Date.now(),
+                        scheduledFor: null,
+                        status: 'sent',
+                        dismissed: false,
+                      });
+                      notifyStatus(`Instant Truecaller Wakeup + Overlay popup sent to ${targetMeta.targetUserName}!`);
+                    } catch (err: any) {
+                      notifyStatus(`Overlay error: ${err?.message || 'Permission denied'}`, true);
+                    }
                   }}
                   className={btnPrimary}
                 >
@@ -4770,7 +4946,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                           </td>
                           <td className="py-2 px-2.5 text-right space-x-1 align-top whitespace-nowrap">
                             <button
-                              onClick={() => {
+                              onClick={async () => {
                                 const now = Date.now();
                                 const resendTarget = o.targetUser || 'ALL';
                                 const pendingOld = overlaysList.filter(
@@ -4796,28 +4972,32 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                                     ).catch(() => {});
                                   })
                                 );
-                                notifyStatus(`Overlay resent to ${targetDisplay}.`);
-                                void addDoc(collection(db, 'overlays'), {
-                                  title: o.title,
-                                  message: o.message,
-                                  imageUrl: o.imageUrl || '',
-                                  theme: o.theme || ovTheme,
-                                  fontStyle: o.fontStyle || ovFontStyle,
-                                  soundUrl:
-                                    o.soundUrl !== undefined
-                                      ? o.soundUrl
-                                      : ovSoundUrl === 'silent'
-                                      ? ''
-                                      : ovSoundUrl,
-                                  buttons: o.buttons || [],
-                                  targetUser: o.targetUser || 'ALL',
-                                  targetUserName: o.targetUserName || 'All Users',
-                                  targetUserEmail: o.targetUserEmail || '',
-                                  targetUserUid: o.targetUserUid || '',
-                                  createdAt: Date.now(),
-                                  status: 'sent',
-                                  dismissed: false,
-                                }).catch((err: any) => notifyStatus(`Resend error: ${err.message}`, true));
+                                try {
+                                  await addDoc(collection(db, 'overlays'), {
+                                    title: o.title,
+                                    message: o.message,
+                                    imageUrl: o.imageUrl || '',
+                                    theme: o.theme || ovTheme,
+                                    fontStyle: o.fontStyle || ovFontStyle,
+                                    soundUrl:
+                                      o.soundUrl !== undefined
+                                        ? o.soundUrl
+                                        : ovSoundUrl === 'silent'
+                                        ? ''
+                                        : ovSoundUrl,
+                                    buttons: o.buttons || [],
+                                    targetUser: o.targetUser || 'ALL',
+                                    targetUserName: o.targetUserName || 'All Users',
+                                    targetUserEmail: o.targetUserEmail || '',
+                                    targetUserUid: o.targetUserUid || '',
+                                    createdAt: Date.now(),
+                                    status: 'sent',
+                                    dismissed: false,
+                                  });
+                                  notifyStatus(`Overlay resent to ${targetDisplay}.`);
+                                } catch (err: any) {
+                                  notifyStatus(`Resend error: ${err?.message || 'Permission denied'}`, true);
+                                }
                               }}
                               className={btnSecondary}
                             >
@@ -4825,10 +5005,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                             </button>
                             <button
                               onClick={() =>
-                                askConfirm('Delete this overlay record?', () => {
-                                  setOverlaysList((prev) => prev.filter((x) => x.id !== o.id));
-                                  notifyStatus('Overlay record deleted.');
-                                  void deleteDoc(doc(db, 'overlays', o.id)).catch(() => {});
+                                askConfirm('Delete this overlay record?', async () => {
+                                  try {
+                                    await deleteDoc(doc(db, 'overlays', o.id));
+                                    setOverlaysList((prev) => prev.filter((x) => x.id !== o.id));
+                                    notifyStatus('Overlay record deleted.');
+                                  } catch (err: any) {
+                                    notifyStatus(`Delete failed: ${err?.message || 'Permission denied'}`, true);
+                                  }
                                 })
                               }
                               className={btnDanger}
@@ -5131,7 +5315,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                           type="button"
                           onClick={() =>
                             setMaintLinkUrl(
-                              'https://github.com/sivam1100-creator/Kashish-World/releases/download/latest-apk/Kashishhh.apk'
+                              liveCiApkMeta?.apkUrl ||
+                                'https://github.com/sivam1100-creator/Kashish-World/releases/download/latest-apk/Kashishhh.apk'
                             )
                           }
                           className="text-[10px] text-pink-400 hover:underline font-bold cursor-pointer"
@@ -5235,7 +5420,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                       <button
                         type="button"
                         onClick={async () => {
-                          const info = await fetchLatestReleaseApkInfo();
+                          const info = await fetchLatestReleaseApkInfo(true);
                           if (info) {
                             setLiveCiApkMeta(info);
                             setApkLatestVer(info.version);
@@ -5455,7 +5640,9 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function isAdmin() {
-      return request.auth != null && request.auth.token.email == '${ADMIN_EMAIL}';
+      return request.auth != null &&
+        request.auth.token.email == '${ADMIN_EMAIL}' &&
+        request.auth.token.email_verified == true;
     }
     function isSignedIn() { return request.auth != null; }
 
@@ -5473,13 +5660,30 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
     match /activity/{id} { allow read, update, delete: if isAdmin(); allow create: if isSignedIn(); }
-    match /notifications/{id} { allow read: if true; allow update: if isAdmin() || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['seen', 'seenAt']); allow create, delete: if isAdmin(); }
-    match /overlays/{id} { allow read: if true; allow update: if isAdmin() || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['dismissed', 'clickedAction', 'seenAt']); allow create, delete: if isAdmin(); }
-    match /settings/{id} { allow read: if isSignedIn() || id == 'device_status'; allow create, update: if isAdmin() || id == 'device_status' || (isSignedIn() && id == 'stats'); allow delete: if isAdmin(); }
+    match /notifications/{id} {
+      allow read: if isSignedIn();
+      allow update: if isAdmin() || (isSignedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['seen', 'seenAt', 'clickedAction', 'clickedLabel']));
+      allow create, delete: if isAdmin();
+    }
+    match /overlays/{id} {
+      allow read: if isSignedIn();
+      allow update: if isAdmin() || (isSignedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['dismissed', 'clickedAction', 'clickedLabel', 'seenAt']));
+      allow create, delete: if isAdmin();
+    }
+    match /settings/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isAdmin() || (isSignedIn() && (id == 'device_status' || id == 'stats'));
+      allow delete: if isAdmin();
+    }
     match /users/{userId} {
       allow read: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
       allow create: if isAdmin() || (isSignedIn() && request.auth.uid == userId && request.resource.data.get('approved', false) == false);
       allow update: if isAdmin() || (isSignedIn() && request.auth.uid == userId && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['approved', 'status', 'role']));
+      allow delete: if isAdmin();
+    }
+    match /contacts/{contactId} {
+      allow read: if isAdmin();
+      allow create, update: if isAdmin() || isSignedIn();
       allow delete: if isAdmin();
     }
   }

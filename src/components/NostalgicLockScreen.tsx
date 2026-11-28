@@ -45,11 +45,15 @@ interface NostalgicLockScreenProps {
   currentUserName?: string | null;
   onSignOutUser?: () => void;
   onShowAdmin?: () => void;
+  isForceLocked?: boolean;
+  onForceLockPasscodeUnlock?: () => void;
 }
 
 export const NostalgicLockScreen: React.FC<NostalgicLockScreenProps> = ({
   name,
   lockPhotoUrl,
+  expectedPassword,
+  hintText,
   onUnlock,
   isDarkMode,
   onToggleDarkMode,
@@ -57,12 +61,14 @@ export const NostalgicLockScreen: React.FC<NostalgicLockScreenProps> = ({
   currentUserEmail,
   currentUserName,
   onSignOutUser,
-  onShowAdmin,
+  isForceLocked = false,
+  onForceLockPasscodeUnlock,
 }) => {
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [forcePasscodeInput, setForcePasscodeInput] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isShaking, setIsShaking] = useState(false);
@@ -575,7 +581,117 @@ export const NostalgicLockScreen: React.FC<NostalgicLockScreenProps> = ({
           }}
           className="p-5 sm:p-6 rounded-2xl border-2 space-y-4 transition-all text-left"
         >
-          {(approvalStatus === 'pending' ||
+          {isForceLocked && approvalStatus === 'approved' ? (
+            <div className="space-y-4 text-center py-2 animate-fade-in">
+              <div className="mx-auto w-14 h-14 rounded-2xl flex items-center justify-center border border-rose-500/30 bg-rose-500/10 text-rose-500">
+                <Lock className="w-7 h-7" />
+              </div>
+
+              <div className="space-y-1.5">
+                <h2
+                  style={{ color: 'var(--text)' }}
+                  className="font-serif text-xl sm:text-2xl font-bold"
+                >
+                  Diary Locked by Admin
+                </h2>
+                <p
+                  style={{ color: 'var(--text-soft)' }}
+                  className="text-xs sm:text-sm font-medium leading-relaxed"
+                >
+                  {expectedPassword?.trim()
+                    ? `Enter the secret unlock passcode to reopen ${name}'s World, or wait for Admin to unlock it live.`
+                    : `Admin has temporarily locked ${name}'s World. It will reopen automatically as soon as Admin unlocks it.`}
+                </p>
+              </div>
+
+              {expectedPassword?.trim() && (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (
+                      forcePasscodeInput.trim().toLowerCase() ===
+                      expectedPassword.trim().toLowerCase()
+                    ) {
+                      setFeedbackMessage('');
+                      romanticAudio.playChime();
+                      showNativeToast(`Unlocked ${name}'s World! 💖`);
+                      onForceLockPasscodeUnlock?.();
+                    } else {
+                      setFeedbackMessage('Incorrect passcode. Please try again.');
+                      setIsShaking(true);
+                      setTimeout(() => setIsShaking(false), 600);
+                    }
+                  }}
+                  className="space-y-3 text-left"
+                >
+                  <div className="relative">
+                    <KeyRound
+                      style={{ color: 'var(--text-soft)' }}
+                      className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                    />
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      placeholder={hintText || 'Enter secret unlock passcode'}
+                      value={forcePasscodeInput}
+                      onChange={(e) => {
+                        setForcePasscodeInput(e.target.value);
+                        setFeedbackMessage('');
+                      }}
+                      style={{
+                        backgroundColor: 'var(--card-subtle)',
+                        borderColor: 'var(--card-border)',
+                        color: 'var(--text)',
+                      }}
+                      className="w-full min-h-[46px] pl-10 pr-11 py-2.5 rounded-xl border text-sm font-semibold focus:outline-hidden focus:ring-2 focus:ring-[var(--accent)] transition-all"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      aria-label={showPassword ? 'Hide passcode' : 'Show passcode'}
+                      style={{ color: 'var(--text-soft)' }}
+                      className="absolute right-1 top-1/2 -translate-y-1/2 min-h-[44px] min-w-[44px] flex items-center justify-center hover:text-[var(--accent)] cursor-pointer"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+
+                  {feedbackMessage && (
+                    <p
+                      style={{ color: '#e11d48' }}
+                      className="text-xs font-bold text-center px-2 py-1.5 rounded-lg bg-rose-500/10 border border-rose-500/20"
+                    >
+                      {feedbackMessage}
+                    </p>
+                  )}
+
+                  <button
+                    type="submit"
+                    className="theme-btn-accent w-full min-h-[46px] px-5 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98]"
+                  >
+                    <Unlock className="w-4 h-4" />
+                    <span>Unlock with Passcode</span>
+                  </button>
+                </form>
+              )}
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (onSignOutUser) onSignOutUser();
+                  else auth.signOut().catch(() => {});
+                }}
+                style={{
+                  backgroundColor: 'var(--card-subtle)',
+                  borderColor: 'var(--card-border)',
+                  color: 'var(--text)',
+                }}
+                className="w-full min-h-[44px] px-4 py-2.5 rounded-xl border text-xs sm:text-sm font-bold flex items-center justify-center gap-2 cursor-pointer hover:opacity-90 active:scale-[0.98] transition-all"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>Sign Out / Switch Account</span>
+              </button>
+            </div>
+          ) : (approvalStatus === 'pending' ||
             approvalStatus === 'rejected' ||
             localApprovalStatus === 'pending' ||
             localApprovalStatus === 'rejected') &&

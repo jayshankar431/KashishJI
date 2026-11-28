@@ -453,12 +453,36 @@ class UrgentOverlayWindowService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.CENTER
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
         }
 
         try {
             wm.addView(backdrop, layoutParams)
             overlayRootView = backdrop
-        } catch (e: Exception) {
+        } catch (_: Exception) {
+            // OEM (MIUI/HyperOS/ColorOS/Android Go) blocked TYPE_APPLICATION_OVERLAY — fall back to full-screen activity
+            try {
+                val fallbackIntent = Intent(this, UrgentOverlayFallbackActivity::class.java).apply {
+                    addFlags(
+                        Intent.FLAG_ACTIVITY_NEW_TASK or
+                            Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                            Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    )
+                    putExtra("overlayDocId", overlayDocId)
+                    putExtra("title", title)
+                    putExtra("message", message)
+                    putExtra("imageUrl", imageUrl)
+                    putExtra("theme", theme)
+                    putExtra("popupColor", theme)
+                    putExtra("fontStyle", fontStyle)
+                    putExtra("phoneNumber", phoneNumber)
+                    putExtra("notificationId", notificationId)
+                }
+                startActivity(fallbackIntent)
+            } catch (_: Exception) {}
             stopSelf()
         }
     }

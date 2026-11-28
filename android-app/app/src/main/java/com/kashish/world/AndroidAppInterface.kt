@@ -169,14 +169,34 @@ class AndroidAppInterface(private val context: Context) {
 
     @JavascriptInterface
     fun requestOverlayPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(context)) {
-            val intent = Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:${context.packageName}")
-            ).apply {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(context)) {
+            return
+        }
+        if (!PermissionReporter.isOverlaySupportedByDevice(context)) {
+            showToast("This phone disables overlay windows (Android Go). Full-screen alert mode will be used instead.")
+            return
+        }
+        val pkgUri = Uri.parse("package:${context.packageName}")
+        val candidates = listOf(
+            Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkgUri).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
+            Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            },
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkgUri).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
-            context.startActivity(intent)
+        )
+        for (intent in candidates) {
+            try {
+                context.startActivity(intent)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    showToast("If toggle is greyed out: Open App Info → ⋮ menu → Allow restricted settings")
+                }
+                return
+            } catch (_: Exception) {}
         }
     }
 

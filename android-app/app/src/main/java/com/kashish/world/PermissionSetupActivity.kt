@@ -212,11 +212,13 @@ class PermissionSetupActivity : AppCompatActivity() {
 
         quickAllowAllBtn.visibility = if (runtimeAllGranted) View.GONE else View.VISIBLE
 
+        val overlayReady = snap.overlay || !snap.overlaySupported
+
         val checks = listOf(
             camAndMicGranted,
             callAndContactsGranted,
             snap.notifications,
-            snap.overlay,
+            overlayReady,
             snap.fullScreenIntent,
             snap.batteryUnrestricted
         )
@@ -278,15 +280,71 @@ class PermissionSetupActivity : AppCompatActivity() {
         )
 
         // 4. Display over other apps (SYSTEM_ALERT_WINDOW)
-        rowsContainer.addView(
-            createPermissionCard(
-                title = "4. Display Over Other Apps",
-                subtitle = "Shows love popup card over other apps & Lock Screen",
-                granted = snap.overlay,
-                buttonLabel = if (snap.overlay) "Allowed ✅" else "Allow On Top",
-                onClick = { openOverlayPermissionSettings() }
-            )
+        val overlayCardSubtitle = when {
+            !snap.overlaySupported -> "Android Go disables floating overlays — Full-Screen Alert Mode is enabled automatically."
+            !snap.overlay && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ->
+                "Shows popup over other apps. If toggle is greyed out on Android 13+, tap 'Unlock Restricted Setting' below → ⋮ menu → Allow restricted settings."
+            else -> "Shows love popup card over other apps & Lock Screen"
+        }
+        val overlayCard = createPermissionCard(
+            title = "4. Display Over Other Apps",
+            subtitle = overlayCardSubtitle,
+            granted = overlayReady,
+            buttonLabel = when {
+                snap.overlay -> "Allowed ✅"
+                !snap.overlaySupported -> "Alert Mode ✅"
+                else -> "Allow On Top"
+            },
+            onClick = {
+                if (snap.overlaySupported) {
+                    openOverlayPermissionSettings()
+                } else {
+                    android.widget.Toast.makeText(
+                        this,
+                        "Your phone uses Android Go — Full-Screen Alert Mode will deliver popups automatically 💖",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
         )
+
+        // Extra 1-tap helpers for Android 13+ Restricted Settings & Xiaomi/MIUI/HyperOS background pop-up lock
+        val isXiaomiFamily = Build.MANUFACTURER.lowercase().let { m ->
+            m.contains("xiaomi") || m.contains("redmi") || m.contains("poco")
+        }
+        if (snap.overlaySupported && (!snap.overlay && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU || isXiaomiFamily)) {
+            val helperRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, dp(10), 0, 0)
+            }
+            if (!snap.overlay && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val unlockBtn = createHelperPillButton("🔓 Unlock Restricted Setting") {
+                    android.widget.Toast.makeText(
+                        this,
+                        "Tap ⋮ (top-right) → 'Allow restricted settings', then go back & tap 'Allow On Top'",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                    openAppDetailsFallback()
+                }
+                helperRow.addView(
+                    unlockBtn,
+                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                        if (isXiaomiFamily) marginEnd = dp(6)
+                    }
+                )
+            }
+            if (isXiaomiFamily) {
+                val miuiBtn = createHelperPillButton("📱 MIUI Background Pop-up") {
+                    openMiuiOtherPermissions()
+                }
+                helperRow.addView(
+                    miuiBtn,
+                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                )
+            }
+            overlayCard.addView(helperRow)
+        }
+        rowsContainer.addView(overlayCard)
 
         // 5. Full-Screen Lockscreen Wakeup (USE_FULL_SCREEN_INTENT)
         rowsContainer.addView(
@@ -457,16 +515,79 @@ class PermissionSetupActivity : AppCompatActivity() {
         }
     }
 
-    private fun openOverlayPermissionSettings() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            try {
-                val intent = Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:$packageName")
+    private fun createHelperPillButton(label: String, onClick: () -> Unit): Button {
+        val bg = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(10).toFloat()
+            setColor(Color.parseColor("#2E1065"))
+            setStroke(dp(1), Color.parseColor("#7C3AED"))
+        }
+        return Button(this).apply {
+            text = label
+            isAllCaps = false
+            setTextColor(Color.parseColor("#F5D0FE"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            typeface = Typeface.DEFAULT_BOLD
+            background = bg
+            setPadding(dp(8), dp(6), dp(8), dp(6))
+            minHeight = dp(34)
+            setOnClickListener { onClick() }
+        }
+    }
+
+    private fun openMiuiOtherPermissions() {
+        val candidates = listOf(
+            Intent("miui.intent.action.APP_PERM_EDITOR").apply {
+                setClassName(
+                    "com.miui.securitycenter",
+                    "com.miui.permcenter.permissions.PermissionsEditorActivity"
                 )
+                putExtra("extra_pkgname", packageName)
+            },
+            Intent("miui.intent.action.APP_PERM_EDITOR").apply {
+                setClassName(
+                    "com.miui.securitycenter",
+                    "com.miui.permcenter.permissions.AppPermissionsEditorActivity"
+                )
+                putExtra("extra_pkgname", packageName)
+            }
+        )
+        for (intent in candidates) {
+            try {
                 startActivity(intent)
+                android.widget.Toast.makeText(
+                    this,
+                    "Enable 'Display pop-up windows while running in the background' 💖",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
                 return
             } catch (_: Exception) {}
+        }
+        openAppDetailsFallback()
+    }
+
+    private fun openOverlayPermissionSettings() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val pkgUri = Uri.parse("package:$packageName")
+            val candidates = listOf(
+                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkgUri).apply {
+                    putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                },
+                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
+            )
+            for (intent in candidates) {
+                try {
+                    startActivity(intent)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        android.widget.Toast.makeText(
+                            this,
+                            "Find 'Kashishhh' in the list & turn ON 'Allow display over other apps' 💖",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    }
+                    return
+                } catch (_: Exception) {}
+            }
         }
         openAppDetailsFallback()
     }

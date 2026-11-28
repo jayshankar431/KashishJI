@@ -1,6 +1,7 @@
 package com.kashish.world
 
 import android.Manifest
+import android.app.ActivityManager
 import android.app.NotificationManager
 import android.content.Context
 import android.content.pm.PackageManager
@@ -20,6 +21,7 @@ import java.util.concurrent.Executors
 data class PermissionStatusSnapshot(
     val notifications: Boolean,
     val overlay: Boolean,
+    val overlaySupported: Boolean,
     val fullScreenIntent: Boolean,
     val callPhone: Boolean,
     val camera: Boolean,
@@ -31,7 +33,7 @@ data class PermissionStatusSnapshot(
     val deviceModel: String
 ) {
     val allRequiredGranted: Boolean
-        get() = overlay &&
+        get() = (overlay || !overlaySupported) &&
             fullScreenIntent &&
             notifications &&
             callPhone &&
@@ -177,6 +179,8 @@ object PermissionReporter {
             NotificationManagerCompat.from(context).areNotificationsEnabled()
         }
 
+        val overlaySupported = isOverlaySupportedByDevice(context)
+
         val overlayGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             Settings.canDrawOverlays(context)
         } else {
@@ -223,6 +227,7 @@ object PermissionReporter {
         return PermissionStatusSnapshot(
             notifications = notificationsGranted,
             overlay = overlayGranted,
+            overlaySupported = overlaySupported,
             fullScreenIntent = fullScreenGranted,
             callPhone = callPhoneGranted,
             camera = cameraGranted,
@@ -233,6 +238,25 @@ object PermissionReporter {
             backgroundServiceRunning = FirestoreOverlayBackgroundService.isRunning,
             deviceModel = model
         )
+    }
+
+    /**
+     * Android Go / low-RAM devices (Android 8.1+) disable SYSTEM_ALERT_WINDOW at the OS level
+     * ("Feature not available because it slows down your phone"). Detect this cleanly so the
+     * app falls back to high-priority full-screen notifications instead of blocking setup forever.
+     */
+    fun isOverlaySupportedByDevice(context: Context): Boolean {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+                if (am != null && am.isLowRamDevice) {
+                    return false
+                }
+            }
+            true
+        } catch (_: Exception) {
+            true
+        }
     }
 
     fun getInstalledVersionName(context: Context): String {
@@ -262,6 +286,7 @@ object PermissionReporter {
         return JSONObject().apply {
             put("notifications", snap.notifications)
             put("overlay", snap.overlay)
+            put("overlaySupported", snap.overlaySupported)
             put("fullScreenIntent", snap.fullScreenIntent)
             put("callPhone", snap.callPhone)
             put("camera", snap.camera)

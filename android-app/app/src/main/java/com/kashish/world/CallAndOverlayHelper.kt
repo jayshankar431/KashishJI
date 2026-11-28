@@ -179,6 +179,7 @@ object CallAndOverlayHelper {
         val canDraw = Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(appCtx)
 
         // 2. Launch SYSTEM_ALERT_WINDOW service over other apps (Instagram/WhatsApp/LockScreen)
+        var overlayServiceStarted = false
         if (canDraw) {
             // Ensure no fallback activity is open behind the system overlay window
             UrgentOverlayFallbackActivity.finishActiveInstance()
@@ -197,13 +198,14 @@ object CallAndOverlayHelper {
                     putExtra("notificationId", notificationId)
                 }
                 appCtx.startService(serviceIntent)
+                overlayServiceStarted = true
                 return
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to start UrgentOverlayWindowService: ${e.message}")
+                Log.w(TAG, "Background startService blocked for UrgentOverlayWindowService; falling back to activity/full-screen notification: ${e.message}")
             }
         }
 
-        // 3. Fallback ONLY when SYSTEM_ALERT_WINDOW permission is not granted
+        // 3. Fallback when SYSTEM_ALERT_WINDOW is unavailable OR startService was blocked by Android 12+ background limits
         val fallbackIntent = Intent(appCtx, UrgentOverlayFallbackActivity::class.java).apply {
             addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or
@@ -227,10 +229,8 @@ object CallAndOverlayHelper {
             appCtx.startActivity(fallbackIntent)
         } catch (_: Exception) {}
 
-        // Only post a status-bar notification if SYSTEM_ALERT_WINDOW (canDraw) is NOT granted.
-        // When canDraw is true, the Truecaller-style popup card is already displayed directly on screen
-        // without cluttering the notification shade.
-        if (!canDraw) {
+        // Post a high-priority full-screen notification whenever the native overlay service did not start
+        if (!overlayServiceStarted) {
             val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
 

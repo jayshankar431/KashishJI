@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { onAuthStateChanged } from 'firebase/auth';
 import { doc, onSnapshot } from 'firebase/firestore';
-import { db } from './firebase';
+import { auth, db } from './firebase';
 import { resolveFirestoreMediaUrl } from './androidBridge';
 import { CONFIG } from './config';
 import type { CustomTabDefinition, DynamicSlotsMap } from './dynamicSlots';
@@ -218,13 +219,32 @@ export const SITE_DEFAULTS: SiteContent = {
   apkApplyToWeb: false,
 };
 
+const ALLOW_EMPTY_STRING_KEYS = new Set<keyof SiteContent>([
+  'entryPassword',
+  'entryLockHash',
+  'entryLockHint',
+  'entryPlaceholder',
+  'passwordHint',
+  'secretLetterMusicUrl',
+  'maintenanceLinkUrl',
+  'cloudinaryUploadPreset',
+  'cloudinaryApiKey',
+  'cloudinaryApiSecret',
+]);
+
+const ALLOW_EMPTY_ARRAY_KEYS = new Set<keyof SiteContent>([
+  'customTabs',
+  'popupTemplates',
+  'savedMusicTracks',
+]);
+
 export function mergeSite(raw: SiteOverrides): SiteContent {
   const out: SiteContent = { ...SITE_DEFAULTS };
   (Object.keys(SITE_DEFAULTS) as (keyof SiteContent)[]).forEach((k) => {
     const v = raw[k];
     if (v === undefined || v === null) return;
-    if (typeof v === 'string' && v.trim() === '' && k !== 'entryPassword') return;
-    if (Array.isArray(v) && v.length === 0) return;
+    if (typeof v === 'string' && v.trim() === '' && !ALLOW_EMPTY_STRING_KEYS.has(k)) return;
+    if (Array.isArray(v) && v.length === 0 && !ALLOW_EMPTY_ARRAY_KEYS.has(k)) return;
     Object.assign(out, { [k]: v });
   });
   if (raw.features) {
@@ -256,54 +276,83 @@ export const SiteContentProvider: React.FC<{ children: React.ReactNode }> = ({ c
   });
 
   useEffect(() => {
-    // 1. Real-time listener on content/main (text, poems, letters, name meanings, countdown date)
-    const unsubContent = onSnapshot(
-      doc(db, 'content', 'main'),
-      (snap) => {
-        if (snap.exists()) {
-          const data = snap.data() as Partial<SiteContent>;
-          setOverrides((prev) => {
-            const next = { ...prev, ...data };
-            try {
-              window.localStorage.setItem('kashish_site_overrides', JSON.stringify(next));
-            } catch {}
-            return next;
-          });
-        }
-      },
-      () => {}
-    );
+    let unsubContent: (() => void) | null = null;
+    let unsubSettings: (() => void) | null = null;
+    let cancelled = false;
 
-    // 2. Real-time listener on settings/config (feature toggles, music, lock password, call number, maintenance)
-    const unsubSettings = onSnapshot(
-      doc(db, 'settings', 'config'),
-      async (snap) => {
-        if (snap.exists()) {
-          const rawData = { ...(snap.data() as Partial<SiteContent>) };
-          const stateData = { ...rawData };
-          if (
-            stateData.musicUrl &&
-            (stateData.musicUrl.startsWith('firestore-chunked://') ||
-              stateData.musicUrl.startsWith('data:audio/'))
-          ) {
-            const resolved = await resolveFirestoreMediaUrl(stateData.musicUrl);
-            if (resolved) stateData.musicUrl = resolved;
+    const cleanupDocListeners = () => {
+      if (unsubContent) {
+        unsubContent();
+        unsubContent = null;
+      }
+      if (unsubSettings) {
+        unsubSettings();
+        unsubSettings = null;
+      }
+    };
+
+    // Wait for Firebase Auth state before attaching Firestore listeners so hardened
+    // `allow read: if isSignedIn();` rules never terminate listeners on cold startup.
+    const unsubAuth = onAuthStateChanged(auth, (user) => {
+      cleanupDocListeners();
+      if (!user || cancelled) return;
+
+      // 1. Real-time listener on content/main (text, poems, letters, name meanings, countdown date)
+      unsubContent = onSnapshot(
+        doc(db, 'content', 'main'),
+        (snap) => {
+          if (snap.exists()) {
+            const data = snap.data() as Partial<SiteContent>;
+            setOverrides((prev) => {
+              const next = { ...prev, ...data };
+              try {
+                window.localStorage.setItem('kashish_site_overrides', JSON.stringify(next));
+              } catch {}
+              return next;
+            });
           }
-          setOverrides((prev) => {
-            const nextState = { ...prev, ...stateData };
-            try {
-              const forStorage = { ...prev, ...rawData };
-              window.localStorage.setItem('kashish_site_overrides', JSON.stringify(forStorage));
-            } catch {}
-            return nextState;
-          });
+        },
+        (err) => {
+          console.error('[SiteContent] content/main sync error:', err?.message || err);
         }
-      },
-      () => {}
-    );
+      );
+
+      // 2. Real-time listener on settings/config (feature toggles, music, lock password, call number, maintenance)
+      unsubSettings = onSnapshot(
+        doc(db, 'settings', 'config'),
+        async (snap) => {
+          if (snap.exists()) {
+            const rawData = { ...(snap.data() as Partial<SiteContent>) };
+            const stateData = { ...rawData };
+            if (
+              stateData.musicUrl &&
+              (stateData.musicUrl.startsWith('firestore-chunked://') ||
+                stateData.musicUrl.startsWith('data:audio/'))
+            ) {
+              const resolved = await resolveFirestoreMediaUrl(stateData.musicUrl);
+              if (resolved) stateData.musicUrl = resolved;
+            }
+            if (cancelled) return;
+            setOverrides((prev) => {
+              const nextState = { ...prev, ...stateData };
+              try {
+                const forStorage = { ...prev, ...rawData };
+                window.localStorage.setItem('kashish_site_overrides', JSON.stringify(forStorage));
+              } catch {}
+              return nextState;
+            });
+          }
+        },
+        (err) => {
+          console.error('[SiteContent] settings/config sync error:', err?.message || err);
+        }
+      );
+    });
+
     return () => {
-      unsubContent();
-      unsubSettings();
+      cancelled = true;
+      cleanupDocListeners();
+      unsubAuth();
     };
   }, []);
 

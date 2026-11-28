@@ -32,8 +32,9 @@ import {
   CloudinarySyncManager,
   DEFAULT_CLOUDINARY_GALLERY_FOLDER,
 } from '../utils/CloudinarySyncManager';
+import { onAuthStateChanged } from 'firebase/auth';
 import { collection, doc, onSnapshot, query, orderBy, limit, updateDoc, increment } from 'firebase/firestore';
-import { db } from '../firebase';
+import { auth, db } from '../firebase';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSite } from '../siteContent';
 import { DynamicSlot } from './DynamicSlot';
@@ -258,40 +259,52 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ name, isDarkMode
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
-  // Subscribe to real-time Firestore media collection
+  // Subscribe to real-time Firestore media collection once authenticated
   useEffect(() => {
-    const q = query(collection(db, 'media'), orderBy('createdAt', 'desc'), limit(120));
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const remoteItems: GalleryPhoto[] = [];
-        snap.forEach((docSnap) => {
-          const d = docSnap.data();
-          if (d.isChunk) return;
-          if (d.category === 'Gallery' || d.category === 'Uploads From Her' || !d.category) {
-            remoteItems.push({
-              id: docSnap.id,
-              url: d.url || '',
-              storagePath: d.storagePath || '',
-              cloudinaryPublicId: d.cloudinaryPublicId || '',
-              resourceType: d.type === 'video' ? 'video' : 'image',
-              caption: d.name || d.caption || 'Memory',
-              timestamp: d.createdAt || Date.now(),
-              likes: d.likes || 1,
-              views: d.views || 0,
-              isCurated: d.uploadedBy !== 'her',
-              isFirestore: true,
-              type: d.uploadedBy === 'her' ? 'surprise' : 'curated',
-            });
-          }
-        });
-        setFirestorePhotos(remoteItems);
-      },
-      () => {
-        setFirestorePhotos([]);
+    let unsubMedia: (() => void) | null = null;
+    const unsubAuth = onAuthStateChanged(auth, (user) => {
+      if (unsubMedia) {
+        unsubMedia();
+        unsubMedia = null;
       }
-    );
-    return () => unsub();
+      if (!user) return;
+
+      const q = query(collection(db, 'media'), orderBy('createdAt', 'desc'), limit(120));
+      unsubMedia = onSnapshot(
+        q,
+        (snap) => {
+          const remoteItems: GalleryPhoto[] = [];
+          snap.forEach((docSnap) => {
+            const d = docSnap.data();
+            if (d.isChunk) return;
+            if (d.category === 'Gallery' || d.category === 'Uploads From Her' || !d.category) {
+              remoteItems.push({
+                id: docSnap.id,
+                url: d.url || '',
+                storagePath: d.storagePath || '',
+                cloudinaryPublicId: d.cloudinaryPublicId || '',
+                resourceType: d.type === 'video' ? 'video' : 'image',
+                caption: d.name || d.caption || 'Memory',
+                timestamp: d.createdAt || Date.now(),
+                likes: d.likes || 1,
+                views: d.views || 0,
+                isCurated: d.uploadedBy !== 'her',
+                isFirestore: true,
+                type: d.uploadedBy === 'her' ? 'surprise' : 'curated',
+              });
+            }
+          });
+          setFirestorePhotos(remoteItems);
+        },
+        (err) => {
+          console.error('[GallerySection] media sync error:', err?.message || err);
+        }
+      );
+    });
+    return () => {
+      if (unsubMedia) unsubMedia();
+      unsubAuth();
+    };
   }, []);
 
   // Fetch & sync photos from the 'kashish-memories' folder via CloudinarySyncManager

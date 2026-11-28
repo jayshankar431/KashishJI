@@ -99,7 +99,13 @@ export default function App() {
   const [isLoadingAssets, setIsLoadingAssets] = useState(true);
   const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
   const [navDirection, setNavDirection] = useState<'neutral' | 'forward' | 'back'>('neutral');
+  const [forceLockBypassed, setForceLockBypassed] = useState(false);
   const prevApprovalRef = useRef<string>(approvalStatus);
+
+  // Reset local passcode bypass whenever Admin toggles Force Lock remotely
+  useEffect(() => {
+    setForceLockBypassed(false);
+  }, [site.forceLock]);
 
   // Detect when virtual keyboard or text input is active so the bottom floating hover dock never hovers on top of the keyboard
   useEffect(() => {
@@ -1098,7 +1104,7 @@ export default function App() {
       })()}
 
       {/* Maintenance Mode Gate (for non-admin users, with optional Updated APK / Action Link Button) */}
-      {site.maintenanceMode && auth.currentUser?.email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase() && (
+      {site.maintenanceMode && authUser?.email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase() && (
         <div className="fixed inset-0 z-[1500] bg-[#12071a]/98 backdrop-blur-xl text-white flex flex-col items-center justify-center p-6 text-center select-none">
           <div className="max-w-md w-full rounded-3xl border border-pink-500/35 bg-gradient-to-b from-[#230e2e] to-[#16081f] p-6 sm:p-7 shadow-[0_0_50px_rgba(244,63,94,0.28)] space-y-5">
             <div className="relative mx-auto w-24 h-24 rounded-full p-1 bg-gradient-to-tr from-pink-500 via-rose-400 to-amber-300 shadow-lg">
@@ -1140,26 +1146,32 @@ export default function App() {
       )}
 
       {/* Lock Page: Mounts NostalgicLockScreen when locked, unapproved, or when forceLock is active for non-admin */}
-      {!isUnlocked ||
-      approvalStatus !== 'approved' ||
-      (site.forceLock && authUser?.email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) ? (
-        <NostalgicLockScreen
-          name={site.name}
-          lockPhotoUrl={site.lockPhotoUrl}
-          expectedPassword={site.entryPassword}
-          expectedHash={site.entryLockHash}
-          hintText={site.entryLockHint}
-          placeholder={site.entryPlaceholder}
-          onUnlock={handleUnlock}
-          isDarkMode={isDarkMode}
-          onToggleDarkMode={handleToggleDarkMode}
-          approvalStatus={approvalStatus}
-          currentUserEmail={authUser?.email}
-          currentUserName={authUser?.displayName}
-          onSignOutUser={handleLockAgain}
-          onShowAdmin={() => setIsAdminOpen(true)}
-        />
-      ) : (
+      {(() => {
+        const isForceLockedForUser = Boolean(
+          site.forceLock &&
+            !forceLockBypassed &&
+            authUser?.email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()
+        );
+        return !isUnlocked || approvalStatus !== 'approved' || isForceLockedForUser ? (
+          <NostalgicLockScreen
+            name={site.name}
+            lockPhotoUrl={site.lockPhotoUrl}
+            expectedPassword={site.entryPassword}
+            expectedHash={site.entryLockHash}
+            hintText={site.entryLockHint}
+            placeholder={site.entryPlaceholder}
+            onUnlock={handleUnlock}
+            isDarkMode={isDarkMode}
+            onToggleDarkMode={handleToggleDarkMode}
+            approvalStatus={approvalStatus}
+            currentUserEmail={authUser?.email}
+            currentUserName={authUser?.displayName}
+            onSignOutUser={handleLockAgain}
+            onShowAdmin={() => setIsAdminOpen(true)}
+            isForceLocked={isForceLockedForUser}
+            onForceLockPasscodeUnlock={() => setForceLockBypassed(true)}
+          />
+        ) : (
         /* Main Website: Created only after correct unlock */
         <div className="relative z-10 min-h-screen min-h-[100dvh] flex flex-col justify-between animate-fade-in">
           {/* Top Bar Navigation */}
@@ -1238,19 +1250,49 @@ export default function App() {
                 />
               )}
 
-              {activeTab === 'games' && (
-                <GamesSection
-                  name={site.name}
-                  compliments={site.compliments}
-                  isDarkMode={isDarkMode}
-                  onGameWin={handleGameWin}
-                  onUpdateHighScore={handleUpdateHighScore}
-                />
-              )}
+              {activeTab === 'games' &&
+                (site.features?.games !== false ? (
+                  <GamesSection
+                    name={site.name}
+                    compliments={site.compliments}
+                    isDarkMode={isDarkMode}
+                    onGameWin={handleGameWin}
+                    onUpdateHighScore={handleUpdateHighScore}
+                  />
+                ) : (
+                  <div className="max-w-md mx-auto my-12 p-6 rounded-3xl border text-center space-y-3" style={{ backgroundColor: 'var(--card)', borderColor: 'var(--card-border)' }}>
+                    <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
+                      Mini-Games section is currently paused.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => handleTabSelect('rooms')}
+                      className="px-4 py-2 rounded-full text-xs font-bold text-white cursor-pointer"
+                      style={{ backgroundColor: 'var(--accent)' }}
+                    >
+                      Back to Rooms
+                    </button>
+                  </div>
+                ))}
 
-              {activeTab === 'cute-pic' && (
-                <CutePicSection onBack={() => handleTabSelect('home')} />
-              )}
+              {activeTab === 'cute-pic' &&
+                (site.features?.galleryUpload !== false ? (
+                  <CutePicSection onBack={() => handleTabSelect('home')} />
+                ) : (
+                  <div className="max-w-md mx-auto my-12 p-6 rounded-3xl border text-center space-y-3" style={{ backgroundColor: 'var(--card)', borderColor: 'var(--card-border)' }}>
+                    <p className="text-sm font-semibold" style={{ color: 'var(--text)' }}>
+                      Photo upload is currently paused.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => handleTabSelect('home')}
+                      className="px-4 py-2 rounded-full text-xs font-bold text-white cursor-pointer"
+                      style={{ backgroundColor: 'var(--accent)' }}
+                    >
+                      Back to Home
+                    </button>
+                  </div>
+                ))}
 
               {activeTab === 'secret-letter' && (
                 <SecretLetterSection
@@ -1441,7 +1483,8 @@ export default function App() {
             defaultCallNumber={site.callPhoneNumber || '9817905531'}
           />
         </div>
-      )}
+        );
+      })()}
 
       {/* Theme Settings Popup Modal (lazy-loaded & mounted only when opened) */}
       {isThemeModalOpen && (
