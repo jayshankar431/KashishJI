@@ -441,7 +441,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
   const [newAdminPassword, setNewAdminPassword] = useState<string>('');
   const [cloudNameInput, setCloudNameInput] = useState<string>(site.cloudinaryCloudName || 'dsfcu9y1h');
   const [uploadPresetInput, setUploadPresetInput] = useState<string>(
-    site.cloudinaryUploadPreset || 'Unsigned Upload Preset Name'
+    site.cloudinaryUploadPreset && site.cloudinaryUploadPreset !== 'Unsigned Upload Preset Name'
+      ? site.cloudinaryUploadPreset
+      : ''
   );
   const [apiKeyInput, setApiKeyInput] = useState<string>(site.cloudinaryApiKey || '');
   const [apiSecretInput, setApiSecretInput] = useState<string>(site.cloudinaryApiSecret || '');
@@ -2986,7 +2988,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                             </label>
                             <input
                               type="text"
-                              placeholder="Unsigned Upload Preset Name"
+                              placeholder="e.g. kashish_unsigned (Cloudinary Settings → Upload)"
                               value={uploadPresetInput}
                               onChange={(e) => setUploadPresetInput(e.target.value)}
                               className={inputCls}
@@ -5386,7 +5388,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                   </span>
                 </div>
                 <p className={`text-[11px] ${textMuted}`}>
-                  <b>Upload</b> uses your Unsigned Upload Preset (`Unsigned Upload Preset Name`). To also <b>permanently delete files from Cloudinary</b> when you click Delete in the Admin Panel, paste your <b>API Key</b> and <b>API Secret</b> (found in <b>Cloudinary Dashboard → Settings ⚙️ → API Keys</b>).
+                  <b>Upload</b> uses your Cloudinary Unsigned Upload Preset (create one in <b>Cloudinary Dashboard → Settings ⚙️ → Upload → Upload Presets</b>). To also <b>permanently delete files from Cloudinary</b> when you click Delete in the Admin Panel, paste your <b>API Key</b> and <b>API Secret</b> (found in <b>Cloudinary Dashboard → Settings ⚙️ → API Keys</b>).
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2 items-end">
                   <div>
@@ -5405,7 +5407,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ isOpen, onClose }) => {
                       type="text"
                       value={uploadPresetInput}
                       onChange={(e) => setUploadPresetInput(e.target.value)}
-                      placeholder="Unsigned Upload Preset Name"
+                      placeholder="e.g. kashish_unsigned"
                       className={inputCls}
                     />
                   </div>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 import { resolveFirestoreMediaUrl, triggerHaptic } from '../androidBridge';
+import { CloudinarySyncManager } from '../utils/CloudinarySyncManager';
 
 function pickValidUrl(storagePath?: string, fallbackUrl?: string): string {
   const isUrl = (v?: string) =>
@@ -20,12 +21,22 @@ export const PrivateStorageImage: React.FC<
     storagePath?: string;
     fallbackUrl?: string;
     imgClassName?: string;
+    cloudinaryWidth?: number;
   }
-> = ({ storagePath, fallbackUrl, className = '', imgClassName = 'w-full h-full object-cover', onLoad, ...props }) => {
+> = ({
+  storagePath,
+  fallbackUrl,
+  className = '',
+  imgClassName = 'w-full h-full object-cover',
+  cloudinaryWidth = 800,
+  onLoad,
+  ...props
+}) => {
   const rawUrl = pickValidUrl(storagePath, fallbackUrl);
-  const [resolvedUrl, setResolvedUrl] = useState<string>(
-    rawUrl.startsWith('firestore-chunked://') ? '' : rawUrl
-  );
+  const optimizedRawUrl = rawUrl.startsWith('firestore-chunked://')
+    ? ''
+    : CloudinarySyncManager.getOptimizedImageUrl(rawUrl, cloudinaryWidth);
+  const [resolvedUrl, setResolvedUrl] = useState<string>(optimizedRawUrl);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
@@ -36,15 +47,15 @@ export const PrivateStorageImage: React.FC<
     }
     if (rawUrl.startsWith('firestore-chunked://')) {
       resolveFirestoreMediaUrl(rawUrl).then((u) => {
-        if (active) setResolvedUrl(u);
+        if (active) setResolvedUrl(CloudinarySyncManager.getOptimizedImageUrl(u, cloudinaryWidth));
       });
     } else {
-      setResolvedUrl(rawUrl);
+      setResolvedUrl(CloudinarySyncManager.getOptimizedImageUrl(rawUrl, cloudinaryWidth));
     }
     return () => {
       active = false;
     };
-  }, [rawUrl]);
+  }, [rawUrl, cloudinaryWidth]);
 
   return (
     <div className={`relative w-full h-full overflow-hidden ${className}`}>
@@ -83,7 +94,9 @@ export const ZoomablePhotoViewer: React.FC<ZoomablePhotoViewerProps> = ({
 }) => {
   const rawUrl = pickValidUrl(storagePath, fallbackUrl);
   const [resolvedUrl, setResolvedUrl] = useState<string>(
-    rawUrl.startsWith('firestore-chunked://') ? '' : rawUrl
+    rawUrl.startsWith('firestore-chunked://')
+      ? ''
+      : CloudinarySyncManager.getOptimizedImageUrl(rawUrl, 1400)
   );
   const [scale, setScale] = useState<number>(1);
   const [offset, setOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -120,10 +133,10 @@ export const ZoomablePhotoViewer: React.FC<ZoomablePhotoViewerProps> = ({
     }
     if (rawUrl.startsWith('firestore-chunked://')) {
       resolveFirestoreMediaUrl(rawUrl).then((u) => {
-        if (active) setResolvedUrl(u);
+        if (active) setResolvedUrl(CloudinarySyncManager.getOptimizedImageUrl(u, 1400));
       });
     } else {
-      setResolvedUrl(rawUrl);
+      setResolvedUrl(CloudinarySyncManager.getOptimizedImageUrl(rawUrl, 1400));
     }
     return () => {
       active = false;
@@ -315,6 +328,7 @@ export const ZoomablePhotoViewer: React.FC<ZoomablePhotoViewerProps> = ({
         <img
           src={resolvedUrl}
           alt={alt}
+          decoding="async"
           draggable={false}
           style={{
             transform: `translate3d(${offset.x}px, ${offset.y}px, 0) scale(${scale})`,

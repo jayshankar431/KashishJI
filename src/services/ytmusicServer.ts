@@ -34,10 +34,64 @@ const streamUrlCache = new Map<string, ResolvedAudioStream>();
 const SERVER_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const STREAM_CACHE_TTL_MS = 20 * 60 * 1000; // 20 minutes
 
-// Exact protobuf filter used by sigma67/ytmusicapi for filter="songs" (YouTube Music catalog songs)
+// Exact protobuf filter params used by YouTube Music WEB_REMIX InnerTube API
 const YTMUSIC_SONGS_FILTER_PARAMS = 'EgWKAQIIAWoKEAkQBRAKEAMQBA==';
-// Exact protobuf filter used by sigma67/ytmusicapi for filter="videos" (YouTube Music catalog videos)
 const YTMUSIC_VIDEOS_FILTER_PARAMS = 'EgWKAQIQAWoKEAkQChAFEAMQBA==';
+
+export type ServerSearchFilter =
+  | 'all'
+  | 'songs'
+  | 'videos'
+  | 'albums'
+  | 'artists'
+  | 'community_playlists'
+  | 'featured_playlists'
+  | 'podcasts'
+  | 'episodes';
+
+export interface YTMusicCatalogItem {
+  id: string;
+  category: Exclude<ServerSearchFilter, 'all'>;
+  title: string;
+  subtitle: string;
+  thumbnail: string;
+  videoId?: string;
+  browseId?: string;
+  durationText?: string;
+  durationSeconds?: number;
+  viewsText?: string;
+  album?: string;
+  artist?: string;
+  mediaType?: 'song' | 'video';
+}
+
+export interface YTMusicCategorizedResult {
+  songs: YTMusicSongResult[];
+  videos: YTMusicSongResult[];
+  albums: YTMusicCatalogItem[];
+  artists: YTMusicCatalogItem[];
+  community_playlists: YTMusicCatalogItem[];
+  featured_playlists: YTMusicCatalogItem[];
+  podcasts: YTMusicCatalogItem[];
+  episodes: YTMusicCatalogItem[];
+}
+
+const YTMUSIC_CATEGORY_PARAMS: Record<Exclude<ServerSearchFilter, 'all'>, string> = {
+  songs: YTMUSIC_SONGS_FILTER_PARAMS,
+  videos: YTMUSIC_VIDEOS_FILTER_PARAMS,
+  albums: 'EgWKAQIYAWoKEAkQBRAKEAMQBA==',
+  artists: 'EgWKAQIgAWoKEAkQBRAKEAMQBA==',
+  community_playlists: 'EgeKAQQoAEABagoQAxAEEAkQBRAK',
+  featured_playlists: 'EgeKAQQoADgBagwQDhAKEAMQBRAJEAQ=',
+  podcasts: 'EgWKAQJQAWoIEAUQCRADEAo=',
+  episodes: 'EgWKAQJIAWoIEAUQCRADEAo=',
+};
+
+interface CategorizedCacheEntry {
+  data: YTMusicCategorizedResult;
+  cachedAt: number;
+}
+const serverCategorizedCache = new Map<string, CategorizedCacheEntry>();
 
 function parseDurationToSeconds(text: string): number {
   const parts = text.trim().split(':').map(Number);
@@ -412,6 +466,11 @@ export async function queryYouTubeMusicCatalog(
     if (tracks.length === 0) {
       throw new Error(`No YouTube Music songs found for "${query}"`);
     }
+
+    // Prioritize official YouTube Music tracks with square googleusercontent/ggpht album covers first
+    const isOfficialArt = (url?: string) =>
+      Boolean(url) && (url!.includes('googleusercontent.com') || url!.includes('ggpht.com'));
+    tracks.sort((a, b) => Number(isOfficialArt(b.thumbnail)) - Number(isOfficialArt(a.thumbnail)));
 
     if (serverCache.size > 150) {
       const oldestKey = serverCache.keys().next().value;
@@ -1143,6 +1202,40 @@ export function createYTMusicSearchMiddleware() {
         return;
       }
 
+      if (searchType === 'categorized') {
+        const rawFilter = (parsedUrl.searchParams.get('filter') || 'all').toLowerCase() as ServerSearchFilter;
+        const validFilters: ServerSearchFilter[] = [
+          'all',
+          'songs',
+          'videos',
+          'albums',
+          'artists',
+          'community_playlists',
+          'featured_playlists',
+          'podcasts',
+          'episodes',
+        ];
+        const filter: ServerSearchFilter = validFilters.includes(rawFilter) ? rawFilter : 'all';
+        const { result, cached } = await queryYouTubeMusicCategorized(q, filter, refresh);
+        const elapsedMs = Math.round(performance.now() - t0);
+
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Cache-Control', 'public, max-age=120, stale-while-revalidate=600');
+        res.end(
+          JSON.stringify({
+            query: q,
+            type: 'categorized',
+            filter,
+            source: 'ytmusicapi_web_remix_categorized',
+            serverCached: cached,
+            serverLatencyMs: elapsedMs,
+            ...result,
+          })
+        );
+        return;
+      }
+
       const { tracks, cached } = await queryYouTubeMusicCatalog(q, refresh);
       const elapsedMs = Math.round(performance.now() - t0);
 
@@ -1171,3 +1264,324 @@ export function createYTMusicSearchMiddleware() {
     }
   };
 }
+
+function emptyCategorizedResult(): YTMusicCategorizedResult {
+  return {
+    songs: [],
+    videos: [],
+    albums: [],
+    artists: [],
+    community_playlists: [],
+    featured_playlists: [],
+    podcasts: [],
+    episodes: [],
+  };
+}
+
+function mapShelfTitleToCategory(
+  rawHeading: string,
+  fallbackCategory?: Exclude<ServerSearchFilter, 'all'>
+): Exclude<ServerSearchFilter, 'all'> | null {
+  const h = rawHeading.toLowerCase().trim();
+  if (h.includes('song')) return 'songs';
+  if (h.includes('video')) return 'videos';
+  if (h.includes('album') || h.includes('single') || h.includes('ep')) return 'albums';
+  if (h.includes('artist')) return 'artists';
+  if (h.includes('featured playlist')) return 'featured_playlists';
+  if (h.includes('community playlist') || h.includes('playlist')) return 'community_playlists';
+  if (h.includes('podcast')) return 'podcasts';
+  if (h.includes('episode')) return 'episodes';
+  return fallbackCategory || null;
+}
+
+function extractThumbUrl(renderer: any, videoId?: string): string {
+  const thumbs: any[] =
+    renderer?.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails ||
+    renderer?.thumbnail?.thumbnails ||
+    [];
+  const best = thumbs.length > 0 ? String(thumbs[thumbs.length - 1]?.url || '') : '';
+  if (best) {
+    if (best.includes('googleusercontent.com') || best.includes('ggpht.com')) {
+      return best.replace(/=w\d+-h\d+[^&?]*/, '=w512-h512-l90-rj');
+    }
+    return best;
+  }
+  if (videoId) return `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+  return '';
+}
+
+function parseGenericMusicListItem(
+  m: any,
+  category: Exclude<ServerSearchFilter, 'all'>
+): YTMusicCatalogItem | null {
+  if (!m) return null;
+  const flexCols: any[] = Array.isArray(m.flexColumns) ? m.flexColumns : [];
+  const col0Runs: any[] = flexCols[0]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs || [];
+  const col1Runs: any[] = flexCols[1]?.musicResponsiveListItemFlexColumnRenderer?.text?.runs || [];
+
+  const title = col0Runs.map((r) => r?.text || '').join('').trim();
+  if (!title) return null;
+
+  const videoId: string =
+    m?.playlistItemData?.videoId ||
+    col0Runs[0]?.navigationEndpoint?.watchEndpoint?.videoId ||
+    m?.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer
+      ?.playNavigationEndpoint?.watchEndpoint?.videoId ||
+    '';
+
+  const browseId: string =
+    m?.navigationEndpoint?.browseEndpoint?.browseId ||
+    col0Runs[0]?.navigationEndpoint?.browseEndpoint?.browseId ||
+    '';
+
+  const subtitleParts: string[] = [];
+  let durationText = '';
+  let viewsText = '';
+  let artist = '';
+
+  for (const run of col1Runs) {
+    const text = String(run?.text || '').trim();
+    if (!text || text === '•') continue;
+    if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(text)) {
+      durationText = text;
+      continue;
+    }
+    if (/\b(views?|plays?|subscribers?|monthly audience)\b/i.test(text)) {
+      viewsText = text;
+      subtitleParts.push(text);
+      continue;
+    }
+    const pageType =
+      run?.navigationEndpoint?.browseEndpoint?.browseEndpointContextSupportedConfigs
+        ?.browseEndpointContextMusicConfig?.pageType || '';
+    if (pageType === 'MUSIC_PAGE_TYPE_ARTIST' && !artist) {
+      artist = text;
+    }
+    subtitleParts.push(text);
+  }
+
+  const id = videoId || browseId || `${category}_${title.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
+  const thumbnail = extractThumbUrl(m, videoId);
+  const durationSeconds = durationText ? parseDurationToSeconds(durationText) : undefined;
+
+  return {
+    id,
+    category,
+    title: category === 'songs' ? sanitizeServerSongTitle(title) : title,
+    subtitle: subtitleParts.join(' • ') || (category === 'artists' ? 'Artist' : 'YouTube Music'),
+    thumbnail,
+    videoId: videoId || undefined,
+    browseId: browseId || undefined,
+    durationText: durationText || undefined,
+    durationSeconds,
+    viewsText: viewsText || undefined,
+    artist: artist || subtitleParts[0] || undefined,
+    mediaType: category === 'videos' ? 'video' : 'song',
+  };
+}
+
+function parseCategorizedResponse(
+  data: any,
+  out: YTMusicCategorizedResult,
+  forcedCategory?: Exclude<ServerSearchFilter, 'all'>
+): void {
+  const seenByCategory: Record<Exclude<ServerSearchFilter, 'all'>, Set<string>> = {
+    songs: new Set(out.songs.map((s) => s.videoId)),
+    videos: new Set(out.videos.map((v) => v.videoId)),
+    albums: new Set(out.albums.map((a) => a.id)),
+    artists: new Set(out.artists.map((a) => a.id)),
+    community_playlists: new Set(out.community_playlists.map((p) => p.id)),
+    featured_playlists: new Set(out.featured_playlists.map((p) => p.id)),
+    podcasts: new Set(out.podcasts.map((p) => p.id)),
+    episodes: new Set(out.episodes.map((e) => e.id)),
+  };
+
+  const tabs = data?.contents?.tabbedSearchResultsRenderer?.tabs || [];
+  const sections =
+    tabs[0]?.tabRenderer?.content?.sectionListRenderer?.contents ||
+    data?.contents?.sectionListRenderer?.contents ||
+    [];
+
+  for (const section of sections) {
+    // Handle Top Result card (musicCardShelfRenderer) in unfiltered "all" searches
+    const cardShelf = section?.musicCardShelfRenderer;
+    if (cardShelf && !forcedCategory) {
+      const cardTitle = (cardShelf?.title?.runs || []).map((r: any) => r?.text || '').join('').trim();
+      const cardSubRuns: any[] = cardShelf?.subtitle?.runs || [];
+      const cardSubText = cardSubRuns.map((r: any) => r?.text || '').join('').trim();
+      const cardBrowseId =
+        cardShelf?.title?.runs?.[0]?.navigationEndpoint?.browseEndpoint?.browseId || '';
+      const cardVideoId =
+        cardShelf?.title?.runs?.[0]?.navigationEndpoint?.watchEndpoint?.videoId ||
+        cardShelf?.buttons?.[0]?.buttonRenderer?.command?.watchEndpoint?.videoId ||
+        '';
+      const cardThumb = extractThumbUrl(cardShelf, cardVideoId);
+
+      if (cardTitle && /^artist\b/i.test(cardSubText) && cardBrowseId && !seenByCategory.artists.has(cardBrowseId)) {
+        seenByCategory.artists.add(cardBrowseId);
+        out.artists.unshift({
+          id: cardBrowseId,
+          category: 'artists',
+          title: cardTitle,
+          subtitle: cardSubText,
+          thumbnail: cardThumb,
+          browseId: cardBrowseId,
+          artist: cardTitle,
+        });
+      } else if (cardTitle && /^(album|single|ep)\b/i.test(cardSubText) && cardBrowseId && !seenByCategory.albums.has(cardBrowseId)) {
+        seenByCategory.albums.add(cardBrowseId);
+        out.albums.unshift({
+          id: cardBrowseId,
+          category: 'albums',
+          title: cardTitle,
+          subtitle: cardSubText,
+          thumbnail: cardThumb,
+          browseId: cardBrowseId,
+        });
+      } else if (cardTitle && cardVideoId && !seenByCategory.songs.has(cardVideoId)) {
+        seenByCategory.songs.add(cardVideoId);
+        out.songs.unshift({
+          videoId: cardVideoId,
+          title: sanitizeServerSongTitle(cardTitle),
+          artist: sanitizeServerSongArtist(cardSubText.replace(/^(song|video)\s*•\s*/i, '').split('•')[0] || cardTitle),
+          thumbnail: cardThumb || `https://i.ytimg.com/vi/${cardVideoId}/hqdefault.jpg`,
+          durationText: '',
+          mediaType: /^video\b/i.test(cardSubText) ? 'video' : 'song',
+          catalogSource: /^video\b/i.test(cardSubText) ? 'youtube_video' : 'youtube_music',
+        });
+      }
+      continue;
+    }
+
+    const shelf = section?.musicShelfRenderer;
+    if (!shelf || !Array.isArray(shelf.contents)) continue;
+
+    const shelfTitle = (shelf?.title?.runs || []).map((r: any) => r?.text || '').join('').trim();
+    const cat = forcedCategory || mapShelfTitleToCategory(shelfTitle);
+    if (!cat) continue;
+
+    if (cat === 'songs') {
+      parseShelfItems(shelf.contents, seenByCategory.songs, out.songs, 'song');
+    } else if (cat === 'videos') {
+      parseShelfItems(shelf.contents, seenByCategory.videos, out.videos, 'video');
+    } else {
+      for (const item of shelf.contents) {
+        const parsed = parseGenericMusicListItem(item?.musicResponsiveListItemRenderer, cat);
+        if (!parsed || seenByCategory[cat].has(parsed.id)) continue;
+        seenByCategory[cat].add(parsed.id);
+        out[cat].push(parsed);
+      }
+    }
+  }
+}
+
+export async function queryYouTubeMusicCategorized(
+  rawQuery: string,
+  filter: ServerSearchFilter = 'all',
+  bypassCache = false
+): Promise<{ result: YTMusicCategorizedResult; cached: boolean }> {
+  const query = rawQuery.trim();
+  if (!query) return { result: emptyCategorizedResult(), cached: false };
+
+  const cacheKey = `${filter}::${query.toLowerCase()}`;
+  if (!bypassCache) {
+    const hit = serverCategorizedCache.get(cacheKey);
+    if (hit && Date.now() - hit.cachedAt < SERVER_CACHE_TTL_MS) {
+      return { result: hit.data, cached: true };
+    }
+  }
+
+  const clientContext = {
+    client: {
+      clientName: 'WEB_REMIX',
+      clientVersion: '1.20250120.01.00',
+      hl: 'en',
+      gl: 'IN',
+    },
+  };
+
+  const requestHeaders = {
+    'Content-Type': 'application/json',
+    'User-Agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0',
+    Origin: 'https://music.youtube.com',
+    Referer: 'https://music.youtube.com/',
+  };
+
+  const result = emptyCategorizedResult();
+
+  const fetchInnerTubeSearch = async (params?: string): Promise<any | null> => {
+    const controller = new AbortController();
+    const timer = globalThis.setTimeout(() => controller.abort(), 5500);
+    try {
+      const body: Record<string, any> = { context: clientContext, query };
+      if (params) body.params = params;
+      const res = await fetch('https://music.youtube.com/youtubei/v1/search?prettyPrint=false', {
+        method: 'POST',
+        headers: requestHeaders,
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    } finally {
+      globalThis.clearTimeout(timer);
+    }
+  };
+
+  if (filter === 'all') {
+    // Run unfiltered YouTube Music search (returns Songs, Videos, Albums, Artists, Playlists, Podcasts, Episodes)
+    // in parallel with enriched songs + videos queries so Songs always has >= 5 crisp results and Videos is populated!
+    const [unfilteredOutcome, songsOutcome, videosOutcome] = await Promise.allSettled([
+      fetchInnerTubeSearch(undefined),
+      queryYouTubeMusicCatalog(query, bypassCache),
+      queryYouTubeVideosCatalog(query, bypassCache),
+    ]);
+
+    if (unfilteredOutcome.status === 'fulfilled' && unfilteredOutcome.value) {
+      parseCategorizedResponse(unfilteredOutcome.value, result);
+    }
+
+    if (songsOutcome.status === 'fulfilled' && songsOutcome.value.tracks.length > 0) {
+      const seenSongs = new Set(result.songs.map((s) => s.videoId));
+      for (const s of songsOutcome.value.tracks) {
+        if (!seenSongs.has(s.videoId)) {
+          seenSongs.add(s.videoId);
+          result.songs.push(s);
+        }
+      }
+    }
+
+    if (videosOutcome.status === 'fulfilled' && videosOutcome.value.videos.length > 0) {
+      const seenVids = new Set(result.videos.map((v) => v.videoId));
+      for (const v of videosOutcome.value.videos) {
+        if (!seenVids.has(v.videoId)) {
+          seenVids.add(v.videoId);
+          result.videos.push(v);
+        }
+      }
+    }
+  } else if (filter === 'songs') {
+    const { tracks } = await queryYouTubeMusicCatalog(query, bypassCache);
+    result.songs = tracks;
+  } else if (filter === 'videos') {
+    const { videos } = await queryYouTubeVideosCatalog(query, bypassCache);
+    result.videos = videos;
+  } else {
+    const data = await fetchInnerTubeSearch(YTMUSIC_CATEGORY_PARAMS[filter]);
+    if (data) {
+      parseCategorizedResponse(data, result, filter);
+    }
+  }
+
+  serverCategorizedCache.set(cacheKey, { data: result, cachedAt: Date.now() });
+  if (serverCategorizedCache.size > 150) {
+    const firstKey = serverCategorizedCache.keys().next().value;
+    if (firstKey) serverCategorizedCache.delete(firstKey);
+  }
+
+  return { result, cached: false };
+}
+

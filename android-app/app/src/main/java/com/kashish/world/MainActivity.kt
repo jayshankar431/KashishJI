@@ -170,18 +170,14 @@ class MainActivity : AppCompatActivity() {
             override fun handleOnBackPressed() {
                 try {
                     webView.evaluateJavascript(
-                        "(function(){ try { if (typeof window.__kashishConsumeMusicPlayerBack === 'function' && window.__kashishConsumeMusicPlayerBack()) return 'consumed'; return 'pass'; } catch(e) { return 'pass'; } })()"
+                        "(function(){ try { if (typeof window.__kashishConsumeBack === 'function' && window.__kashishConsumeBack()) return 'consumed'; if (typeof window.__kashishConsumeMusicPlayerBack === 'function' && window.__kashishConsumeMusicPlayerBack()) return 'consumed'; return 'pass'; } catch(e) { return 'pass'; } })()"
                     ) { result ->
                         val cleaned = result?.trim('"') ?: "pass"
                         if (cleaned == "consumed") {
                             return@evaluateJavascript
                         }
-                        if (webView.canGoBack()) {
-                            webView.goBack()
-                        } else {
-                            // Minimize app to background smoothly instead of killing music playback
-                            moveTaskToBack(true)
-                        }
+                        // On root Home screen, minimize smoothly to background without interrupting background music playback
+                        moveTaskToBack(true)
                     }
                 } catch (_: Exception) {
                     if (webView.canGoBack()) {
@@ -300,21 +296,38 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-                val url = request?.url?.toString() ?: return false
-                if (url.startsWith("tel:")) {
-                    val number = url.removePrefix("tel:").trim()
+                val uri = request?.url ?: return false
+                val url = uri.toString()
+                if (url.startsWith("tel:", ignoreCase = true)) {
+                    val number = url.substring(4).trim()
                     CallAndOverlayHelper.placeDirectCall(this@MainActivity, number)
                     return true
                 }
-                if (url.startsWith("http://") || url.startsWith("https://")) {
-                    return false
+                val scheme = uri.scheme?.lowercase(Locale.US) ?: ""
+                if (scheme == "http" || scheme == "https") {
+                    val host = uri.host?.lowercase(Locale.US) ?: ""
+                    val isTrustedHost =
+                        host == "kashishji.web.app" ||
+                        host == "kashishji.firebaseapp.com" ||
+                        host == "accounts.google.com" ||
+                        host == "www.youtube.com" ||
+                        host == "m.youtube.com" ||
+                        host == "music.youtube.com"
+                    if (isTrustedHost) {
+                        return false
+                    }
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW, uri)
+                        startActivity(intent)
+                    } catch (_: Exception) {}
+                    return true
                 }
                 return try {
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                    val intent = Intent(Intent.ACTION_VIEW, uri)
                     startActivity(intent)
                     true
                 } catch (_: Exception) {
-                    false
+                    true
                 }
             }
 

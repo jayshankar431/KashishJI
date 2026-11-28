@@ -179,8 +179,7 @@ export const CutePicSection: React.FC<CutePicSectionProps> = ({ onBack }) => {
     setIsStartingCamera(true);
     setIsCameraReady(false);
     triggerHaptic(40);
-    console.log('CutePicSection: Starting camera, isNativeApp:', isNativeApp());
-    
+
     // Explicitly request native permissions if in APK
     if (isNativeApp()) {
       requestNativePermissions(['CAMERA']);
@@ -191,7 +190,6 @@ export const CutePicSection: React.FC<CutePicSectionProps> = ({ onBack }) => {
         video: { facingMode: 'user' },
         audio: false 
       });
-      console.log('CutePicSection: Camera access granted');
       setCameraStream(stream);
       setShowCamera(true);
     } catch (err) {
@@ -475,11 +473,14 @@ export const CutePicSection: React.FC<CutePicSectionProps> = ({ onBack }) => {
                   triggerHaptic(25);
                   setSelectedSentPic(pic);
                 }}
-                className="aspect-square rounded-2xl overflow-hidden border border-white/10 bg-black/20 cursor-pointer active:scale-95 transition-transform"
+                className="cv-card-auto aspect-square rounded-2xl overflow-hidden border border-white/10 bg-black/20 cursor-pointer active:scale-[0.97] transition-transform"
               >
                 <PrivateStorageImage
                   storagePath={pic.storagePath}
                   fallbackUrl={pic.url}
+                  cloudinaryWidth={800}
+                  loading="lazy"
+                  decoding="async"
                   alt={pic.caption}
                   className="w-full h-full object-cover"
                 />

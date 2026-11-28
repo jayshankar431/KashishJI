@@ -43,11 +43,8 @@ export function usePWAInstall() {
       const registerSW = () => {
         navigator.serviceWorker
           .register('/sw.js')
-          .then((reg) => {
-            console.log('Service Worker registered successfully:', reg);
-          })
-          .catch((err) => {
-            console.warn('SW registration info:', err);
+          .catch(() => {
+            // Silent ignore if SW registration is unavailable in current context
           });
       };
 

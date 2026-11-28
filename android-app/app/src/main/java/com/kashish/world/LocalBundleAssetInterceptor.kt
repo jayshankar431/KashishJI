@@ -70,8 +70,12 @@ object LocalBundleAssetInterceptor {
         // 1. Serve bundled frontend from APK `assets/www/` for instant 0ms launch & offline resilience
         if ((host == "kashishji.web.app" || host == "kashishji.firebaseapp.com") && isGetMethod) {
             val rawPath = (uri.path ?: "/").trimStart('/')
-            // Never intercept API or Firebase auth handler paths
-            if (rawPath.startsWith("api/") || rawPath.startsWith("__/")) {
+            // Never intercept API, Firebase auth handler paths, or live APK update manifest
+            if (
+                rawPath.startsWith("api/") ||
+                rawPath.startsWith("__/") ||
+                rawPath.equals("latest-apk.json", ignoreCase = true)
+            ) {
                 return null
             }
 

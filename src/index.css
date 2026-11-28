@@ -32,6 +32,25 @@
   --glass-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
   --input-bg: #29143d;
 
+  /* MUSIC PLAYER THEME TOKENS (Default / Dark) */
+  --ytm-bg: #140c1e;
+  --ytm-surface: rgba(30, 16, 46, 0.94);
+  --ytm-surface-elevated: #241338;
+  --ytm-surface-hover: rgba(244, 114, 182, 0.14);
+  --ytm-border: rgba(244, 114, 182, 0.22);
+  --ytm-text: #fdf2f4;
+  --ytm-text-muted: rgba(249, 168, 212, 0.78);
+  --ytm-accent: #f43f5e;
+  --ytm-accent-soft: rgba(244, 63, 94, 0.2);
+  --ytm-accent-text: #ffffff;
+  --ytm-chip-bg: rgba(255, 255, 255, 0.08);
+  --ytm-chip-text: #f3e8ff;
+  --ytm-chip-active-bg: #f43f5e;
+  --ytm-chip-active-text: #ffffff;
+  --ytm-input-bg: #25133a;
+  --ytm-sheet-bg: #1b0e2b;
+  --ytm-backdrop: rgba(10, 5, 18, 0.86);
+
   /* ADMIN PANEL SOFT DARK THEME VARIABLES */
   --admin-bg: #1e2130;
   --admin-card: #292d42;
@@ -66,6 +85,23 @@
   --glass-border: rgba(244, 114, 182, 0.25);
   --glass-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
   --input-bg: #29143d;
+  --ytm-bg: #140c1e;
+  --ytm-surface: rgba(30, 16, 46, 0.94);
+  --ytm-surface-elevated: #241338;
+  --ytm-surface-hover: rgba(244, 114, 182, 0.14);
+  --ytm-border: rgba(244, 114, 182, 0.22);
+  --ytm-text: #fdf2f4;
+  --ytm-text-muted: rgba(249, 168, 212, 0.78);
+  --ytm-accent: #f43f5e;
+  --ytm-accent-soft: rgba(244, 63, 94, 0.2);
+  --ytm-accent-text: #ffffff;
+  --ytm-chip-bg: rgba(255, 255, 255, 0.08);
+  --ytm-chip-text: #f3e8ff;
+  --ytm-chip-active-bg: #f43f5e;
+  --ytm-chip-active-text: #ffffff;
+  --ytm-input-bg: #25133a;
+  --ytm-sheet-bg: #1b0e2b;
+  --ytm-backdrop: rgba(10, 5, 18, 0.86);
 }
 
 [data-theme="light"] {
@@ -87,6 +123,23 @@
   --glass-border: #f3c6d6;
   --glass-shadow: 0 6px 24px rgba(58, 18, 38, 0.08);
   --input-bg: #fff0f4;
+  --ytm-bg: #fff5f8;
+  --ytm-surface: #ffffff;
+  --ytm-surface-elevated: #fff0f5;
+  --ytm-surface-hover: rgba(214, 51, 108, 0.09);
+  --ytm-border: #f2c8d8;
+  --ytm-text: #320e20;
+  --ytm-text-muted: #76445c;
+  --ytm-accent: #d6336c;
+  --ytm-accent-soft: rgba(214, 51, 108, 0.14);
+  --ytm-accent-text: #ffffff;
+  --ytm-chip-bg: #fce7f0;
+  --ytm-chip-text: #5a223e;
+  --ytm-chip-active-bg: #d6336c;
+  --ytm-chip-active-text: #ffffff;
+  --ytm-input-bg: #ffffff;
+  --ytm-sheet-bg: #fff8fa;
+  --ytm-backdrop: rgba(58, 18, 38, 0.45);
 }
 
 /* GLASSMORPHISM THEME: Deep Dark Midnight Aurora + Enhanced Frosted Crystal Blur */
@@ -109,6 +162,23 @@
   --glass-border: rgba(255, 255, 255, 0.24);
   --glass-shadow: 0 14px 38px 0 rgba(0, 0, 0, 0.58);
   --input-bg: rgba(16, 8, 34, 0.55);
+  --ytm-bg: #090517;
+  --ytm-surface: rgba(26, 15, 52, 0.64);
+  --ytm-surface-elevated: rgba(36, 20, 68, 0.78);
+  --ytm-surface-hover: rgba(255, 255, 255, 0.12);
+  --ytm-border: rgba(255, 255, 255, 0.2);
+  --ytm-text: #ffffff;
+  --ytm-text-muted: rgba(235, 222, 255, 0.8);
+  --ytm-accent: #ff4d79;
+  --ytm-accent-soft: rgba(255, 77, 121, 0.24);
+  --ytm-accent-text: #ffffff;
+  --ytm-chip-bg: rgba(255, 255, 255, 0.1);
+  --ytm-chip-text: rgba(255, 255, 255, 0.92);
+  --ytm-chip-active-bg: #ff4d79;
+  --ytm-chip-active-text: #ffffff;
+  --ytm-input-bg: rgba(22, 12, 44, 0.72);
+  --ytm-sheet-bg: rgba(16, 9, 34, 0.94);
+  --ytm-backdrop: rgba(5, 2, 14, 0.82);
 }
 
 /* LIQUID GLASS THEME: Fluid Aqua & Indigo Refractive Cyan Glass Sheen */
@@ -131,6 +201,23 @@
   --glass-border: rgba(103, 232, 249, 0.38);
   --glass-shadow: 0 16px 42px 0 rgba(2, 18, 42, 0.68), inset 0 1.5px 2px 0 rgba(255, 255, 255, 0.45), inset 0 -1.5px 2px 0 rgba(6, 182, 212, 0.2);
   --input-bg: rgba(6, 24, 48, 0.55);
+  --ytm-bg: #041126;
+  --ytm-surface: rgba(8, 30, 58, 0.62);
+  --ytm-surface-elevated: rgba(12, 42, 80, 0.78);
+  --ytm-surface-hover: rgba(34, 211, 238, 0.16);
+  --ytm-border: rgba(103, 232, 249, 0.32);
+  --ytm-text: #f0fdff;
+  --ytm-text-muted: rgba(186, 238, 250, 0.82);
+  --ytm-accent: #06b6d4;
+  --ytm-accent-soft: rgba(6, 182, 212, 0.24);
+  --ytm-accent-text: #ffffff;
+  --ytm-chip-bg: rgba(6, 182, 212, 0.14);
+  --ytm-chip-text: #cffafe;
+  --ytm-chip-active-bg: #06b6d4;
+  --ytm-chip-active-text: #021426;
+  --ytm-input-bg: rgba(7, 27, 54, 0.74);
+  --ytm-sheet-bg: rgba(5, 20, 42, 0.95);
+  --ytm-backdrop: rgba(2, 10, 24, 0.84);
 }
 
 /* PASTEL THEME: Modern Feminine Pastel (Soft Pink #E9A8D0, Lavender #B9A7E8, Blush Pink #F5D5E8, Light Background #F8F5FF, White Cards #FFFFFF, Deep Purple #7956B3) */
@@ -153,6 +240,23 @@
   --glass-border: rgba(185, 167, 232, 0.55);
   --glass-shadow: 0 8px 26px rgba(121, 86, 179, 0.14);
   --input-bg: #FFFFFF;
+  --ytm-bg: #f8f4ff;
+  --ytm-surface: #ffffff;
+  --ytm-surface-elevated: #f5ecff;
+  --ytm-surface-hover: rgba(121, 86, 179, 0.1);
+  --ytm-border: rgba(185, 167, 232, 0.55);
+  --ytm-text: #2c1a4d;
+  --ytm-text-muted: #6e529e;
+  --ytm-accent: #7956B3;
+  --ytm-accent-soft: rgba(121, 86, 179, 0.15);
+  --ytm-accent-text: #ffffff;
+  --ytm-chip-bg: #f3e8ff;
+  --ytm-chip-text: #4c2d82;
+  --ytm-chip-active-bg: #7956B3;
+  --ytm-chip-active-text: #ffffff;
+  --ytm-input-bg: #ffffff;
+  --ytm-sheet-bg: #fcfaff;
+  --ytm-backdrop: rgba(44, 26, 77, 0.42);
 }
 
 *,
@@ -434,7 +538,7 @@ nav a {
   height: 0;
 }
 
-/* Ensure YouTube Music search input text is always crisp, visible, and unaffected by theme overrides */
+/* Theme-adaptive YouTube Music search input */
 input.ytm-search-input,
 html[data-theme="liquid-glass"] input.ytm-search-input,
 html[data-theme="glass"] input.ytm-search-input,
@@ -442,12 +546,12 @@ html[data-theme="light"] input.ytm-search-input,
 html[data-theme="pastel"] input.ytm-search-input,
 html[data-theme="dark"] input.ytm-search-input,
 html[data-theme="default"] input.ytm-search-input {
-  background-color: #161616 !important;
+  background-color: var(--ytm-input-bg) !important;
   background-image: none !important;
-  color: #ffffff !important;
-  -webkit-text-fill-color: #ffffff !important;
-  caret-color: #ff0033 !important;
-  font-size: 14px !important;
+  color: var(--ytm-text) !important;
+  -webkit-text-fill-color: var(--ytm-text) !important;
+  caret-color: var(--ytm-accent) !important;
+  font-size: 15px !important;
   line-height: 1.35 !important;
   border-radius: 9999px !important;
   box-shadow: none !important;
@@ -457,10 +561,12 @@ input.ytm-search-input::placeholder,
 html[data-theme="liquid-glass"] input.ytm-search-input::placeholder,
 html[data-theme="glass"] input.ytm-search-input::placeholder,
 html[data-theme="light"] input.ytm-search-input::placeholder,
-html[data-theme="pastel"] input.ytm-search-input::placeholder {
-  color: #8a8a8a !important;
-  -webkit-text-fill-color: #8a8a8a !important;
-  opacity: 1 !important;
+html[data-theme="pastel"] input.ytm-search-input::placeholder,
+html[data-theme="dark"] input.ytm-search-input::placeholder,
+html[data-theme="default"] input.ytm-search-input::placeholder {
+  color: var(--ytm-text-muted) !important;
+  -webkit-text-fill-color: var(--ytm-text-muted) !important;
+  opacity: 0.82 !important;
 }
 
 /* Common High Contrast Utility Classes */
@@ -717,10 +823,16 @@ html[data-theme="pastel"] input.ytm-search-input::placeholder {
   }
 }
 
-/* Off-screen rendering containment */
-.content-visibility-auto {
+/* Off-screen rendering containment for silky-smooth scrolling on low-end phones */
+.content-visibility-auto,
+.cv-card-auto {
   content-visibility: auto;
-  contain-intrinsic-size: 1px 400px;
+  contain-intrinsic-size: auto 320px;
+}
+
+.cv-row-auto {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 64px;
 }
 
 /* Cinematic Love Letter Font & Scroll Transitions - One Line at a Time */
@@ -1511,6 +1623,210 @@ a:active,
 img {
   image-rendering: auto;
 }
+
+/* ==========================================================================
+   🌊 LIQUID SWIPE NAVIGATION & FULL-SCREEN OVERLAY TRANSITIONS (GPU-ONLY)
+   ========================================================================== */
+@keyframes liquidSwipeEnterForward {
+  0% {
+    opacity: 0.25;
+    transform: translate3d(28px, 0, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes liquidSwipeEnterBack {
+  0% {
+    opacity: 0.25;
+    transform: translate3d(-32px, 0, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes liquidOverlayReveal {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0) scale(0.985);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes liquidSheetSlideUp {
+  0% {
+    opacity: 0.4;
+    transform: translate3d(0, 42px, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.swipe-enter-forward {
+  animation: liquidSwipeEnterForward 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  will-change: transform, opacity;
+}
+
+.swipe-enter-back {
+  animation: liquidSwipeEnterBack 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  will-change: transform, opacity;
+}
+
+.liquid-overlay-in {
+  animation: liquidOverlayReveal 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  will-change: transform, opacity;
+}
+
+.liquid-sheet-in {
+  animation: liquidSheetSlideUp 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  will-change: transform, opacity;
+}
+
+/* Music player surface helpers using semantic theme variables */
+.ytm-theme-root {
+  background-color: var(--ytm-bg);
+  color: var(--ytm-text);
+}
+
+.ytm-theme-surface {
+  background-color: var(--ytm-surface);
+  border-color: var(--ytm-border);
+  color: var(--ytm-text);
+}
+
+.ytm-theme-elevated {
+  background-color: var(--ytm-surface-elevated);
+  border-color: var(--ytm-border);
+  color: var(--ytm-text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .swipe-enter-forward,
+  .swipe-enter-back,
+  .liquid-overlay-in,
+  .liquid-sheet-in,
+  .section-fade-slide {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ==========================================================================
+   🚀 LOW-END DEVICE 60FPS PERFORMANCE TIER (html[data-perf="low"])
+   Replaces GPU-heavy backdrop-filter blurs & massive box-shadows with rich
+   translucent surfaces & crisp 1px edge highlights. High-end devices retain
+   full glassmorphism blur.
+   ========================================================================== */
+html[data-perf="low"] {
+  --glass-blur: none;
+  --glass-shadow: 0 4px 12px rgba(0, 0, 0, 0.28);
+}
+
+/* Disable heavy backdrop-blur on all scrollable/moving surfaces, navbars, cards, and modals */
+html[data-perf="low"] .backdrop-blur,
+html[data-perf="low"] .backdrop-blur-xs,
+html[data-perf="low"] .backdrop-blur-sm,
+html[data-perf="low"] .backdrop-blur-md,
+html[data-perf="low"] .backdrop-blur-lg,
+html[data-perf="low"] .backdrop-blur-xl,
+html[data-perf="low"] .backdrop-blur-2xl,
+html[data-perf="low"] .backdrop-blur-3xl,
+html[data-perf="low"] .theme-card,
+html[data-perf="low"] .modal-smooth-backdrop,
+html[data-perf="low"] .glass-surface,
+html[data-perf="low"] .glass-card,
+html[data-perf="low"] header,
+html[data-perf="low"] nav,
+html[data-perf="low"] footer {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Rich translucent dark-glass fallback with 1px subtle highlight for dark & glass themes */
+html[data-perf="low"][data-theme="default"] .theme-card,
+html[data-perf="low"][data-theme="default"] header,
+html[data-perf="low"][data-theme="default"] nav,
+html[data-perf="low"][data-theme="dark"] .theme-card,
+html[data-perf="low"][data-theme="dark"] header,
+html[data-perf="low"][data-theme="dark"] nav,
+html[data-perf="low"][data-theme="glass"] header,
+html[data-perf="low"][data-theme="glass"] nav,
+html[data-perf="low"][data-theme="glass"] .glass-surface,
+html[data-perf="low"][data-theme="glass"] .glass-card,
+html[data-perf="low"][data-theme="glass"] [style*="var(--card)"],
+html[data-perf="low"][data-theme="glass"] [style*="var(--card-solid)"],
+html[data-perf="low"][data-theme="glass"] [style*="var(--nav-bg)"],
+html[data-perf="low"][data-theme="glass"] [style*="var(--card-subtle)"],
+html[data-perf="low"][data-theme="glass"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+html[data-perf="low"][data-theme="glass"] textarea,
+html[data-perf="low"][data-theme="glass"] select {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background-color: rgba(20, 12, 30, 0.90) !important;
+  border-color: rgba(255, 255, 255, 0.14) !important;
+  box-shadow:
+    0 4px 14px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
+}
+
+/* Liquid-Glass low-perf fallback: deep oceanic translucent glass with crisp cyan 1px rim */
+html[data-perf="low"][data-theme="liquid-glass"] header,
+html[data-perf="low"][data-theme="liquid-glass"] nav,
+html[data-perf="low"][data-theme="liquid-glass"] .glass-surface,
+html[data-perf="low"][data-theme="liquid-glass"] .glass-card,
+html[data-perf="low"][data-theme="liquid-glass"] [style*="var(--card)"],
+html[data-perf="low"][data-theme="liquid-glass"] [style*="var(--card-solid)"],
+html[data-perf="low"][data-theme="liquid-glass"] [style*="var(--nav-bg)"],
+html[data-perf="low"][data-theme="liquid-glass"] [style*="var(--card-subtle)"],
+html[data-perf="low"][data-theme="liquid-glass"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+html[data-perf="low"][data-theme="liquid-glass"] textarea,
+html[data-perf="low"][data-theme="liquid-glass"] select {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background-color: rgba(8, 26, 48, 0.92) !important;
+  border-color: rgba(103, 232, 249, 0.28) !important;
+  box-shadow:
+    0 4px 14px rgba(2, 16, 36, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18) !important;
+}
+
+/* Light & Pastel themes on low-perf: keep crisp bright translucent cards without blur cost */
+html[data-perf="low"][data-theme="light"] .theme-card,
+html[data-perf="low"][data-theme="light"] header,
+html[data-perf="low"][data-theme="light"] nav,
+html[data-perf="low"][data-theme="pastel"] .theme-card,
+html[data-perf="low"][data-theme="pastel"] header,
+html[data-perf="low"][data-theme="pastel"] nav {
+  box-shadow: 0 3px 12px var(--shadow-color) !important;
+}
+
+/* Replace heavy full-screen CSS filter: blur(48px) ambient orbs with smooth pure radial gradients on low-perf */
+html[data-perf="low"] body::before,
+html[data-perf="low"] body::after {
+  filter: none !important;
+  opacity: 0.34;
+}
+
+/* Soften oversized Tailwind shadows on low-perf devices to cut GPU overdraw */
+html[data-perf="low"] .shadow-2xl,
+html[data-perf="low"] .shadow-xl {
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28) !important;
+}
+
+html[data-perf="low"] .shadow-lg {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.22) !important;
+}
+
+
 
 
 

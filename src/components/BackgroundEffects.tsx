@@ -1,7 +1,9 @@
 import React, { useEffect, useRef } from 'react';
+import { isLowPerfDevice } from '../utils/perfTier';
 
 interface BackgroundEffectsProps {
   isDarkMode: boolean;
+  isPaused?: boolean;
 }
 
 interface Particle {
@@ -17,13 +19,23 @@ interface Particle {
   type: 'heart' | 'sparkle' | 'petal';
 }
 
-export const BackgroundEffects: React.FC<BackgroundEffectsProps> = ({ isDarkMode }) => {
+export const BackgroundEffects: React.FC<BackgroundEffectsProps> = ({
+  isDarkMode,
+  isPaused = false,
+}) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const isDarkModeRef = useRef<boolean>(isDarkMode);
+  const isPausedRef = useRef<boolean>(isPaused);
+  const syncActiveRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     isDarkModeRef.current = isDarkMode;
   }, [isDarkMode]);
+
+  useEffect(() => {
+    isPausedRef.current = isPaused;
+    syncActiveRef.current?.();
+  }, [isPaused]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -31,7 +43,7 @@ export const BackgroundEffects: React.FC<BackgroundEffectsProps> = ({ isDarkMode
     const ctx = canvas.getContext('2d', { alpha: true });
     if (!ctx) return;
 
-    // Check prefers-reduced-motion
+    // Respect prefers-reduced-motion
     const prefersReducedMotion =
       typeof window !== 'undefined' &&
       window.matchMedia &&
@@ -41,14 +53,35 @@ export const BackgroundEffects: React.FC<BackgroundEffectsProps> = ({ isDarkMode
       return;
     }
 
+    const lowPerf = isLowPerfDevice();
     let animationFrameId: number | null = null;
-    const checkIsActive = () =>
-      !document.hidden && !Boolean((window as any).__kashishAppInBackground);
-    let isVisible = checkIsActive();
+    let overlayLocked = false;
     let lastFrameTime = 0;
 
-    // Cap devicePixelRatio at 1.5 to prevent GPU fill-rate throttling on high-DPI phones
-    const dpr = Math.min(typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1, 1.5);
+    // Frame budget: ~30fps on high-end, ~24fps on low-end so UI/audio threads stay butter-smooth
+    const minFrameIntervalMs = lowPerf ? 42 : 33;
+
+    const isBodyModalOpen = () => {
+      if (typeof document === 'undefined') return false;
+      return (
+        document.body.style.overflow === 'hidden' ||
+        document.documentElement.style.overflow === 'hidden' ||
+        overlayLocked
+      );
+    };
+
+    const checkIsActive = () =>
+      !document.hidden &&
+      !Boolean((window as any).__kashishAppInBackground) &&
+      !isPausedRef.current &&
+      !isBodyModalOpen();
+
+    let isVisible = checkIsActive();
+
+    // Cap devicePixelRatio: 1.0 on low-perf devices, 1.5 on high-perf devices
+    const dpr = lowPerf
+      ? 1
+      : Math.min(typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1, 1.5);
 
     let width = window.innerWidth;
     let height = window.innerHeight;
@@ -80,18 +113,28 @@ export const BackgroundEffects: React.FC<BackgroundEffectsProps> = ({ isDarkMode
           animationFrameId = null;
         }
       } else if (animationFrameId === null) {
+        lastTime = performance.now();
         animationFrameId = requestAnimationFrame(render);
       }
     };
 
-    // Handle tab visibility and native Android background state to save CPU/GPU during background audio playback
+    syncActiveRef.current = () => {
+      syncAnimationState(checkIsActive());
+    };
+
+    // Pause animation loop whenever tab is hidden, native app is backgrounded, or a full-screen modal/player opens
     const handleVisibilityChange = () => {
       syncAnimationState(checkIsActive());
     };
     const handleNativeBackgroundState = (ev: Event) => {
       const detail = (ev as CustomEvent<{ backgrounded?: boolean }>).detail;
       const inBg = Boolean(detail?.backgrounded ?? (window as any).__kashishAppInBackground);
-      syncAnimationState(!inBg && !document.hidden);
+      syncAnimationState(!inBg && checkIsActive());
+    };
+    const handleOverlayPauseEvent = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ paused?: boolean }>).detail;
+      overlayLocked = Boolean(detail?.paused);
+      syncAnimationState(checkIsActive());
     };
     const handleWindowBlur = () => {
       if ((window as any).__kashishAppInBackground) {
@@ -102,13 +145,27 @@ export const BackgroundEffects: React.FC<BackgroundEffectsProps> = ({ isDarkMode
       syncAnimationState(checkIsActive());
     };
 
+    // Watch body style overflow changes (used by full-screen modals, lightboxes, and players)
+    let bodyStyleObserver: MutationObserver | null = null;
+    if (typeof MutationObserver !== 'undefined') {
+      bodyStyleObserver = new MutationObserver(() => {
+        syncAnimationState(checkIsActive());
+      });
+      bodyStyleObserver.observe(document.body, {
+        attributes: true,
+        attributeFilter: ['style'],
+      });
+    }
+
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('kashish-app-background-state', handleNativeBackgroundState as EventListener);
+    window.addEventListener('kashish-overlay-pause', handleOverlayPauseEvent as EventListener);
     window.addEventListener('blur', handleWindowBlur);
     window.addEventListener('focus', handleWindowFocus);
 
-    // Lightweight particle counts: 20 on mobile, 42 on desktop
-    const particleCount = width < 640 ? 20 : 42;
+    // Particle counts: ~45% fewer particles in low-perf mode (11 mobile / 22 desktop vs 20 / 42)
+    const baseCount = width < 640 ? 20 : 42;
+    const particleCount = lowPerf ? Math.max(8, Math.round(baseCount * 0.55)) : baseCount;
     const particles: Particle[] = [];
 
     for (let i = 0; i < particleCount; i++) {
@@ -173,13 +230,12 @@ export const BackgroundEffects: React.FC<BackgroundEffectsProps> = ({ isDarkMode
     let lastTime = performance.now();
 
     const render = (currentTime: number) => {
-      if (!isVisible || (window as any).__kashishAppInBackground) {
+      if (!isVisible || !checkIsActive()) {
         animationFrameId = null;
         return;
       }
 
-      // Throttle canvas particle redraws to ~30fps (33ms) so the main thread stays free for audio decoding
-      if (currentTime - lastFrameTime < 33) {
+      if (currentTime - lastFrameTime < minFrameIntervalMs) {
         animationFrameId = requestAnimationFrame(render);
         return;
       }
@@ -198,10 +254,6 @@ export const BackgroundEffects: React.FC<BackgroundEffectsProps> = ({ isDarkMode
 
       ctx.clearRect(0, 0, width, height);
 
-      // Light -> Dark RGB interpolation:
-      // Heart: #fb7185 (251,113,133) -> #f472b6 (244,114,182)
-      // Petal: #fbcfe8 (251,207,232) -> #e879f9 (232,121,249)
-      // Sparkle: #fde047 (253,224,71) -> #fef08a (254,240,138)
       const heartColor = `rgb(${lerpChannel(251, 244, themeMix)}, ${lerpChannel(113, 114, themeMix)}, ${lerpChannel(133, 182, themeMix)})`;
       const petalColor = `rgb(${lerpChannel(251, 232, themeMix)}, ${lerpChannel(207, 121, themeMix)}, ${lerpChannel(232, 249, themeMix)})`;
       const sparkleColor = `rgb(${lerpChannel(253, 254, themeMix)}, ${lerpChannel(224, 240, themeMix)}, ${lerpChannel(71, 138, themeMix)})`;
@@ -241,10 +293,13 @@ export const BackgroundEffects: React.FC<BackgroundEffectsProps> = ({ isDarkMode
     }
 
     return () => {
+      syncActiveRef.current = null;
       if (animationFrameId !== null) cancelAnimationFrame(animationFrameId);
+      if (bodyStyleObserver) bodyStyleObserver.disconnect();
       window.removeEventListener('resize', handleResize);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('kashish-app-background-state', handleNativeBackgroundState as EventListener);
+      window.removeEventListener('kashish-overlay-pause', handleOverlayPauseEvent as EventListener);
       window.removeEventListener('blur', handleWindowBlur);
       window.removeEventListener('focus', handleWindowFocus);
     };
@@ -257,7 +312,7 @@ export const BackgroundEffects: React.FC<BackgroundEffectsProps> = ({ isDarkMode
       className="fixed inset-0 pointer-events-none z-0 transition-opacity duration-300"
       style={{
         opacity: isDarkMode ? 0.45 : 0.65,
-        transform: 'translateZ(0)',
+        transform: 'translate3d(0, 0, 0)',
         willChange: 'opacity',
       }}
     />

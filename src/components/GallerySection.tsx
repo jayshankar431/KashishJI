@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { 
   Images, 
@@ -37,6 +37,7 @@ import { db } from '../firebase';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSite } from '../siteContent';
 import { DynamicSlot } from './DynamicSlot';
+import { LIQUID_SPRING } from '../utils/perfTier';
 
 export interface GalleryPhoto {
   id: string;
@@ -100,6 +101,112 @@ export const DEFAULT_CURATED_MEMORIES: GalleryPhoto[] = [
     type: 'curated',
   },
 ];
+
+interface GalleryPhotoCardProps {
+  photo: GalleryPhoto;
+  isLiked: boolean;
+  isImgLoaded: boolean;
+  onOpen: (photo: GalleryPhoto) => void;
+  onLike: (photo: GalleryPhoto, e?: React.MouseEvent) => void;
+  onMediaReady: (photoId: string) => void;
+}
+
+const GalleryPhotoCard = memo(
+  ({ photo, isLiked, isImgLoaded, onOpen, onLike, onMediaReady }: GalleryPhotoCardProps) => {
+    const isVideo = isVideoMedia(photo);
+    const displaySquareUrl = isVideo
+      ? photo.url
+      : CloudinarySyncManager.getSquareImageUrl(photo.url, 800);
+
+    return (
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={LIQUID_SPRING}
+        onClick={() => onOpen(photo)}
+        style={{
+          backgroundColor: 'var(--card)',
+          borderColor: 'var(--card-border)',
+          boxShadow: '0 4px 16px var(--shadow-color)',
+        }}
+        className="cv-card-auto group relative rounded-2xl overflow-hidden border cursor-pointer select-none transition-transform active:scale-[0.97]"
+      >
+        {/* Image/Video Container with 1:1 Square Aspect Ratio */}
+        <div className="aspect-square w-full overflow-hidden bg-zinc-900/10 dark:bg-black/40 relative">
+          {!isImgLoaded && !isVideo && (
+            <div className="absolute inset-0 bg-rose-500/10 animate-pulse flex items-center justify-center pointer-events-none">
+              <Loader2 className="w-5 h-5 text-[var(--accent)] animate-spin opacity-50" />
+            </div>
+          )}
+
+          {isVideo ? (
+            <video
+              src={photo.url || photo.storagePath}
+              muted
+              playsInline
+              loop
+              preload="metadata"
+              onLoadedData={() => onMediaReady(photo.id)}
+              onMouseOver={(e) => e.currentTarget.play().catch(() => {})}
+              onMouseOut={(e) => e.currentTarget.pause()}
+              className="w-full h-full object-cover aspect-square transition-transform duration-300 group-hover:scale-105"
+            />
+          ) : (
+            <PrivateStorageImage
+              storagePath={photo.storagePath}
+              fallbackUrl={displaySquareUrl}
+              cloudinaryWidth={800}
+              alt={photo.caption}
+              loading="lazy"
+              decoding="async"
+              onLoad={() => onMediaReady(photo.id)}
+              onError={() => onMediaReady(photo.id)}
+              className="w-full h-full object-cover aspect-square transition-transform duration-300 group-hover:scale-105"
+            />
+          )}
+
+          {/* Top badges */}
+          <div className="absolute top-2 left-2 flex items-center gap-1.5">
+            {photo.type === 'surprise' && (
+              <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-wider bg-rose-500/90 text-white backdrop-blur-md shadow-xs flex items-center gap-1">
+                <Sparkles className="w-2.5 h-2.5" />
+                <span>Surprise</span>
+              </span>
+            )}
+          </div>
+
+          {/* Heart Button Overlay */}
+          <button
+            type="button"
+            onClick={(e) => onLike(photo, e)}
+            aria-label="Like photo"
+            className={`absolute top-2 right-2 w-8 h-8 rounded-full flex items-center justify-center backdrop-blur-md transition-transform active:scale-[0.97] ${
+              isLiked
+                ? 'bg-rose-500 text-white shadow-md'
+                : 'bg-black/40 text-white hover:bg-black/60'
+            }`}
+          >
+            <Heart className={`w-4 h-4 ${isLiked ? 'fill-white stroke-white' : 'stroke-white'}`} />
+          </button>
+
+          {/* Gradient and Caption Overlay on Hover / Bottom */}
+          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent p-3 pt-6 flex flex-col justify-end">
+            <p className="text-white text-xs font-bold line-clamp-2 leading-tight drop-shadow-sm">
+              {photo.caption}
+            </p>
+            <div className="flex items-center justify-between text-[10px] text-white/80 font-medium pt-1">
+              <span className="flex items-center gap-1">
+                <Heart className={`w-3 h-3 ${isLiked ? 'text-rose-400 fill-rose-400' : 'text-white/70'}`} />
+                <span>{photo.likes}</span>
+              </span>
+              <span className="text-white/60 text-[9px] uppercase tracking-wider">View</span>
+            </div>
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
+);
 
 export const GallerySection: React.FC<GallerySectionProps> = ({ name, isDarkMode }) => {
   const site = useSite();
@@ -436,41 +543,56 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ name, isDarkMode
     }
   };
 
-  const handleLike = (photo: GalleryPhoto, e?: React.MouseEvent) => {
+  const handleLike = useCallback((photo: GalleryPhoto, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     triggerHaptic(40);
 
-    const isCurrentlyLiked = !!userLikedPhotos[photo.id];
-    const newLikedStatus = !isCurrentlyLiked;
-
-    setUserLikedPhotos(prev => ({
-      ...prev,
-      [photo.id]: newLikedStatus,
-    }));
-
-    setPhotos(prev => {
-      const next = prev.map(p => {
-        if (p.id === photo.id) {
-          return {
-            ...p,
-            likes: newLikedStatus ? p.likes + 1 : Math.max(0, p.likes - 1),
-          };
-        }
-        return p;
+    setUserLikedPhotos((prev) => {
+      const newLikedStatus = !prev[photo.id];
+      setPhotos((currPhotos) => {
+        const next = currPhotos.map((p) => {
+          if (p.id === photo.id) {
+            return {
+              ...p,
+              likes: newLikedStatus ? p.likes + 1 : Math.max(0, p.likes - 1),
+            };
+          }
+          return p;
+        });
+        try {
+          localStorage.setItem('kashish_cached_gallery', JSON.stringify(next.slice(0, 30)));
+        } catch {}
+        return next;
       });
-      try {
-        localStorage.setItem('kashish_cached_gallery', JSON.stringify(next.slice(0, 30)));
-      } catch {}
-      return next;
-    });
 
-    if (selectedPhoto && selectedPhoto.id === photo.id) {
-      setSelectedPhoto(prev => prev ? {
+      setSelectedPhoto((currSelected) =>
+        currSelected && currSelected.id === photo.id
+          ? {
+              ...currSelected,
+              likes: newLikedStatus ? currSelected.likes + 1 : Math.max(0, currSelected.likes - 1),
+            }
+          : currSelected
+      );
+
+      return {
         ...prev,
-        likes: newLikedStatus ? prev.likes + 1 : Math.max(0, prev.likes - 1),
-      } : null);
+        [photo.id]: newLikedStatus,
+      };
+    });
+  }, []);
+
+  const handleOpenPhoto = useCallback((photo: GalleryPhoto) => {
+    triggerHaptic(30);
+    setSelectedPhoto(photo);
+    logNativeActivity(`🖼️ Viewed media: "${photo.caption}"`, false, 'media_viewed');
+    if (photo.isFirestore) {
+      updateDoc(doc(db, 'media', photo.id), { views: increment(1) }).catch(() => {});
     }
-  };
+  }, []);
+
+  const handleMediaReady = useCallback((photoId: string) => {
+    setLoadedImageIds((prev) => (prev[photoId] ? prev : { ...prev, [photoId]: true }));
+  }, []);
 
   const filteredPhotos = photos.filter(p => {
     if (filter === 'surprise') return p.type === 'surprise';
@@ -645,112 +767,17 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ name, isDarkMode
 
       {/* Photos 1:1 Square Grid Layout */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
-        {filteredPhotos.map((photo) => {
-          const isLiked = !!userLikedPhotos[photo.id];
-          const isImgLoaded = !!loadedImageIds[photo.id];
-          const displaySquareUrl = isVideoMedia(photo)
-            ? photo.url
-            : CloudinarySyncManager.getSquareImageUrl(photo.url, 800);
-
-          return (
-            <motion.div
-              key={photo.id}
-              layout
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.25 }}
-              onClick={() => {
-                triggerHaptic(30);
-                setSelectedPhoto(photo);
-                logNativeActivity(`🖼️ Viewed media: "${photo.caption}"`, false, 'media_viewed');
-                if (photo.isFirestore) {
-                  updateDoc(doc(db, 'media', photo.id), { views: increment(1) }).catch(() => {});
-                }
-              }}
-              style={{
-                backgroundColor: 'var(--card)',
-                borderColor: 'var(--card-border)',
-                boxShadow: '0 4px 16px var(--shadow-color)',
-              }}
-              className="group relative rounded-2xl overflow-hidden border cursor-pointer select-none transition-transform active:scale-[0.98]"
-            >
-              {/* Image/Video Container with 1:1 Square Aspect Ratio */}
-              <div className="aspect-square w-full overflow-hidden bg-zinc-900/10 dark:bg-black/40 relative">
-                {!isImgLoaded && !isVideoMedia(photo) && (
-                  <div className="absolute inset-0 bg-rose-500/10 animate-pulse flex items-center justify-center pointer-events-none">
-                    <Loader2 className="w-5 h-5 text-[var(--accent)] animate-spin opacity-50" />
-                  </div>
-                )}
-
-                {isVideoMedia(photo) ? (
-                  <video
-                    src={photo.url || photo.storagePath}
-                    muted
-                    playsInline
-                    loop
-                    onLoadedData={() =>
-                      setLoadedImageIds((prev) => ({ ...prev, [photo.id]: true }))
-                    }
-                    onMouseOver={(e) => e.currentTarget.play().catch(() => {})}
-                    onMouseOut={(e) => e.currentTarget.pause()}
-                    className="w-full h-full object-cover aspect-square transition-transform duration-500 group-hover:scale-105"
-                  />
-                ) : (
-                  <PrivateStorageImage
-                    storagePath={photo.storagePath}
-                    fallbackUrl={displaySquareUrl}
-                    alt={photo.caption}
-                    loading="lazy"
-                    onLoad={() =>
-                      setLoadedImageIds((prev) => ({ ...prev, [photo.id]: true }))
-                    }
-                    onError={() =>
-                      setLoadedImageIds((prev) => ({ ...prev, [photo.id]: true }))
-                    }
-                    className="w-full h-full object-cover aspect-square transition-transform duration-500 group-hover:scale-105"
-                  />
-                )}
-
-                {/* Top badges */}
-                <div className="absolute top-2 left-2 flex items-center gap-1.5">
-                  {photo.type === 'surprise' && (
-                    <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold uppercase tracking-wider bg-rose-500/90 text-white backdrop-blur-md shadow-xs flex items-center gap-1">
-                      <Sparkles className="w-2.5 h-2.5" />
-                      <span>Surprise</span>
-                    </span>
-                  )}
-                </div>
-
-                {/* Heart Button Overlay */}
-                <button
-                  onClick={(e) => handleLike(photo, e)}
-                  aria-label="Like photo"
-                  className={`absolute top-2 right-2 w-8 h-8 rounded-full flex items-center justify-center backdrop-blur-md transition-all active:scale-90 ${
-                    isLiked
-                      ? 'bg-rose-500 text-white shadow-md'
-                      : 'bg-black/40 text-white hover:bg-black/60'
-                  }`}
-                >
-                  <Heart className={`w-4 h-4 ${isLiked ? 'fill-white stroke-white' : 'stroke-white'}`} />
-                </button>
-
-                {/* Gradient and Caption Overlay on Hover / Bottom */}
-                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent p-3 pt-6 flex flex-col justify-end">
-                  <p className="text-white text-xs font-bold line-clamp-2 leading-tight drop-shadow-sm">
-                    {photo.caption}
-                  </p>
-                  <div className="flex items-center justify-between text-[10px] text-white/80 font-medium pt-1">
-                    <span className="flex items-center gap-1">
-                      <Heart className={`w-3 h-3 ${isLiked ? 'text-rose-400 fill-rose-400' : 'text-white/70'}`} />
-                      <span>{photo.likes}</span>
-                    </span>
-                    <span className="text-white/60 text-[9px] uppercase tracking-wider">View</span>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          );
-        })}
+        {filteredPhotos.map((photo) => (
+          <GalleryPhotoCard
+            key={photo.id}
+            photo={photo}
+            isLiked={!!userLikedPhotos[photo.id]}
+            isImgLoaded={!!loadedImageIds[photo.id]}
+            onOpen={handleOpenPhoto}
+            onLike={handleLike}
+            onMediaReady={handleMediaReady}
+          />
+        ))}
       </div>
 
       {/* Empty State */}
@@ -774,9 +801,10 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ name, isDarkMode
             {isUploadModalOpen && previewImage && (
               <div className="fixed inset-0 z-[1200] w-screen h-[100dvh] max-h-[100dvh] overflow-y-auto overscroll-contain flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
                 <motion.div
-                  initial={{ scale: 0.9, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  exit={{ scale: 0.9, opacity: 0 }}
+                  initial={{ scale: 0.94, opacity: 0, y: 12 }}
+                  animate={{ scale: 1, opacity: 1, y: 0 }}
+                  exit={{ scale: 0.94, opacity: 0, y: 12 }}
+                  transition={LIQUID_SPRING}
                   style={{
                     backgroundColor: 'var(--card)',
                     borderColor: 'var(--card-border)',
@@ -821,12 +849,14 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ name, isDarkMode
                       <img
                         src={previewImage}
                         alt="Upload Preview"
+                        loading="lazy"
+                        decoding="async"
                         className="w-full h-full object-cover"
                       />
                     )}
                   </div>
 
-                  {/* Upload Progress Bar */}
+                  {/* Upload Progress Bar (GPU-composited scaleX) */}
                   {isUploading && (
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between text-[11px] font-bold text-[var(--accent)]">
@@ -835,8 +865,8 @@ export const GallerySection: React.FC<GallerySectionProps> = ({ name, isDarkMode
                       </div>
                       <div className="w-full h-2 rounded-full bg-black/10 dark:bg-white/10 overflow-hidden">
                         <div
-                          className="h-full bg-gradient-to-r from-pink-500 to-rose-600 transition-all duration-200"
-                          style={{ width: `${uploadProgress}%` }}
+                          className="w-full h-full bg-gradient-to-r from-pink-500 to-rose-600 origin-left transition-transform duration-200"
+                          style={{ transform: `scaleX(${Math.max(0, Math.min(1, uploadProgress / 100))})` }}
                         />
                       </div>
                     </div>

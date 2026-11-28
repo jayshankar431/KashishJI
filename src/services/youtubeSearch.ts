@@ -774,7 +774,16 @@ export async function searchYouTubeSongs(
         typeof window !== 'undefined' &&
         (window.location.hostname.endsWith('.web.app') ||
           window.location.hostname.endsWith('.firebaseapp.com'));
-      const fallbackDelayMs = isStaticHost ? 0 : 150;
+      const hasNativeBridge =
+        typeof window !== 'undefined' &&
+        Boolean(
+          window.AndroidApp &&
+            (typeof window.AndroidApp.searchYouTubeMusicAsync === 'function' ||
+              typeof window.AndroidApp.searchYouTubeMusic === 'function')
+        );
+      // Let official YouTube Music WEB_REMIX API (native APK bridge or backend /api/ytmusic/search) win first
+      // so songs always carry genuine 1:1 lh3.googleusercontent.com album artwork instead of video thumbnails
+      const fallbackDelayMs = hasNativeBridge || !isStaticHost ? 1600 : 0;
 
       const delayedPipedFallback = (baseUrl: string) =>
         new Promise<YouTubeTrack[]>((resolve, reject) => {
@@ -800,6 +809,9 @@ export async function searchYouTubeSongs(
         delayedPipedFallback('https://api.piped.private.coffee'),
       ];
 
+      const isOfficialYtmArt = (url?: string) =>
+        Boolean(url) && (url!.includes('googleusercontent.com') || url!.includes('ggpht.com'));
+
       const winner = (await Promise.any(catalogProviders))
         .filter((t) => isGenuineSongItem(t.title, t.durationSeconds))
         .map((t) => ({
@@ -807,8 +819,10 @@ export async function searchYouTubeSongs(
           title: sanitizeSongTitle(t.title),
           artist: sanitizeSongArtist(t.artist),
           mediaType: 'song' as const,
+          catalogSource: 'youtube_music' as const,
           thumbnail: normalizeSquareThumbnail(t.thumbnail, t.videoId),
-        }));
+        }))
+        .sort((a, b) => Number(isOfficialYtmArt(b.thumbnail)) - Number(isOfficialYtmArt(a.thumbnail)));
       raceController.abort();
       saveToCache(normalizedKey, winner);
       return winner;
@@ -1439,4 +1453,284 @@ export async function fetchYouTubeSuggestions(
     return instant;
   }
 }
+
+export type SearchFilterCategory =
+  | 'all'
+  | 'songs'
+  | 'videos'
+  | 'albums'
+  | 'artists'
+  | 'community_playlists'
+  | 'featured_playlists'
+  | 'podcasts'
+  | 'episodes';
+
+export interface SearchCatalogItem {
+  id: string;
+  category: Exclude<SearchFilterCategory, 'all'>;
+  title: string;
+  subtitle: string;
+  thumbnail: string;
+  videoId?: string;
+  browseId?: string;
+  durationText?: string;
+  durationSeconds?: number;
+  viewsText?: string;
+  album?: string;
+  artist?: string;
+  mediaType?: 'song' | 'video';
+}
+
+export interface CategorizedSearchResults {
+  songs: YouTubeTrack[];
+  videos: YouTubeTrack[];
+  albums: SearchCatalogItem[];
+  artists: SearchCatalogItem[];
+  community_playlists: SearchCatalogItem[];
+  featured_playlists: SearchCatalogItem[];
+  podcasts: SearchCatalogItem[];
+  episodes: SearchCatalogItem[];
+}
+
+export function createEmptyCategorizedResults(): CategorizedSearchResults {
+  return {
+    songs: [],
+    videos: [],
+    albums: [],
+    artists: [],
+    community_playlists: [],
+    featured_playlists: [],
+    podcasts: [],
+    episodes: [],
+  };
+}
+
+const categorizedMemoryCache = new Map<
+  string,
+  { data: CategorizedSearchResults; cachedAt: number }
+>();
+
+function extractYouTubeIdFromPipedUrl(url: string | undefined): string {
+  if (!url) return '';
+  const match = url.match(/(?:v=|\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+  return match ? match[1] : '';
+}
+
+async function fetchPipedCategoryFallback(
+  query: string,
+  filter: Exclude<SearchFilterCategory, 'all' | 'songs' | 'videos'>,
+  signal?: AbortSignal
+): Promise<SearchCatalogItem[]> {
+  const pipedFilterMap: Record<Exclude<SearchFilterCategory, 'all' | 'songs' | 'videos'>, string> = {
+    albums: 'music_albums',
+    artists: 'music_artists',
+    community_playlists: 'playlists',
+    featured_playlists: 'playlists',
+    podcasts: 'channels',
+    episodes: 'videos',
+  };
+  const pipedFilter = pipedFilterMap[filter];
+  const searchQuery =
+    filter === 'podcasts'
+      ? `${query} podcast`
+      : filter === 'episodes'
+        ? `${query} podcast episode`
+        : filter === 'featured_playlists'
+          ? `${query} official playlist`
+          : query;
+
+  const hosts = ['https://pipedapi.ducks.party', 'https://api.piped.private.coffee'];
+  for (const host of hosts) {
+    try {
+      const res = await fetchWithTimeout(
+        `${host}/search?q=${encodeURIComponent(searchQuery)}&filter=${encodeURIComponent(pipedFilter)}`,
+        signal,
+        3200
+      );
+      if (!res.ok) continue;
+      const data = await res.json();
+      const rawItems: any[] = Array.isArray(data?.items) ? data.items : [];
+      const mapped: SearchCatalogItem[] = [];
+      const seen = new Set<string>();
+      for (const item of rawItems) {
+        const title = String(item?.name || item?.title || '').trim();
+        if (!title) continue;
+        const vid = extractYouTubeIdFromPipedUrl(item?.url);
+        const browseId = String(item?.url || '').replace(/^\//, '');
+        const id = vid || browseId || `${filter}_${title.toLowerCase()}`;
+        if (seen.has(id)) continue;
+        seen.add(id);
+
+        const subParts: string[] = [];
+        if (item?.uploaderName) subParts.push(String(item.uploaderName));
+        if (typeof item?.subscribers === 'number' && item.subscribers > 0) {
+          const subs =
+            item.subscribers >= 1_000_000
+              ? `${(item.subscribers / 1_000_000).toFixed(1)}M subscribers`
+              : item.subscribers >= 1_000
+                ? `${Math.round(item.subscribers / 1_000)}K subscribers`
+                : `${item.subscribers} subscribers`;
+          subParts.push(subs);
+        } else if (typeof item?.videos === 'number' && item.videos > 0) {
+          subParts.push(`${item.videos} tracks`);
+        }
+
+        mapped.push({
+          id,
+          category: filter,
+          title,
+          subtitle: subParts.join(' • ') || (filter === 'artists' ? 'Artist' : 'YouTube Music'),
+          thumbnail: String(item?.thumbnail || (vid ? `https://i.ytimg.com/vi/${vid}/hqdefault.jpg` : '')),
+          videoId: vid || undefined,
+          browseId: browseId || undefined,
+          durationSeconds: typeof item?.duration === 'number' && item.duration > 0 ? item.duration : undefined,
+          artist: item?.uploaderName ? String(item.uploaderName) : undefined,
+          mediaType: filter === 'episodes' ? 'song' : undefined,
+        });
+        if (mapped.length >= 16) break;
+      }
+      if (mapped.length > 0) return mapped;
+    } catch {
+      // Try next host
+    }
+  }
+  return [];
+}
+
+/**
+ * Fetches full YouTube Music categorized search results across all 9 filters:
+ * All, Songs, Videos, Albums, Artists, Community playlists, Featured playlists, Podcasts, Episodes.
+ * Uses local backend InnerTube endpoint first, then gracefully falls back to parallel
+ * native/Piped queries so both Web and offline/static APK builds populate every filter smoothly.
+ */
+export async function searchYouTubeCategorized(
+  rawQuery: string,
+  filter: SearchFilterCategory = 'all',
+  signal?: AbortSignal
+): Promise<CategorizedSearchResults> {
+  const query = rawQuery.replace(/\s+/g, ' ').trim();
+  if (!query) return createEmptyCategorizedResults();
+
+  const cacheKey = `${filter}::${query.toLowerCase()}`;
+  const cached = categorizedMemoryCache.get(cacheKey);
+  if (cached && Date.now() - cached.cachedAt < SEARCH_CACHE_STALE_MS) {
+    return cached.data;
+  }
+
+  // 1. Primary path: server-side YouTube Music WEB_REMIX InnerTube categorized endpoint
+  try {
+    const res = await fetchWithTimeout(
+      `/api/ytmusic/search?q=${encodeURIComponent(query)}&type=categorized&filter=${encodeURIComponent(filter)}`,
+      signal,
+      5800
+    );
+    if (res.ok) {
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const json = await res.json();
+        if (json && (Array.isArray(json.songs) || Array.isArray(json.albums) || Array.isArray(json.artists))) {
+          const parsed: CategorizedSearchResults = {
+            songs: Array.isArray(json.songs) ? json.songs : [],
+            videos: Array.isArray(json.videos) ? json.videos : [],
+            albums: Array.isArray(json.albums) ? json.albums : [],
+            artists: Array.isArray(json.artists) ? json.artists : [],
+            community_playlists: Array.isArray(json.community_playlists) ? json.community_playlists : [],
+            featured_playlists: Array.isArray(json.featured_playlists) ? json.featured_playlists : [],
+            podcasts: Array.isArray(json.podcasts) ? json.podcasts : [],
+            episodes: Array.isArray(json.episodes) ? json.episodes : [],
+          };
+          const hasAny =
+            parsed.songs.length > 0 ||
+            parsed.videos.length > 0 ||
+            parsed.albums.length > 0 ||
+            parsed.artists.length > 0 ||
+            parsed.community_playlists.length > 0 ||
+            parsed.featured_playlists.length > 0 ||
+            parsed.podcasts.length > 0 ||
+            parsed.episodes.length > 0;
+          if (hasAny) {
+            categorizedMemoryCache.set(cacheKey, { data: parsed, cachedAt: Date.now() });
+            return parsed;
+          }
+        }
+      }
+    }
+  } catch {
+    // Fall through to client/native fallback (static Firebase hosting or APK)
+  }
+
+  if (signal?.aborted) return createEmptyCategorizedResults();
+
+  // 2. Static Hosting / APK Fallback: build categorized shelves via native bridge + Piped API
+  const fallback = createEmptyCategorizedResults();
+
+  if (filter === 'all') {
+    const [songsRes, videosRes, albumsRes, artistsRes, playlistsRes] = await Promise.allSettled([
+      searchYouTubeSongs(query, signal),
+      searchYouTubeVideos(query, signal),
+      fetchPipedCategoryFallback(query, 'albums', signal),
+      fetchPipedCategoryFallback(query, 'artists', signal),
+      fetchPipedCategoryFallback(query, 'community_playlists', signal),
+    ]);
+    if (songsRes.status === 'fulfilled') fallback.songs = songsRes.value;
+    if (videosRes.status === 'fulfilled') fallback.videos = videosRes.value;
+    if (albumsRes.status === 'fulfilled') fallback.albums = albumsRes.value;
+    if (artistsRes.status === 'fulfilled') fallback.artists = artistsRes.value;
+    if (playlistsRes.status === 'fulfilled') fallback.community_playlists = playlistsRes.value;
+  } else if (filter === 'songs') {
+    fallback.songs = await searchYouTubeSongs(query, signal);
+  } else if (filter === 'videos') {
+    fallback.videos = await searchYouTubeVideos(query, signal);
+  } else {
+    fallback[filter] = await fetchPipedCategoryFallback(query, filter, signal);
+  }
+
+  // Synthesize artist & album cards from songs if upstream artist/album endpoints were rate-limited
+  if (filter === 'all' || filter === 'artists') {
+    if (fallback.artists.length === 0 && fallback.songs.length > 0) {
+      const seenArtists = new Set<string>();
+      for (const s of fallback.songs) {
+        const primaryArtist = (s.artist || '').split(/[,&]/)[0].trim();
+        if (!primaryArtist || primaryArtist.toLowerCase().includes('youtube music') || seenArtists.has(primaryArtist.toLowerCase())) {
+          continue;
+        }
+        seenArtists.add(primaryArtist.toLowerCase());
+        fallback.artists.push({
+          id: `artist_${primaryArtist.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`,
+          category: 'artists',
+          title: primaryArtist,
+          subtitle: 'Artist',
+          thumbnail: s.thumbnail,
+          artist: primaryArtist,
+        });
+        if (fallback.artists.length >= 6) break;
+      }
+    }
+  }
+
+  if (filter === 'all' || filter === 'albums') {
+    if (fallback.albums.length === 0 && fallback.songs.length > 0) {
+      const seenAlbums = new Set<string>();
+      for (const s of fallback.songs) {
+        const albumName = (s.album || '').trim();
+        if (!albumName || seenAlbums.has(albumName.toLowerCase())) continue;
+        seenAlbums.add(albumName.toLowerCase());
+        fallback.albums.push({
+          id: `album_${albumName.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`,
+          category: 'albums',
+          title: albumName,
+          subtitle: `Album • ${s.artist}`,
+          thumbnail: s.thumbnail,
+          artist: s.artist,
+          album: albumName,
+        });
+        if (fallback.albums.length >= 6) break;
+      }
+    }
+  }
+
+  categorizedMemoryCache.set(cacheKey, { data: fallback, cachedAt: Date.now() });
+  return fallback;
+}
+
 

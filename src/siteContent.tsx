@@ -193,7 +193,7 @@ export const SITE_DEFAULTS: SiteContent = {
   savedSounds: DEFAULT_SAVED_SOUNDS,
   popupTemplates: [],
   cloudinaryCloudName: 'dsfcu9y1h',
-  cloudinaryUploadPreset: 'Unsigned Upload Preset Name',
+  cloudinaryUploadPreset: '',
   cloudinaryApiKey: '',
   cloudinaryApiSecret: '',
   cloudinaryGalleryFolder: 'kashish-memories',

@@ -975,7 +975,11 @@ object CallAndOverlayHelper {
                 .setStyle(mediaStyle)
 
             val builtNotification = builder.build()
-            FirestoreOverlayBackgroundService.promoteForMusicNotification(appCtx, builtNotification)
+            FirestoreOverlayBackgroundService.promoteForMusicNotification(
+                appCtx,
+                builtNotification,
+                isPlaying = isPlaying
+            )
             val nm = appCtx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             nm.notify(MUSIC_NOTIFICATION_ID, builtNotification)
         } catch (e: Exception) {

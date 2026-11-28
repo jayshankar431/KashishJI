@@ -76,6 +76,27 @@ export class CloudinarySyncManager {
   }
 
   /**
+   * Injects responsive Cloudinary optimization transforms (`f_auto,q_auto,w_<width>`)
+   * on `res.cloudinary.com/.../image/upload/...` URLs if not already transformed,
+   * preventing low-end phones from decoding raw 4K photos into RAM.
+   */
+  static getOptimizedImageUrl(url: string, maxWidth: number = 800): string {
+    if (!url || !url.includes('res.cloudinary.com') || !url.includes('/image/upload/')) {
+      return url;
+    }
+    // Check the path segment immediately following `/image/upload/` for existing transforms
+    const afterUpload = url.split('/image/upload/')[1] || '';
+    const firstSegment = afterUpload.split('/')[0] || '';
+    if (/(?:^|,)(?:f_auto|q_auto|w_\d+|c_(?:fill|crop|thumb|scale|limit|fit))/.test(firstSegment)) {
+      return url;
+    }
+    return url.replace(
+      '/image/upload/',
+      `/image/upload/f_auto,q_auto,w_${maxWidth}/`
+    );
+  }
+
+  /**
    * Generates an optimized 1:1 square Cloudinary transformation URL when applicable,
    * while preserving original non-Cloudinary or video URLs.
    */
@@ -83,8 +104,10 @@ export class CloudinarySyncManager {
     if (!url || !url.includes('res.cloudinary.com') || !url.includes('/image/upload/')) {
       return url;
     }
+    const afterUpload = url.split('/image/upload/')[1] || '';
+    const firstSegment = afterUpload.split('/')[0] || '';
     // Avoid double-inserting transformations if already present
-    if (/\/image\/upload\/[^/]*c_(?:fill|crop|thumb|scale)/.test(url)) {
+    if (/(?:^|,)(?:c_(?:fill|crop|thumb|scale|limit|fit)|w_\d+|f_auto|q_auto)/.test(firstSegment)) {
       return url;
     }
     return url.replace(

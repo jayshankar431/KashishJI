@@ -357,6 +357,11 @@ class AndroidAppInterface(private val context: Context) {
         try {
             val clean = url.trim()
             if (clean.isEmpty()) return
+            if (!clean.startsWith("https://", ignoreCase = true) &&
+                !clean.startsWith("http://", ignoreCase = true)
+            ) {
+                return
+            }
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(clean)).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }

@@ -1,15 +1,11 @@
-import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, Suspense, lazy } from 'react';
 import { useSite } from './siteContent';
 import { romanticAudio } from './audio';
 import { BackgroundEffects } from './components/BackgroundEffects';
 import { NostalgicLockScreen } from './components/NostalgicLockScreen';
 import { Navbar, NavTab } from './components/Navbar';
 import { HomeSection } from './components/HomeSection';
-import { GamesSection } from './components/GamesSection';
-import { SecretLetterSection } from './components/SecretLetterSection';
 import { NameGameSection } from './components/NameGameSection';
-import { CutePicSection } from './components/CutePicSection';
-import { GallerySection } from './components/GallerySection';
 import { loadProgress, saveProgress, resetProgress, UserProgressData } from './storage';
 import {
   triggerHaptic,
@@ -32,18 +28,47 @@ import { DynamicSlot } from './components/DynamicSlot';
 import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
 import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db, ADMIN_EMAIL } from './firebase';
-import { AdminPanel } from './components/AdminPanel';
 import { LiveOverlaysAndNotifications } from './components/LiveOverlaysAndNotifications';
 import { DarlingMusicPlayer } from './components/DarlingMusicPlayer';
 import {
-  ThemeSection,
-  ThemeModal,
   AppThemeId,
   ThemeOriginSource,
   getSavedTheme,
   applyThemeToDocument,
   transitionThemeChange,
-} from './components/ThemeSection';
+} from './utils/themeUtils';
+
+// Code-split heavy sections & modals so they only load into RAM when opened
+const AdminPanel = lazy(() =>
+  import('./components/AdminPanel').then((m) => ({ default: m.AdminPanel }))
+);
+const GamesSection = lazy(() =>
+  import('./components/GamesSection').then((m) => ({ default: m.GamesSection }))
+);
+const GallerySection = lazy(() =>
+  import('./components/GallerySection').then((m) => ({ default: m.GallerySection }))
+);
+const SecretLetterSection = lazy(() =>
+  import('./components/SecretLetterSection').then((m) => ({ default: m.SecretLetterSection }))
+);
+const CutePicSection = lazy(() =>
+  import('./components/CutePicSection').then((m) => ({ default: m.CutePicSection }))
+);
+const ThemeSection = lazy(() =>
+  import('./components/ThemeSection').then((m) => ({ default: m.ThemeSection }))
+);
+const ThemeModal = lazy(() =>
+  import('./components/ThemeSection').then((m) => ({ default: m.ThemeModal }))
+);
+
+const SectionSuspenseFallback: React.FC = () => (
+  <div className="min-h-[45vh] flex flex-col items-center justify-center gap-3 py-12 select-none">
+    <Heart className="w-8 h-8 text-rose-500 fill-rose-500 animate-heartbeat" />
+    <span className="text-xs font-semibold tracking-wide text-[var(--text-soft)]">
+      Opening...
+    </span>
+  </div>
+);
 
 export default function App() {
   const site = useSite();
@@ -73,6 +98,7 @@ export default function App() {
   });
   const [isLoadingAssets, setIsLoadingAssets] = useState(true);
   const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
+  const [navDirection, setNavDirection] = useState<'neutral' | 'forward' | 'back'>('neutral');
   const prevApprovalRef = useRef<string>(approvalStatus);
 
   // Detect when virtual keyboard or text input is active so the bottom floating hover dock never hovers on top of the keyboard
@@ -542,7 +568,11 @@ export default function App() {
     return () => window.cancelAnimationFrame(rafId);
   }, [activeTab]);
 
-  const handleTabSelect = (tab: NavTab, updateHistory = true) => {
+  const handleTabSelect = (
+    tab: NavTab,
+    updateHistory = true,
+    direction: 'forward' | 'back' | 'neutral' = 'forward'
+  ) => {
     if (tab === activeTab) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
@@ -555,6 +585,7 @@ export default function App() {
       }
     }
 
+    setNavDirection(direction);
     resetScrollToTopInstant();
     setActiveTab(tab);
 
@@ -577,13 +608,59 @@ export default function App() {
   };
 
   const handleTabSelectRef = useRef(handleTabSelect);
+  const activeTabRef = useRef(activeTab);
+  const isAdminOpenRef = useRef(isAdminOpen);
+  const isThemeModalOpenRef = useRef(isThemeModalOpen);
   useEffect(() => {
     handleTabSelectRef.current = handleTabSelect;
+    activeTabRef.current = activeTab;
+    isAdminOpenRef.current = isAdminOpen;
+    isThemeModalOpenRef.current = isThemeModalOpen;
   });
 
-  // Android Hardware / Gesture Back Button listener (popstate)
+  // Unified global back-navigation consumer (used by Android back button, popstate, and left-edge swipe-back gesture)
   useEffect(() => {
     if (typeof window === 'undefined') return;
+
+    const consumeGlobalBack = (): boolean => {
+      // 1. Close top-level modals first
+      if (isAdminOpenRef.current) {
+        setIsAdminOpen(false);
+        return true;
+      }
+      if (isThemeModalOpenRef.current) {
+        setIsThemeModalOpen(false);
+        return true;
+      }
+
+      // 2. Consume active Music Player sub-views (Search overlay, Library, EQ, Sleep Timer, Up Next drawer, Now Playing)
+      const consumeMusicBack = (window as any).__kashishConsumeMusicPlayerBack;
+      if (typeof consumeMusicBack === 'function' && consumeMusicBack() === true) {
+        return true;
+      }
+
+      // 3. Navigate back across sub-rooms and root tabs with smooth liquid swipe-back transition
+      const cur = activeTabRef.current;
+      if (cur === 'home') {
+        return false;
+      }
+      if (
+        cur === 'gallery' ||
+        cur === 'games' ||
+        cur === 'secret-letter' ||
+        cur === 'name-game' ||
+        cur === 'theme' ||
+        cur.startsWith('custom_tab_')
+      ) {
+        handleTabSelectRef.current('rooms', false, 'back');
+        return true;
+      }
+      // From rooms, melodies, or cute-pic -> swipe back to home
+      handleTabSelectRef.current('home', false, 'back');
+      return true;
+    };
+
+    (window as any).__kashishConsumeBack = consumeGlobalBack;
 
     // Initialize root history state on mount
     const currentTab = activeTab;
@@ -595,11 +672,20 @@ export default function App() {
     }
 
     const handlePopState = (event: PopStateEvent) => {
-      // 1. If the Music Player has an active open sub-view (More/Related Songs, Library/Queue, Equalizer, etc.),
-      // consume the back press to close that sub-view and stay on the Music Player view.
+      // 1. Close modals or Music Player sub-views first without leaving current tab
+      if (isAdminOpenRef.current) {
+        setIsAdminOpen(false);
+        window.history.pushState({ tab: activeTabRef.current, isUnlocked: true }, '', `#${activeTabRef.current}`);
+        return;
+      }
+      if (isThemeModalOpenRef.current) {
+        setIsThemeModalOpen(false);
+        window.history.pushState({ tab: activeTabRef.current, isUnlocked: true }, '', `#${activeTabRef.current}`);
+        return;
+      }
       const consumeMusicBack = (window as any).__kashishConsumeMusicPlayerBack;
       if (typeof consumeMusicBack === 'function' && consumeMusicBack() === true) {
-        window.history.pushState({ tab: 'melodies', isUnlocked: true }, '', '#melodies');
+        window.history.pushState({ tab: activeTabRef.current, isUnlocked: true }, '', `#${activeTabRef.current}`);
         return;
       }
 
@@ -609,12 +695,53 @@ export default function App() {
         event.state?.tab ||
         (event.state?.kashishMusicSubView ? 'melodies' : rawHash ? (rawHash as NavTab) : 'home');
 
-      // 3. Switch to target tab (e.g. Home) without pushing extra duplicate history
-      handleTabSelectRef.current(targetTab, false);
+      // 3. Switch to target tab with liquid swipe-back transition
+      handleTabSelectRef.current(targetTab, false, 'back');
+    };
+
+    // Native-feeling left-edge swipe-right gesture for mobile/WebView liquid swipe-back
+    let edgeStartX: number | null = null;
+    let edgeStartY: number | null = null;
+    let edgeStartTime = 0;
+
+    const handleEdgeTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      const t = e.touches[0];
+      // Trigger only from left screen edge (0..28px) to avoid conflicting with horizontal carousels
+      if (t.clientX <= 28) {
+        edgeStartX = t.clientX;
+        edgeStartY = t.clientY;
+        edgeStartTime = Date.now();
+      } else {
+        edgeStartX = null;
+      }
+    };
+
+    const handleEdgeTouchEnd = (e: TouchEvent) => {
+      if (edgeStartX === null || edgeStartY === null || e.changedTouches.length === 0) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - edgeStartX;
+      const dy = Math.abs(t.clientY - edgeStartY);
+      const elapsed = Date.now() - edgeStartTime;
+      edgeStartX = null;
+      edgeStartY = null;
+
+      if (dx >= 64 && dy < 72 && elapsed < 650) {
+        if (consumeGlobalBack()) {
+          triggerHaptic(18);
+        }
+      }
     };
 
     window.addEventListener('popstate', handlePopState);
-    return () => window.removeEventListener('popstate', handlePopState);
+    window.addEventListener('touchstart', handleEdgeTouchStart, { passive: true });
+    window.addEventListener('touchend', handleEdgeTouchEnd, { passive: true });
+    return () => {
+      delete (window as any).__kashishConsumeBack;
+      window.removeEventListener('popstate', handlePopState);
+      window.removeEventListener('touchstart', handleEdgeTouchStart);
+      window.removeEventListener('touchend', handleEdgeTouchEnd);
+    };
   }, []);
 
   // Digital Hug Action: Increments hug count and saves
@@ -699,8 +826,13 @@ export default function App() {
       style={{ backgroundColor: 'var(--bg)', color: 'var(--text)' }}
       className="min-h-screen min-h-[100dvh] relative font-sans transition-colors duration-300 selection:bg-rose-200 selection:text-rose-900"
     >
-      {/* Background Floating Hearts, Rose Petals and Twinkling Stars (unmounted on full-screen opaque Melodies tab to free 100% GPU/CPU for audio/video) */}
-      {activeTab !== 'melodies' && <BackgroundEffects isDarkMode={isDarkMode} />}
+      {/* Background Floating Hearts, Rose Petals and Twinkling Stars (unmounted on Melodies & paused while full-screen modals/loaders are open) */}
+      {activeTab !== 'melodies' && (
+        <BackgroundEffects
+          isDarkMode={isDarkMode}
+          isPaused={isAdminOpen || isThemeModalOpen || isLoadingAssets || approvalStatus === 'loading'}
+        />
+      )}
 
       {/* Heart-beat Loading Screen during initial asset preload & auth session restore */}
       {(isLoadingAssets || approvalStatus === 'loading') && (
@@ -716,10 +848,10 @@ export default function App() {
         >
           <div className="relative flex items-center justify-center">
             <div
-              className="absolute w-36 h-36 rounded-full pointer-events-none opacity-40 animate-pulse"
+              className="absolute w-40 h-40 rounded-full pointer-events-none opacity-45 animate-pulse"
               style={{
-                background: 'radial-gradient(circle, rgba(244, 114, 182, 0.5) 0%, rgba(251, 191, 36, 0.25) 50%, transparent 70%)',
-                filter: 'blur(20px)',
+                background:
+                  'radial-gradient(circle, rgba(244, 114, 182, 0.45) 0%, rgba(251, 191, 36, 0.18) 42%, transparent 72%)',
               }}
             />
             <Heart className="w-14 h-14 text-rose-500 fill-rose-500 animate-heartbeat drop-shadow-[0_0_16px_rgba(244,114,182,0.85)]" />
@@ -1056,9 +1188,19 @@ export default function App() {
               activeTab={activeTab}
               recipientName={site.name}
               userId={authUser?.uid || 'guest'}
+              currentTheme={appTheme}
             />
 
-            <div key={activeTab} className="section-fade-slide">
+            <div
+              key={activeTab}
+              className={
+                navDirection === 'back'
+                  ? 'swipe-enter-back'
+                  : navDirection === 'forward'
+                    ? 'swipe-enter-forward'
+                    : 'section-fade-slide'
+              }
+            >
               {activeTab === 'home' && (
                 <HomeSection
                   name={site.name}
@@ -1087,50 +1229,52 @@ export default function App() {
                 />
               )}
 
-            {activeTab === 'gallery' && (
-              <GallerySection
-                name={site.name}
-                isDarkMode={isDarkMode}
-                onBack={() => handleTabSelect('rooms')}
-              />
-            )}
+            <Suspense fallback={<SectionSuspenseFallback />}>
+              {activeTab === 'gallery' && (
+                <GallerySection
+                  name={site.name}
+                  isDarkMode={isDarkMode}
+                  onBack={() => handleTabSelect('rooms')}
+                />
+              )}
 
-            {activeTab === 'games' && (
-              <GamesSection
-                name={site.name}
-                compliments={site.compliments}
-                isDarkMode={isDarkMode}
-                onGameWin={handleGameWin}
-                onUpdateHighScore={handleUpdateHighScore}
-              />
-            )}
+              {activeTab === 'games' && (
+                <GamesSection
+                  name={site.name}
+                  compliments={site.compliments}
+                  isDarkMode={isDarkMode}
+                  onGameWin={handleGameWin}
+                  onUpdateHighScore={handleUpdateHighScore}
+                />
+              )}
 
-            {activeTab === 'cute-pic' && (
-              <CutePicSection onBack={() => handleTabSelect('home')} />
-            )}
+              {activeTab === 'cute-pic' && (
+                <CutePicSection onBack={() => handleTabSelect('home')} />
+              )}
 
-            {activeTab === 'secret-letter' && (
-              <SecretLetterSection
-                name={site.name}
-                passwordHash=""
-                passwordHint={site.passwordHint}
-                personalMessage={site.personalMessage}
-                isDarkMode={isDarkMode}
-                onUnlockLetter={handleUnlockSecretLetter}
-              />
-            )}
+              {activeTab === 'secret-letter' && (
+                <SecretLetterSection
+                  name={site.name}
+                  passwordHash=""
+                  passwordHint={site.passwordHint}
+                  personalMessage={site.personalMessage}
+                  isDarkMode={isDarkMode}
+                  onUnlockLetter={handleUnlockSecretLetter}
+                />
+              )}
 
-            {activeTab === 'name-game' && (
-              <NameGameSection name={site.name} isDarkMode={isDarkMode} />
-            )}
+              {activeTab === 'name-game' && (
+                <NameGameSection name={site.name} isDarkMode={isDarkMode} />
+              )}
 
-            {activeTab === 'theme' && (
-              <ThemeSection
-                currentTheme={appTheme}
-                onSelectTheme={handleSelectThemeSmooth}
-                recipientName={site.name}
-              />
-            )}
+              {activeTab === 'theme' && (
+                <ThemeSection
+                  currentTheme={appTheme}
+                  onSelectTheme={handleSelectThemeSmooth}
+                  recipientName={site.name}
+                />
+              )}
+            </Suspense>
 
             {activeTab.startsWith('custom_tab_') && (() => {
               const tabMeta = (site.customTabs || []).find((t) => t.id === activeTab);
@@ -1198,14 +1342,12 @@ export default function App() {
                 aria-label="Primary Bottom Navigation"
                 style={{
                   paddingBottom: 'env(safe-area-inset-bottom, 0px)',
-                  backgroundColor: isMelodiesActive
-                    ? 'rgba(10, 10, 12, 0.96)'
-                    : 'var(--nav-bg)',
-                  borderColor: isMelodiesActive
-                    ? 'rgba(255, 255, 255, 0.1)'
-                    : 'var(--card-border)',
+                  backgroundColor: 'var(--nav-bg)',
+                  borderColor: 'var(--card-border)',
+                  backdropFilter: 'var(--glass-blur, blur(20px))',
+                  WebkitBackdropFilter: 'var(--glass-blur, blur(20px))',
                 }}
-                className="fixed bottom-0 left-0 right-0 z-[88] w-full border-t backdrop-blur-xl select-none"
+                className="fixed bottom-0 left-0 right-0 z-[88] w-full border-t select-none transition-colors duration-300"
               >
                 <div className="max-w-lg mx-auto h-12 px-4 grid grid-cols-3 items-center justify-items-center">
                   {/* Melodies (Icon Only) */}
@@ -1214,23 +1356,23 @@ export default function App() {
                     onClick={() => {
                       triggerHaptic(20);
                       romanticAudio.playChime();
-                      handleTabSelect('melodies');
+                      handleTabSelect('melodies', true, 'forward');
                     }}
                     title="Melodies"
                     aria-label="Melodies"
                     style={{
                       color: isMelodiesActive
-                        ? '#ffffff'
+                        ? 'var(--accent)'
                         : 'var(--text-soft)',
                       backgroundColor: isMelodiesActive
-                        ? 'rgba(255, 0, 51, 0.22)'
+                        ? 'var(--ytm-accent-soft)'
                         : 'transparent',
                     }}
                     className="w-16 h-9 rounded-full flex items-center justify-center transition-all duration-200 cursor-pointer hover:opacity-95 active:scale-90"
                   >
                     <Music
                       className={`w-5 h-5 shrink-0 transition-transform ${
-                        isMelodiesActive ? 'text-[#ff0033] scale-110' : ''
+                        isMelodiesActive ? 'scale-110' : ''
                       }`}
                     />
                   </button>
@@ -1241,19 +1383,17 @@ export default function App() {
                     onClick={() => {
                       triggerHaptic(20);
                       romanticAudio.playChime();
-                      handleTabSelect('home');
+                      handleTabSelect('home', true, activeTab === 'home' ? 'neutral' : 'back');
                     }}
                     title="Home"
                     aria-label="Home"
                     style={{
                       backgroundColor: isHomeActive
-                        ? 'rgba(236, 72, 153, 0.22)'
+                        ? 'var(--ytm-accent-soft)'
                         : 'transparent',
                       color: isHomeActive
-                        ? '#ec4899'
-                        : isMelodiesActive
-                          ? '#a3a3a3'
-                          : 'var(--text-soft)',
+                        ? 'var(--accent)'
+                        : 'var(--text-soft)',
                     }}
                     className="w-16 h-9 rounded-full flex items-center justify-center transition-all duration-200 cursor-pointer hover:opacity-95 active:scale-90"
                   >
@@ -1270,18 +1410,16 @@ export default function App() {
                     onClick={() => {
                       triggerHaptic(20);
                       romanticAudio.playChime();
-                      handleTabSelect('rooms');
+                      handleTabSelect('rooms', true, 'forward');
                     }}
                     title="Rooms"
                     aria-label="Rooms"
                     style={{
                       color: isRoomsActive
                         ? 'var(--accent)'
-                        : isMelodiesActive
-                          ? '#a3a3a3'
-                          : 'var(--text-soft)',
+                        : 'var(--text-soft)',
                       backgroundColor: isRoomsActive
-                        ? 'rgba(244, 63, 94, 0.2)'
+                        ? 'var(--ytm-accent-soft)'
                         : 'transparent',
                     }}
                     className="w-16 h-9 rounded-full flex items-center justify-center transition-all duration-200 cursor-pointer hover:opacity-95 active:scale-90"
@@ -1305,21 +1443,27 @@ export default function App() {
         </div>
       )}
 
-      {/* Theme Settings Popup Modal (Accessible from Navbar Theme icon anywhere) */}
-      <ThemeModal
-        isOpen={isThemeModalOpen}
-        onClose={() => setIsThemeModalOpen(false)}
-        currentTheme={appTheme}
-        onSelectTheme={handleSelectThemeSmooth}
-        recipientName={site.name}
-      />
+      {/* Theme Settings Popup Modal (lazy-loaded & mounted only when opened) */}
+      {isThemeModalOpen && (
+        <Suspense fallback={null}>
+          <ThemeModal
+            isOpen={isThemeModalOpen}
+            onClose={() => setIsThemeModalOpen(false)}
+            currentTheme={appTheme}
+            onSelectTheme={handleSelectThemeSmooth}
+            recipientName={site.name}
+          />
+        </Suspense>
+      )}
 
-      {/* Full-Screen Kashish Control Center (mounted only when open for zero background overhead) */}
+      {/* Full-Screen Kashish Control Center (lazy-loaded & mounted only when open for zero background overhead) */}
       {isAdminOpen && (
-        <AdminPanel
-          isOpen={isAdminOpen}
-          onClose={() => setIsAdminOpen(false)}
-        />
+        <Suspense fallback={<SectionSuspenseFallback />}>
+          <AdminPanel
+            isOpen={isAdminOpen}
+            onClose={() => setIsAdminOpen(false)}
+          />
+        </Suspense>
       )}
     </div>
   );

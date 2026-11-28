@@ -100,6 +100,7 @@ export interface AndroidAppBridge {
   nativeGetPlaybackState?: () => string;
   searchYouTubeMusicAsync?: (reqId: string, query: string) => void;
   searchYouTubeVideosAsync?: (reqId: string, query: string) => void;
+  searchYouTubeMusicCategorizedAsync?: (reqId: string, query: string, filter: string) => void;
   fetchYouTubeSuggestionsAsync?: (reqId: string, query: string) => void;
   fetchLyricsAsync?: (reqId: string, title: string, artist: string) => void;
   getNativePref?: (key: string) => string;
@@ -115,6 +116,7 @@ declare global {
     __KASHISH_PERMISSIONS__?: any;
     __triggerAutoContactsSync?: () => void;
     __kashishResolveNativeReq?: (reqId: string, payload: string) => void;
+    __kashishConsumeBack?: () => boolean;
     __kashishConsumeMusicPlayerBack?: () => boolean;
     __kashishAppInBackground?: boolean;
   }

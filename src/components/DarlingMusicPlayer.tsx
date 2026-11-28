@@ -23,6 +23,7 @@ import {
   Shuffle,
   Sliders,
   Timer,
+  ArrowLeft,
   ArrowUpLeft,
   Maximize2,
   Minimize2,
@@ -44,7 +45,7 @@ import {
   RotateCcw,
   Repeat1,
 } from 'lucide-react';
-import { MusicDiscoveryView } from './MusicDiscoveryView';
+import { MusicSearchOverlay } from './MusicSearchOverlay';
 import {
   loadUserFavorites,
   saveUserFavorites,
@@ -612,6 +613,12 @@ const PlayerProgressBar = memo(
     useEffect(() => {
       const updateProgress = () => {
         if (isDraggingRef.current) return;
+        if (
+          typeof document !== 'undefined' &&
+          document.hidden
+        ) {
+          return;
+        }
         if (typeof window !== 'undefined' && (window as any).__kashishAppInBackground === true) {
           return;
         }
@@ -743,6 +750,7 @@ const PlayerProgressBar = memo(
 
     const effectiveDur = duration > 0 ? duration : fallbackDurationSec;
     const progressPercent = effectiveDur > 0 ? Math.min(100, (currentTime / effectiveDur) * 100) : 0;
+    const progressRatio = Math.max(0, Math.min(1, progressPercent / 100));
 
     if (variant === 'top-edge') {
       return (
@@ -766,28 +774,39 @@ const PlayerProgressBar = memo(
         >
           <div
             style={{ backgroundColor: trackBg }}
-            className="w-full h-[3px] group-hover:h-[5px] transition-all overflow-hidden relative"
+            className="w-full h-[3px] group-hover:scale-y-150 origin-center transition-transform overflow-hidden relative"
           >
             <div
               style={{
-                width: `${progressPercent}%`,
+                transform: `scaleX(${progressRatio}) translateZ(0)`,
+                transformOrigin: 'left center',
                 background: accentGradient || accentColor,
+                willChange: 'transform',
               }}
-              className={`h-full ${isSeeking ? '' : 'transition-all duration-150'}`}
+              className={`w-full h-full ${isSeeking ? '' : 'transition-transform duration-150 ease-linear'}`}
             />
           </div>
           {trackId && effectiveDur > 0 && (
             <div
               style={{
-                left: `calc(${progressPercent}% - 6px)`,
-                background: accentGradient || accentColor,
+                transform: `translate3d(${progressPercent}%, 0, 0)`,
+                willChange: 'transform',
               }}
-              className={`absolute w-3 h-3 rounded-full shadow-md pointer-events-none transition-transform ${
-                isSeeking
-                  ? 'scale-125 opacity-100'
-                  : 'scale-0 opacity-0 group-hover:scale-100 group-hover:opacity-100'
+              className={`absolute inset-x-0 top-1/2 -translate-y-1/2 pointer-events-none ${
+                isSeeking ? '' : 'transition-transform duration-150 ease-linear'
               }`}
-            />
+            >
+              <div
+                style={{
+                  background: accentGradient || accentColor,
+                }}
+                className={`-ml-1.5 w-3 h-3 rounded-full shadow-md transition-[transform,opacity] ${
+                  isSeeking
+                    ? 'scale-125 opacity-100'
+                    : 'scale-0 opacity-0 group-hover:scale-100 group-hover:opacity-100'
+                }`}
+              />
+            </div>
           )}
         </div>
       );
@@ -816,16 +835,18 @@ const PlayerProgressBar = memo(
           >
             <div
               style={{ backgroundColor: trackBg }}
-              className={`w-full rounded-full overflow-hidden transition-all duration-200 ${
-                isSeeking ? 'h-2.5' : 'h-[6px] group-hover:h-2'
+              className={`w-full h-[6px] rounded-full overflow-hidden origin-center transition-transform duration-200 ${
+                isSeeking ? 'scale-y-[1.45]' : 'group-hover:scale-y-[1.25]'
               }`}
             >
               <div
                 style={{
-                  width: `${progressPercent}%`,
+                  transform: `scaleX(${progressRatio}) translateZ(0)`,
+                  transformOrigin: 'left center',
                   background: accentGradient || accentColor,
+                  willChange: 'transform',
                 }}
-                className={`h-full rounded-full ${isSeeking ? '' : 'transition-all duration-150'}`}
+                className={`w-full h-full rounded-full ${isSeeking ? '' : 'transition-transform duration-150 ease-linear'}`}
               />
             </div>
           </div>
@@ -871,26 +892,37 @@ const PlayerProgressBar = memo(
         >
           <div
             style={{ backgroundColor: trackBg }}
-            className="w-full h-1 group-hover:h-1.5 rounded-full overflow-hidden transition-all"
+            className="w-full h-1 group-hover:scale-y-125 origin-center rounded-full overflow-hidden transition-transform"
           >
             <div
               style={{
-                width: `${progressPercent}%`,
+                transform: `scaleX(${progressRatio}) translateZ(0)`,
+                transformOrigin: 'left center',
                 background: accentGradient || accentColor,
+                willChange: 'transform',
               }}
-              className={`h-full rounded-full ${isSeeking ? '' : 'transition-all duration-150'}`}
+              className={`w-full h-full rounded-full ${isSeeking ? '' : 'transition-transform duration-150 ease-linear'}`}
             />
           </div>
           {trackId && effectiveDur > 0 && (
             <div
               style={{
-                left: `calc(${progressPercent}% - 6px)`,
-                background: accentGradient || accentColor,
+                transform: `translate3d(${progressPercent}%, 0, 0)`,
+                willChange: 'transform',
               }}
-              className={`absolute w-3 h-3 rounded-full shadow-md pointer-events-none transition-transform ${
-                isSeeking ? 'scale-125' : 'scale-90 group-hover:scale-110'
+              className={`absolute inset-x-0 top-1/2 -translate-y-1/2 pointer-events-none ${
+                isSeeking ? '' : 'transition-transform duration-150 ease-linear'
               }`}
-            />
+            >
+              <div
+                style={{
+                  background: accentGradient || accentColor,
+                }}
+                className={`-ml-1.5 w-3 h-3 rounded-full shadow-md transition-transform ${
+                  isSeeking ? 'scale-125' : 'scale-90 group-hover:scale-110'
+                }`}
+              />
+            </div>
           )}
         </div>
         <span
@@ -930,6 +962,8 @@ const PlayerTimeReadout = memo(
 
     useEffect(() => {
       const tick = () => {
+        if (typeof document !== 'undefined' && document.hidden) return;
+        if (typeof window !== 'undefined' && (window as any).__kashishAppInBackground === true) return;
         try {
           const { currentTime: cur, duration: dur } = getPlaybackMetrics();
           setCurrentTime(cur);
@@ -1343,18 +1377,356 @@ const HighResThumbnail = memo(
   }
 );
 
+interface MemoSongRowProps {
+  song: YouTubeTrack;
+  idx: number;
+  isCurrent: boolean;
+  isRowPlaying: boolean;
+  isFav: boolean;
+  queueContext: YouTubeTrack[];
+  queueLabel: string;
+  showPlaylistRemoveId?: string;
+  showQueueControls?: boolean;
+  totalInQueue?: number;
+  onPreCue: (track: YouTubeTrack) => void;
+  onSelect: (
+    track: YouTubeTrack,
+    context: YouTubeTrack[],
+    label: string,
+    keepQueue?: boolean
+  ) => void;
+  onToggleFavorite: (track: YouTubeTrack) => void;
+  onOpenPlaylistModal: (track: YouTubeTrack) => void;
+  onAddToQueue: (track: YouTubeTrack) => void;
+  onRemoveFromPlaylist: (playlistId: string, videoId: string) => void;
+  onMoveQueueItem: (index: number, direction: 'up' | 'down') => void;
+  onRemoveFromQueue: (videoId: string) => void;
+}
+
+const MemoSongRow = memo(
+  ({
+    song,
+    idx,
+    isCurrent,
+    isRowPlaying,
+    isFav,
+    queueContext,
+    queueLabel,
+    showPlaylistRemoveId,
+    showQueueControls,
+    totalInQueue,
+    onPreCue,
+    onSelect,
+    onToggleFavorite,
+    onOpenPlaylistModal,
+    onAddToQueue,
+    onRemoveFromPlaylist,
+    onMoveQueueItem,
+    onRemoveFromQueue,
+  }: MemoSongRowProps) => (
+    <div
+      onMouseEnter={() => onPreCue(song)}
+      onTouchStart={() => onPreCue(song)}
+      onClick={() => onSelect(song, queueContext, queueLabel, Boolean(showQueueControls))}
+      style={{
+        backgroundColor: isCurrent ? 'var(--ytm-accent-soft)' : 'transparent',
+        borderColor: isCurrent ? 'var(--ytm-accent)' : 'transparent',
+      }}
+      className="cv-row-auto group flex items-center gap-3 px-2.5 sm:px-3 py-2 rounded-xl border transition-transform cursor-pointer select-none hover:opacity-95 active:scale-[0.97]"
+    >
+      {/* Thumbnail with play overlay */}
+      <div
+        style={{ backgroundColor: 'var(--ytm-surface-elevated)' }}
+        className="relative w-11 h-11 sm:w-12 sm:h-12 rounded-lg overflow-hidden shrink-0"
+      >
+        <HighResThumbnail
+          videoId={song.videoId}
+          rawThumbnail={song.thumbnail}
+          alt={song.title}
+          aspect="square"
+          loading="lazy"
+          className="w-full h-full object-cover"
+        />
+        <div
+          className={`absolute inset-0 bg-black/50 flex items-center justify-center transition-opacity ${
+            isCurrent ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+          }`}
+        >
+          {isRowPlaying ? (
+            <div className="flex items-end gap-0.5 h-3.5">
+              <span style={{ backgroundColor: 'var(--ytm-accent)' }} className="w-0.5 h-2 rounded-full animate-pulse" />
+              <span style={{ backgroundColor: 'var(--ytm-accent)' }} className="w-0.5 h-3.5 rounded-full animate-bounce" />
+              <span style={{ backgroundColor: 'var(--ytm-accent)' }} className="w-0.5 h-2.5 rounded-full animate-pulse" />
+            </div>
+          ) : (
+            <Play className="w-4 h-4 text-white fill-white ml-0.5" />
+          )}
+        </div>
+      </div>
+
+      {/* Title & Artist */}
+      <div className="min-w-0 flex-1">
+        <p
+          style={{ color: isCurrent ? 'var(--ytm-accent)' : 'var(--ytm-text)' }}
+          className="text-xs sm:text-sm font-semibold truncate"
+        >
+          {song.title}
+        </p>
+        <p
+          style={{ color: 'var(--ytm-text-muted)' }}
+          className="text-[11px] sm:text-xs truncate"
+        >
+          {song.artist}
+          {song.album ? ` • ${song.album}` : ''}
+        </p>
+      </div>
+
+      {/* Duration */}
+      {song.durationText && !showQueueControls && (
+        <span
+          style={{ color: 'var(--ytm-text-muted)' }}
+          className="hidden sm:inline-block text-xs font-mono tabular-nums shrink-0"
+        >
+          {song.durationText}
+        </span>
+      )}
+
+      {/* Action Buttons */}
+      <div
+        className="flex items-center gap-0.5 sm:gap-1 shrink-0"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          onClick={() => onToggleFavorite(song)}
+          style={{ color: isFav ? 'var(--ytm-accent)' : 'var(--ytm-text-muted)' }}
+          className="p-2 rounded-full transition-colors cursor-pointer active:scale-[0.97]"
+          title={isFav ? 'Remove from Liked songs' : 'Add to Liked songs'}
+          aria-label="Like song"
+        >
+          <Heart className={`w-4 h-4 ${isFav ? 'fill-current' : ''}`} />
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onOpenPlaylistModal(song)}
+          style={{ color: 'var(--ytm-text-muted)' }}
+          className="p-2 rounded-full transition-colors cursor-pointer active:scale-[0.97]"
+          title="Save to playlist"
+          aria-label="Save to playlist"
+        >
+          <Plus className="w-4 h-4" />
+        </button>
+
+        {!showQueueControls && (
+          <button
+            type="button"
+            onClick={() => onAddToQueue(song)}
+            style={{ color: 'var(--ytm-text-muted)' }}
+            className="hidden sm:inline-flex p-2 rounded-full transition-colors cursor-pointer active:scale-[0.97]"
+            title="Add to Up Next queue"
+            aria-label="Add to Up Next queue"
+          >
+            <ListMusic className="w-4 h-4" />
+          </button>
+        )}
+
+        {showPlaylistRemoveId && (
+          <button
+            type="button"
+            onClick={() => onRemoveFromPlaylist(showPlaylistRemoveId, song.videoId)}
+            style={{ color: 'var(--ytm-text-muted)' }}
+            className="p-2 rounded-full transition-colors cursor-pointer active:scale-[0.97]"
+            title="Remove from playlist"
+            aria-label="Remove from playlist"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        )}
+
+        {showQueueControls && (
+          <>
+            <button
+              type="button"
+              disabled={idx === 0}
+              onClick={() => onMoveQueueItem(idx, 'up')}
+              style={{ color: 'var(--ytm-text-muted)' }}
+              className="p-1.5 rounded-lg disabled:opacity-25 cursor-pointer active:scale-[0.97]"
+              title="Move up"
+              aria-label="Move track up"
+            >
+              <ChevronUp className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              disabled={idx === (totalInQueue || 1) - 1}
+              onClick={() => onMoveQueueItem(idx, 'down')}
+              style={{ color: 'var(--ytm-text-muted)' }}
+              className="p-1.5 rounded-lg disabled:opacity-25 cursor-pointer active:scale-[0.97]"
+              title="Move down"
+              aria-label="Move track down"
+            >
+              <ChevronDown className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => onRemoveFromQueue(song.videoId)}
+              style={{ color: 'var(--ytm-text-muted)' }}
+              className="p-1.5 rounded-lg cursor-pointer active:scale-[0.97]"
+              title="Remove from queue"
+              aria-label="Remove track from queue"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  )
+);
+
+interface MemoTrackCardProps {
+  song: YouTubeTrack;
+  isCurrent: boolean;
+  isRowPlaying: boolean;
+  isFav: boolean;
+  queueContext: YouTubeTrack[];
+  queueLabel: string;
+  forceSongCatalog?: boolean;
+  variant: 'carousel' | 'grid';
+  onPreCue: (track: YouTubeTrack) => void;
+  onSelect: (track: YouTubeTrack, context: YouTubeTrack[], label: string) => void;
+  onToggleFavorite: (track: YouTubeTrack) => void;
+}
+
+const MemoTrackCard = memo(
+  ({
+    song,
+    isCurrent,
+    isRowPlaying,
+    isFav,
+    queueContext,
+    queueLabel,
+    forceSongCatalog = false,
+    variant,
+    onPreCue,
+    onSelect,
+    onToggleFavorite,
+  }: MemoTrackCardProps) => {
+    const isCarousel = variant === 'carousel';
+    return (
+      <div
+        onMouseEnter={() => onPreCue(song)}
+        onTouchStart={() => onPreCue(song)}
+        onClick={() =>
+          onSelect(
+            forceSongCatalog
+              ? { ...song, mediaType: 'song', catalogSource: 'youtube_music' }
+              : song,
+            queueContext,
+            queueLabel
+          )
+        }
+        style={{
+          backgroundColor: 'var(--ytm-surface)',
+          borderColor: isCurrent ? 'var(--ytm-accent)' : 'var(--ytm-border)',
+        }}
+        className={
+          isCarousel
+            ? 'snap-start group w-[142px] min-w-[142px] max-w-[142px] sm:w-[172px] sm:min-w-[172px] sm:max-w-[172px] shrink-0 rounded-2xl p-2.5 sm:p-3 border transition-transform cursor-pointer flex flex-col justify-between overflow-hidden shadow-xs active:scale-[0.97]'
+            : 'cv-card-auto group rounded-2xl border p-2.5 transition-transform cursor-pointer flex flex-col overflow-hidden shadow-xs active:scale-[0.97]'
+        }
+      >
+        <div
+          style={{ backgroundColor: 'var(--ytm-surface-elevated)' }}
+          className={`relative w-full aspect-square rounded-xl overflow-hidden ${isCarousel ? 'mb-2.5 shadow-sm' : 'mb-2'} shrink-0`}
+        >
+          <HighResThumbnail
+            videoId={song.videoId}
+            rawThumbnail={song.thumbnail}
+            alt={song.title}
+            aspect="square"
+            loading="lazy"
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+          />
+          <div
+            className={`absolute inset-0 bg-black/40 flex items-center justify-center transition-opacity ${
+              isCurrent ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+            }`}
+          >
+            <div
+              style={{ backgroundColor: 'var(--ytm-accent)' }}
+              className="w-10 h-10 rounded-full text-white flex items-center justify-center shadow-lg transform group-hover:scale-105 transition-transform"
+            >
+              {isRowPlaying ? (
+                <Pause className={`${isCarousel ? 'w-5 h-5' : 'w-4.5 h-4.5'} fill-white`} />
+              ) : (
+                <Play className={`${isCarousel ? 'w-5 h-5' : 'w-4.5 h-4.5'} fill-white ml-0.5`} />
+              )}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleFavorite(song);
+            }}
+            className={`absolute top-2 right-2 w-7 h-7 rounded-full text-white flex items-center justify-center transition-transform active:scale-[0.97] ${
+              isCarousel
+                ? 'bg-black/60 opacity-0 group-hover:opacity-100 hover:scale-110'
+                : 'bg-black/55'
+            }`}
+            aria-label="Like track"
+          >
+            <Heart
+              className={`w-3.5 h-3.5 ${isFav ? 'fill-current' : ''}`}
+              style={{ color: isFav ? 'var(--ytm-accent)' : '#ffffff' }}
+            />
+          </button>
+        </div>
+        <div className="min-w-0 w-full overflow-hidden">
+          <p
+            style={{ color: isCurrent ? 'var(--ytm-accent)' : 'var(--ytm-text)' }}
+            className={
+              isCarousel
+                ? 'block text-xs sm:text-sm font-bold truncate whitespace-nowrap'
+                : 'text-xs sm:text-sm font-bold truncate leading-snug'
+            }
+          >
+            {song.title}
+          </p>
+          <p
+            style={{ color: 'var(--ytm-text-muted)' }}
+            className={
+              isCarousel
+                ? 'block text-[11px] truncate whitespace-nowrap mt-0.5'
+                : 'text-[11px] truncate mt-0.5'
+            }
+          >
+            {song.artist}
+          </p>
+        </div>
+      </div>
+    );
+  }
+);
+
 interface DarlingMusicPlayerProps {
   activeTab: NavTab;
   recipientName?: string;
   userId?: string;
+  currentTheme?: string;
 }
 
 export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
   activeTab,
   recipientName = 'Darling',
   userId = 'guest',
+  currentTheme = 'default',
 }) => {
+  const isLightTheme = currentTheme === 'light' || currentTheme === 'pastel';
   const [slotElement, setSlotElement] = useState<HTMLElement | null>(null);
+  const [isFullSearchOpen, setIsFullSearchOpen] = useState<boolean>(false);
 
   // User-scoped initial state: restore this specific user's last search, recent searches, and last played song
   const [searchQuery, setSearchQuery] = useState<string>(
@@ -1442,7 +1814,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
   const [isSleepMenuOpen, setIsSleepMenuOpen] = useState<boolean>(false);
   const [isEqMenuOpen, setIsEqMenuOpen] = useState<boolean>(false);
   const [activeEqPreset, setActiveEqPreset] = useState<string>(() => {
-    if (typeof window === 'undefined') return 'Bass Boost';
+    if (typeof window === 'undefined') return 'Flat';
     try {
       const raw = window.localStorage.getItem(`kashish_music_eq_v2_${userId || 'guest'}`);
       if (raw) {
@@ -1450,10 +1822,10 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
         if (parsed && typeof parsed.preset === 'string') return parsed.preset;
       }
     } catch {}
-    return 'Bass Boost';
+    return 'Flat';
   });
   const [eqBands, setEqBands] = useState<EqBandSettings>(() => {
-    if (typeof window === 'undefined') return EQ_PRESETS['Bass Boost'];
+    if (typeof window === 'undefined') return EQ_PRESETS['Flat'];
     try {
       const raw = window.localStorage.getItem(`kashish_music_eq_v2_${userId || 'guest'}`);
       if (raw) {
@@ -1472,7 +1844,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
         }
       }
     } catch {}
-    return EQ_PRESETS['Bass Boost'];
+    return EQ_PRESETS['Flat'];
   });
   const eqBandsRef = useRef<EqBandSettings>(eqBands);
 
@@ -2966,15 +3338,19 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       };
 
       // Synchronize the active playback queue:
-      // 1) If stepping via Next/Prev or selecting inside an explicit queue/playlist, preserve queue order & label
-      if (contextQueue && contextQueue.length > 0) {
+      // 1) Preserve an explicit user list ONLY for custom playlists, Liked Songs, History, Videos, or in-queue navigation.
+      const isExplicitUserCollection = Boolean(
+        preserveQueueOrder ||
+          (contextLabel &&
+            (contextLabel.startsWith('PLAYLIST_') ||
+              contextLabel === 'LIKED_SONGS' ||
+              contextLabel === 'HISTORY' ||
+              contextLabel === 'VIDEOS'))
+      );
+
+      if (isExplicitUserCollection && contextQueue && contextQueue.length > 0) {
         const hasTrack = contextQueue.some((t) => t.videoId === unifiedTrack.videoId);
-        const nextQueue =
-          preserveQueueOrder && hasTrack
-            ? contextQueue
-            : hasTrack
-            ? contextQueue
-            : [unifiedTrack, ...contextQueue];
+        const nextQueue = hasTrack ? contextQueue : [unifiedTrack, ...contextQueue];
         customQueueRef.current = nextQueue;
         setCustomQueue(nextQueue);
         const label = contextLabel || activeQueueLabelRef.current || 'RELATED';
@@ -2989,11 +3365,11 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
         activeQueueLabelRef.current = 'VIDEOS';
         setActiveQueueLabel('VIDEOS');
       } else {
-        // 2) Whenever a song is selected (e.g. from Search results or Quick Picks), seed the queue with
-        //    the selected song followed by its context-aware Related Songs (never raw unrelated search results)
+        // 2) Whenever a song is selected from Search, Quick Picks, Listen Again, or Suggestions,
+        //    seed Up Next strictly with vibe-matched similar songs for the playing song (never raw search results).
         const immediateRelated = getCachedRelatedTracks(
           unifiedTrack,
-          relatedMoodFilterRef.current,
+          'context',
           userIdRef.current
         ).tracks;
         const merged = [
@@ -4267,9 +4643,9 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     setRecentSearches(next);
   };
 
-  // Mood Chips Filtering & Dynamic YouTube Music Catalog Fetch for Home Page
+  // Mood Chips Filtering & Dynamic YouTube Music Songs Catalog Fetch for Home Page
   const HOME_MOOD_CHIPS = [
-    { id: 'All', label: 'All', query: '' },
+    { id: 'All', label: 'All', query: 'Top Hindi Bollywood romantic hit songs Arijit Singh Pritam' },
     { id: 'Romantic', label: 'Romantic', query: 'Romantic bollywood love songs Arijit Singh Pritam' },
     { id: 'Relax', label: 'Relax', query: 'Relaxing soulful hindi acoustic melody songs' },
     { id: 'Sad', label: 'Sad', query: 'Sad emotional hindi heartbreak songs Arijit Singh' },
@@ -4281,10 +4657,6 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
   ];
 
   useEffect(() => {
-    if (homeMood === 'All') {
-      setIsLoadingMood(false);
-      return;
-    }
     if (moodTracksCache[homeMood] && moodTracksCache[homeMood].length > 0) {
       setIsLoadingMood(false);
       return;
@@ -4292,9 +4664,18 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     const chip = HOME_MOOD_CHIPS.find((c) => c.id === homeMood);
     if (!chip || !chip.query) return;
 
+    // For 'All', adapt query dynamically to current song's artist/vibe if user already picked a track
+    let effectiveQuery = chip.query;
+    if (homeMood === 'All' && currentTrack?.artist) {
+      const cleanArtist = currentTrack.artist.split(/[,&]/)[0]?.trim();
+      if (cleanArtist && cleanArtist.length >= 3 && !/youtube|music artist/i.test(cleanArtist)) {
+        effectiveQuery = `${cleanArtist} top hindi hit songs`;
+      }
+    }
+
     const controller = new AbortController();
     setIsLoadingMood(true);
-    void searchYouTubeSongs(chip.query, controller.signal)
+    void searchYouTubeSongs(effectiveQuery, controller.signal)
       .then((res) => {
         if (!controller.signal.aborted && res.length > 0) {
           setMoodTracksCache((prev) => ({ ...prev, [homeMood]: res }));
@@ -4308,7 +4689,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       });
 
     return () => controller.abort();
-  }, [homeMood, moodTracksCache]);
+  }, [homeMood, moodTracksCache, currentTrack?.artist]);
 
   const getFilteredHomePools = useCallback((): {
     listenAgain: YouTubeTrack[];
@@ -4405,8 +4786,11 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     };
   }, [displayTrack.videoId, displayTrack.mediaType, displayTrack.catalogSource, videoTracks, verifiedVideoMap]);
 
+  // Show the Song | Video toggle ONLY when the currently playing track is genuinely a Video song.
+  // For audio-only Songs, keep it hidden completely.
   const isVideoAvailableForCurrentTrack = Boolean(
-    displayTrack?.videoId && verifiedVideoMap[displayTrack.videoId] !== false
+    displayTrack?.videoId &&
+      (displayTrack.mediaType === 'video' || displayTrack.catalogSource === 'youtube_video')
   );
 
   useEffect(() => {
@@ -4696,8 +5080,16 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
         setIsVideoFullscreen(false);
         return true;
       }
+      if (isNowPlayingOpen && isAppleSheetDrawerOpen) {
+        setIsAppleSheetDrawerOpen(false);
+        return true;
+      }
       if (isNowPlayingOpen) {
         setIsNowPlayingOpen(false);
+        return true;
+      }
+      if (isFullSearchOpen) {
+        setIsFullSearchOpen(false);
         return true;
       }
       if (isMoreLikeThisOpen) {
@@ -4724,8 +5116,10 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
     };
   }, [
     activeTab,
+    isAppleSheetDrawerOpen,
     isCreatePlaylistOpen,
     isEqMenuOpen,
+    isFullSearchOpen,
     isKashishHubOpen,
     isLibraryQueueOpen,
     isMoreLikeThisOpen,
@@ -4742,276 +5136,145 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
   const selectedPlaylist = playlists.find((p) => p.id === selectedPlaylistId) || null;
 
   const ytmPalette = {
-    shellBg: '#000000',
-    shellBgImage: 'none',
-    shellBorder: 'rgba(255,255,255,0.1)',
-    shellShadow: '0 14px 38px rgba(0,0,0,0.8)',
-    deckBg: '#121212',
-    deckBorder: 'rgba(255,255,255,0.1)',
-    subBg: '#181818',
-    inputBg: '#121212',
-    accent: '#ff0033',
-    accentHover: '#e6002e',
-    accentText: '#ffffff',
-    accentGradient: 'linear-gradient(135deg, #ff0033 0%, #cc0029 100%)',
-    accentGlow: 'rgba(255, 0, 51, 0.35)',
-    textPrimary: '#ffffff',
-    textSecondary: '#a3a3a3',
+    shellBg: 'var(--ytm-bg)',
+    shellBgImage: 'var(--bg-gradient)',
+    shellBorder: 'var(--ytm-border)',
+    shellShadow: 'var(--glass-shadow)',
+    deckBg: 'var(--ytm-surface)',
+    deckBorder: 'var(--ytm-border)',
+    subBg: 'var(--ytm-surface-elevated)',
+    inputBg: 'var(--ytm-input-bg)',
+    accent: 'var(--ytm-accent)',
+    accentHover: 'var(--accent-hover)',
+    accentText: 'var(--ytm-accent-text)',
+    accentGradient: 'linear-gradient(135deg, var(--ytm-accent) 0%, var(--accent-hover) 100%)',
+    accentGlow: 'var(--ytm-accent-soft)',
+    textPrimary: 'var(--ytm-text)',
+    textSecondary: 'var(--ytm-text-muted)',
   };
 
-  const renderSongRow = (
-    song: YouTubeTrack,
-    idx: number,
-    queueContext: YouTubeTrack[],
-    queueLabel: string,
-    options?: {
-      showPlaylistRemoveId?: string;
-      showQueueControls?: boolean;
-      totalInQueue?: number;
-    }
-  ) => {
-    const isCurrent = displayTrack.videoId === song.videoId;
-    const isFav = favoriteIds.has(song.videoId);
-    return (
-      <div
-        key={`${queueLabel}-${song.videoId}-${idx}`}
-        onMouseEnter={() => handlePreCueTrack(song)}
-        onTouchStart={() => handlePreCueTrack(song)}
-        onClick={() =>
-          handleSelectTrack(
-            song,
-            queueContext,
-            queueLabel,
-            Boolean(options?.showQueueControls)
-          )
-        }
-        className={`group flex items-center gap-3 px-2.5 sm:px-3 py-2 rounded-xl transition-colors cursor-pointer select-none ${
-          isCurrent
-            ? 'bg-[#1f1f1f] border border-[#ff0033]/40'
-            : 'hover:bg-[#141414] border border-transparent'
-        }`}
-      >
-        {/* Thumbnail with play overlay */}
-        <div className="relative w-11 h-11 sm:w-12 sm:h-12 rounded-lg overflow-hidden bg-[#181818] shrink-0">
-          <HighResThumbnail
-            videoId={song.videoId}
-            rawThumbnail={song.thumbnail}
-            alt={song.title}
-            aspect="square"
-            className="w-full h-full object-cover"
-          />
-          <div
-            className={`absolute inset-0 bg-black/55 flex items-center justify-center transition-opacity ${
-              isCurrent ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-            }`}
-          >
-            {isCurrent && isPlaying ? (
-              <div className="flex items-end gap-0.5 h-3.5">
-                <span className="w-0.5 h-2 bg-[#ff0033] rounded-full animate-pulse" />
-                <span className="w-0.5 h-3.5 bg-[#ff0033] rounded-full animate-bounce" />
-                <span className="w-0.5 h-2.5 bg-[#ff0033] rounded-full animate-pulse" />
-              </div>
-            ) : (
-              <Play className="w-4 h-4 text-white fill-white ml-0.5" />
-            )}
-          </div>
-        </div>
+  const handleOpenPlaylistModal = useCallback((song: YouTubeTrack) => {
+    triggerHaptic(10);
+    setTrackForPlaylistModal(song);
+  }, []);
 
-        {/* Title & Artist */}
-        <div className="min-w-0 flex-1">
-          <p
-            className={`text-xs sm:text-sm font-semibold truncate ${
-              isCurrent ? 'text-[#ff0033]' : 'text-white'
-            }`}
-          >
-            {song.title}
-          </p>
-          <p className="text-[11px] sm:text-xs text-neutral-400 truncate">
-            {song.artist}
-            {song.album ? ` • ${song.album}` : ''}
-          </p>
-        </div>
+  // Notify BackgroundEffects to pause whenever any full-screen player/library/search overlay is open
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const paused =
+      isMelodiesPage &&
+      (isNowPlayingOpen || isKashishHubOpen || isFullSearchOpen || isSearchFocused);
+    window.dispatchEvent(new CustomEvent('kashish-overlay-pause', { detail: { paused } }));
+  }, [isMelodiesPage, isNowPlayingOpen, isKashishHubOpen, isFullSearchOpen, isSearchFocused]);
 
-        {/* Duration */}
-        {song.durationText && !options?.showQueueControls && (
-          <span className="hidden sm:inline-block text-xs font-mono tabular-nums text-neutral-400 shrink-0">
-            {song.durationText}
-          </span>
-        )}
-
-        {/* Action Buttons */}
-        <div
-          className="flex items-center gap-0.5 sm:gap-1 shrink-0"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {/* Like Button */}
-          <button
-            type="button"
-            onClick={() => handleToggleFavorite(song)}
-            className="p-1.5 rounded-full text-neutral-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
-            title={isFav ? 'Remove from Liked songs' : 'Add to Liked songs'}
-            aria-label="Like song"
-          >
-            <Heart
-              className={`w-4 h-4 ${
-                isFav ? 'fill-[#ff0033] text-[#ff0033]' : 'text-neutral-400'
-              }`}
-            />
-          </button>
-
-          {/* Add to Playlist Button */}
-          <button
-            type="button"
-            onClick={() => {
-              triggerHaptic(10);
-              setTrackForPlaylistModal(song);
-            }}
-            className="p-1.5 rounded-full text-neutral-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
-            title="Save to playlist"
-            aria-label="Save to playlist"
-          >
-            <Plus className="w-4 h-4" />
-          </button>
-
-          {/* Add to Queue Button */}
-          {!options?.showQueueControls && (
-            <button
-              type="button"
-              onClick={() => handleAddTrackToQueue(song)}
-              className="hidden sm:inline-flex p-1.5 rounded-full text-neutral-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
-              title="Add to Up Next queue"
-              aria-label="Add to Up Next queue"
-            >
-              <ListMusic className="w-4 h-4" />
-            </button>
-          )}
-
-          {/* Remove from Playlist button if inside custom playlist */}
-          {options?.showPlaylistRemoveId && (
-            <button
-              type="button"
-              onClick={() =>
-                handleRemoveTrackFromPlaylist(options.showPlaylistRemoveId!, song.videoId)
-              }
-              className="p-1.5 rounded-full text-neutral-400 hover:text-[#ff0033] hover:bg-white/10 transition-colors cursor-pointer"
-              title="Remove from playlist"
-              aria-label="Remove from playlist"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
-          )}
-
-          {/* Queue Reorder & Remove Controls */}
-          {options?.showQueueControls && (
-            <>
-              <button
-                type="button"
-                disabled={idx === 0}
-                onClick={() => handleMoveQueueItem(idx, 'up')}
-                className="p-1 rounded-lg text-neutral-400 hover:text-white hover:bg-white/10 disabled:opacity-25 cursor-pointer"
-                title="Move up"
-                aria-label="Move track up"
-              >
-                <ChevronUp className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                disabled={idx === (options.totalInQueue || 1) - 1}
-                onClick={() => handleMoveQueueItem(idx, 'down')}
-                className="p-1 rounded-lg text-neutral-400 hover:text-white hover:bg-white/10 disabled:opacity-25 cursor-pointer"
-                title="Move down"
-                aria-label="Move track down"
-              >
-                <ChevronDown className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => handleRemoveFromQueue(song.videoId)}
-                className="p-1 rounded-lg text-neutral-400 hover:text-[#ff0033] hover:bg-white/10 cursor-pointer"
-                title="Remove from queue"
-                aria-label="Remove track from queue"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-    );
-  };
+  const renderSongRow = useCallback(
+    (
+      song: YouTubeTrack,
+      idx: number,
+      queueContext: YouTubeTrack[],
+      queueLabel: string,
+      options?: {
+        showPlaylistRemoveId?: string;
+        showQueueControls?: boolean;
+        totalInQueue?: number;
+      }
+    ) => {
+      const isCurrent = displayTrack.videoId === song.videoId;
+      const isFav = favoriteIds.has(song.videoId);
+      return (
+        <MemoSongRow
+          key={`${queueLabel}-${song.videoId}-${idx}`}
+          song={song}
+          idx={idx}
+          isCurrent={isCurrent}
+          isRowPlaying={isCurrent && isPlaying}
+          isFav={isFav}
+          queueContext={queueContext}
+          queueLabel={queueLabel}
+          showPlaylistRemoveId={options?.showPlaylistRemoveId}
+          showQueueControls={options?.showQueueControls}
+          totalInQueue={options?.totalInQueue}
+          onPreCue={handlePreCueTrack}
+          onSelect={handleSelectTrack}
+          onToggleFavorite={handleToggleFavorite}
+          onOpenPlaylistModal={handleOpenPlaylistModal}
+          onAddToQueue={handleAddTrackToQueue}
+          onRemoveFromPlaylist={handleRemoveTrackFromPlaylist}
+          onMoveQueueItem={handleMoveQueueItem}
+          onRemoveFromQueue={handleRemoveFromQueue}
+        />
+      );
+    },
+    [
+      displayTrack.videoId,
+      favoriteIds,
+      isPlaying,
+      handlePreCueTrack,
+      handleSelectTrack,
+      handleToggleFavorite,
+      handleOpenPlaylistModal,
+      handleAddTrackToQueue,
+      handleRemoveTrackFromPlaylist,
+      handleMoveQueueItem,
+      handleRemoveFromQueue,
+    ]
+  );
 
   return (
     <div
+      style={
+        isMelodiesPage
+          ? {
+              backgroundColor: 'var(--ytm-bg)',
+              backgroundImage: 'var(--bg-gradient)',
+              color: 'var(--ytm-text)',
+            }
+          : undefined
+      }
       className={
         isMelodiesPage
-          ? isNowPlayingOpen
-            ? 'fixed inset-0 top-0 z-[130] w-screen h-[100dvh] pb-0 bg-black text-white flex flex-col overflow-hidden select-none'
-            : 'fixed inset-0 top-14 z-30 w-full h-[calc(var(--stable-vh,100dvh)-3.5rem)] pb-[calc(3rem+env(safe-area-inset-bottom,0px))] bg-black text-white flex flex-col overflow-hidden select-none'
+          ? isNowPlayingOpen || isKashishHubOpen
+            ? 'fixed inset-0 top-0 z-[130] w-screen h-[100dvh] pb-0 flex flex-col overflow-hidden select-none transition-colors duration-300'
+            : isEqMenuOpen ||
+                isSleepMenuOpen ||
+                isCreatePlaylistOpen ||
+                Boolean(trackForPlaylistModal)
+              ? 'fixed inset-0 top-14 z-[130] w-full h-[calc(var(--stable-vh,100dvh)-3.5rem)] pb-[calc(3rem+env(safe-area-inset-bottom,0px))] flex flex-col overflow-hidden select-none transition-colors duration-300'
+              : 'fixed inset-0 top-14 z-30 w-full h-[calc(var(--stable-vh,100dvh)-3.5rem)] pb-[calc(3rem+env(safe-area-inset-bottom,0px))] flex flex-col overflow-hidden select-none transition-colors duration-300'
           : 'fixed -top-[9999px] -left-[9999px] w-px h-px overflow-hidden opacity-0 pointer-events-none'
       }
     >
-      {/* ==================== 1. YOUTUBE MUSIC TOP BAR + IN-FLOW LIVE SUGGESTIONS ==================== */}
+      {/* ==================== 1. YOUTUBE MUSIC TOP BAR (OPENS FULL-SCREEN 3-STAGE SEARCH) ==================== */}
       {isMelodiesPage && (
-        <div ref={searchContainerRef} className="shrink-0 z-40 bg-black border-b border-white/10">
-          <header className="h-14 sm:h-16 px-2.5 sm:px-5 bg-black flex items-center justify-between gap-2 sm:gap-3">
-            {/* Full-Width Search Bar filling the space */}
-            <div className="relative flex-1 min-w-0">
-              <form onSubmit={handleSearchSubmit} className="relative flex items-center">
-                <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none z-10" />
-                <input
-                  ref={searchInputRef}
-                  type="text"
-                  value={searchQuery}
-                  onFocus={() => setIsSearchFocused(true)}
-                  onChange={(e) => {
-                    setIsSearchFocused(true);
-                    handleSearchInputChange(e);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Escape') {
-                      setIsSearchFocused(false);
-                      searchInputRef.current?.blur();
-                    }
-                  }}
-                  autoComplete="off"
-                  autoCorrect="off"
-                  autoCapitalize="off"
-                  spellCheck={false}
-                  enterKeyHint="search"
-                  placeholder="Search songs, artists..."
-                  className={`ytm-search-input w-full pl-8 sm:pl-10 pr-8 sm:pr-9 py-2 sm:py-2.5 rounded-full bg-[#161616] text-sm text-white placeholder-neutral-400 border transition-colors outline-none ${
-                    isSearchFocused
-                      ? 'border-[#ff0033] bg-[#1c1c1c]'
-                      : 'border-white/15 hover:border-white/25'
-                  }`}
-                />
-                {(isSearching || isSearchingVideos) && (
-                  <Loader2 className="w-4 h-4 text-[#ff0033] animate-spin absolute right-8 sm:right-9 top-1/2 -translate-y-1/2" />
-                )}
-                {searchQuery && (
-                  <button
-                    type="button"
-                    tabIndex={-1}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      if (debounceTimerRef.current) window.clearTimeout(debounceTimerRef.current);
-                      if (searchAbortRef.current) searchAbortRef.current.abort();
-                      activeSearchQueryRef.current = '';
-                      setSearchQuery('');
-                      setIsSearching(false);
-                      setIsSearchingVideos(false);
-                      setSearchError(null);
-                      setYtmView('home');
-                      searchInputRef.current?.focus();
-                    }}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-full text-neutral-300 hover:text-white cursor-pointer"
-                    aria-label="Clear search"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                )}
-              </form>
-            </div>
+        <div
+          ref={searchContainerRef}
+          style={{
+            backgroundColor: 'var(--ytm-bg)',
+            borderColor: 'var(--ytm-border)',
+          }}
+          className="shrink-0 z-40 border-b transition-colors duration-300"
+        >
+          <header className="h-14 sm:h-16 px-2.5 sm:px-5 flex items-center justify-between gap-2 sm:gap-3">
+            {/* Full-Width Search Trigger Button -> Opens Full-Screen 3-Stage Search Overlay */}
+            <button
+              type="button"
+              onClick={() => {
+                triggerHaptic(15);
+                setIsFullSearchOpen(true);
+              }}
+              style={{
+                backgroundColor: 'var(--ytm-input-bg)',
+                borderColor: 'var(--ytm-border)',
+                color: 'var(--ytm-text-muted)',
+              }}
+              className="flex-1 min-w-0 h-10 sm:h-11 px-3.5 rounded-full border flex items-center gap-2.5 text-left cursor-pointer transition-colors hover:opacity-95 active:scale-[0.99]"
+              aria-label="Open full-screen music search"
+            >
+              <Search className="w-4 h-4 shrink-0" style={{ color: 'var(--ytm-accent)' }} />
+              <span className="text-xs sm:text-sm font-medium truncate">
+                {searchQuery.trim() ? searchQuery.trim() : 'Search songs, artists, albums...'}
+              </span>
+            </button>
 
             {/* Right: Equalizer, Sleep Timer & Kashish Logo Hub Icon */}
             <div className="flex items-center gap-1 sm:gap-2 shrink-0">
@@ -5024,11 +5287,17 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   setIsSleepMenuOpen(false);
                   setIsKashishHubOpen(false);
                 }}
-                className={`p-2 rounded-full transition-colors cursor-pointer ${
-                  isEqMenuOpen || activeEqPreset !== 'Flat'
-                    ? 'bg-[#ff0033]/20 text-[#ff0033]'
-                    : 'text-neutral-300 hover:text-white hover:bg-white/10'
-                }`}
+                style={{
+                  backgroundColor:
+                    isEqMenuOpen || activeEqPreset !== 'Flat'
+                      ? 'var(--ytm-accent-soft)'
+                      : 'transparent',
+                  color:
+                    isEqMenuOpen || activeEqPreset !== 'Flat'
+                      ? 'var(--ytm-accent)'
+                      : 'var(--ytm-text-muted)',
+                }}
+                className="w-10 h-10 rounded-full flex items-center justify-center transition-colors cursor-pointer"
                 title={`Equalizer (${activeEqPreset})`}
                 aria-label="Equalizer"
               >
@@ -5044,11 +5313,13 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   setIsEqMenuOpen(false);
                   setIsKashishHubOpen(false);
                 }}
-                className={`p-2 rounded-full transition-colors cursor-pointer flex items-center gap-1 ${
-                  sleepRemainingSec !== null
-                    ? 'bg-[#ff0033]/20 text-[#ff0033]'
-                    : 'text-neutral-300 hover:text-white hover:bg-white/10'
-                }`}
+                style={{
+                  backgroundColor:
+                    sleepRemainingSec !== null ? 'var(--ytm-accent-soft)' : 'transparent',
+                  color:
+                    sleepRemainingSec !== null ? 'var(--ytm-accent)' : 'var(--ytm-text-muted)',
+                }}
+                className="h-10 px-2.5 rounded-full transition-colors cursor-pointer flex items-center justify-center gap-1"
                 title="Sleep Timer"
                 aria-label="Sleep Timer"
               >
@@ -5060,7 +5331,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                 )}
               </button>
 
-              {/* Kashish Library Logo Icon Button (Opens Playlists, Liked Songs, Song History, Queue & Options) */}
+              {/* Kashish Library Logo Icon Button (Opens Full-Screen Music Library) */}
               <button
                 type="button"
                 onClick={() => {
@@ -5069,9 +5340,15 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   setIsSleepMenuOpen(false);
                   setIsEqMenuOpen(false);
                 }}
-                style={{ width: '36px', height: '36px', minWidth: '36px', minHeight: '36px' }}
-                className={`relative flex items-center justify-center rounded-full p-[1.5px] bg-gradient-to-tr from-[#ff0033] via-pink-500 to-amber-300 shadow-[0_0_14px_rgba(255,0,51,0.55)] cursor-pointer active:scale-90 transition-transform shrink-0 ${
-                  isKashishHubOpen ? 'ring-2 ring-white scale-105' : ''
+                style={{
+                  width: '38px',
+                  height: '38px',
+                  minWidth: '38px',
+                  minHeight: '38px',
+                  background: 'linear-gradient(135deg, var(--ytm-accent), #ec4899, #fbbf24)',
+                }}
+                className={`relative flex items-center justify-center rounded-full p-[1.5px] shadow-md cursor-pointer active:scale-90 transition-transform shrink-0 ${
+                  isKashishHubOpen ? 'ring-2 ring-[var(--ytm-accent)] scale-105' : ''
                 }`}
                 title={`${recipientName}'s Music Library (Playlists, Liked Songs, History)`}
                 aria-label={`${recipientName}'s Music Library`}
@@ -5081,8 +5358,8 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   <img
                     src="/apple-touch-icon.png"
                     alt={`${recipientName} Library`}
-                    width={36}
-                    height={36}
+                    width={38}
+                    height={38}
                     style={{
                       width: '100%',
                       height: '100%',
@@ -5109,145 +5386,34 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     }}
                   />
                 </span>
-                <span className="absolute -bottom-0.5 -right-0.5 z-10 w-4 h-4 rounded-full bg-[#ff0033] border border-black flex items-center justify-center shadow">
+                <span
+                  style={{ backgroundColor: 'var(--ytm-accent)', borderColor: 'var(--ytm-bg)' }}
+                  className="absolute -bottom-0.5 -right-0.5 z-10 w-4 h-4 rounded-full border flex items-center justify-center shadow"
+                >
                   <Library className="w-2.5 h-2.5 text-white" />
                 </span>
               </button>
             </div>
           </header>
-
-          {/* In-Flow Live Song Suggestions Panel (displays Playable Songs with 1:1 cover art + clean song queries) */}
-          {isSearchFocused && (searchSuggestions.length > 0 || tracks.length > 0) && (() => {
-            const suggestedSongItems = getSuggestedSongsForQuery(
-              searchQuery,
-              [...tracks, ...ALL_DISCOVERY_TRACKS],
-              4
-            );
-            return (
-              <div className="px-2.5 sm:px-5 pb-2.5 pt-0.5 bg-black/95 border-t border-white/10">
-                <div
-                  aria-label="Search suggestions"
-                  className="max-w-xl mx-auto rounded-xl bg-[#161616] border border-white/15 shadow-lg overflow-hidden"
-                >
-                  <div className="flex items-center justify-between px-3.5 py-1.5 bg-[#1c1c1c] border-b border-white/10 text-[10px] font-bold uppercase tracking-wider text-neutral-400">
-                    <span>
-                      {searchQuery.trim() ? 'Suggested Songs & Searches' : 'Top Songs & Recent Searches'}
-                    </span>
-                    <button
-                      type="button"
-                      tabIndex={-1}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        setIsSearchFocused(false);
-                        searchInputRef.current?.blur();
-                      }}
-                      className="text-neutral-300 hover:text-white cursor-pointer"
-                    >
-                      Close
-                    </button>
-                  </div>
-                  <div className="max-h-[34vh] overflow-y-auto overscroll-contain divide-y divide-white/5">
-                    {suggestedSongItems.map((song) => (
-                      <div
-                        key={`sug-song-${song.videoId}`}
-                        tabIndex={-1}
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => {
-                          setIsSearchFocused(false);
-                          searchInputRef.current?.blur();
-                          handleSelectTrack(song, suggestedSongItems, 'SUGGESTED SONGS');
-                        }}
-                        className="px-3.5 py-2 flex items-center justify-between gap-2.5 text-xs sm:text-sm text-white hover:bg-white/10 cursor-pointer transition-colors"
-                      >
-                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                          <img
-                            src={normalizeSquareThumbnail(song.thumbnail, song.videoId)}
-                            alt={song.title}
-                            className="w-9 h-9 rounded-lg object-cover shrink-0 bg-neutral-800 border border-white/10"
-                            loading="lazy"
-                          />
-                          <div className="min-w-0 flex-1">
-                            <p className="text-xs sm:text-sm font-semibold text-white truncate">
-                              {song.title}
-                            </p>
-                            <p className="text-[11px] text-neutral-400 truncate">
-                              Song • {song.artist}
-                            </p>
-                          </div>
-                        </div>
-                        <span className="px-2 py-0.5 rounded-full bg-[#ff0033]/20 border border-[#ff0033]/40 text-[10px] font-bold text-[#ff4d70] shrink-0">
-                          Play Song
-                        </span>
-                      </div>
-                    ))}
-                    {searchSuggestions.slice(0, 5).map((suggestion) => {
-                      const isRecentItem = recentSearches.some(
-                        (r) => r.toLowerCase() === suggestion.toLowerCase()
-                      );
-                      return (
-                        <div
-                          key={suggestion}
-                          tabIndex={-1}
-                          onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => handleSelectSuggestion(suggestion)}
-                          className="px-3.5 py-2 flex items-center justify-between gap-2 text-xs sm:text-sm text-white hover:bg-white/10 cursor-pointer transition-colors"
-                        >
-                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                            {isRecentItem ? (
-                              <Clock className="w-3.5 h-3.5 text-[#ff0033] shrink-0" />
-                            ) : (
-                              <Music className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
-                            )}
-                            <span className="truncate">{suggestion}</span>
-                          </div>
-                          <div className="flex items-center gap-1 shrink-0">
-                            {isRecentItem && (
-                              <button
-                                type="button"
-                                tabIndex={-1}
-                                onMouseDown={(e) => e.preventDefault()}
-                                onClick={(e) => handleRemoveRecentQuery(e, suggestion)}
-                                className="p-1 rounded-full text-neutral-400 hover:text-white"
-                                aria-label={`Remove ${suggestion}`}
-                              >
-                                <X className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              tabIndex={-1}
-                              onMouseDown={(e) => e.preventDefault()}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                triggerHaptic(10);
-                                setSearchQuery(suggestion);
-                                searchInputRef.current?.focus();
-                              }}
-                              className="p-1 rounded-full text-neutral-400 hover:text-white"
-                              title="Fill search bar"
-                            >
-                              <ArrowUpLeft className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
         </div>
       )}
 
       {/* Status Notice Toast Banner */}
       {isMelodiesPage && statusNotice && (
-        <div className="bg-[#181818] border-b border-white/10 px-4 py-1.5 flex items-center justify-between text-xs text-neutral-200 shrink-0 z-30">
+        <div
+          style={{
+            backgroundColor: 'var(--ytm-surface)',
+            borderColor: 'var(--ytm-border)',
+            color: 'var(--ytm-text)',
+          }}
+          className="border-b px-4 py-1.5 flex items-center justify-between text-xs shrink-0 z-30"
+        >
           <span className="truncate">{statusNotice}</span>
           <button
             type="button"
             onClick={() => setStatusNotice(null)}
-            className="text-neutral-400 hover:text-white ml-2 cursor-pointer"
+            style={{ color: 'var(--ytm-text-muted)' }}
+            className="ml-2 cursor-pointer"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -5258,7 +5424,10 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       <div className="relative flex-1 min-h-0 flex overflow-hidden">
         {/* MAIN SCROLLABLE CONTENT AREA */}
         {isMelodiesPage && (
-          <main className="flex-1 min-w-0 h-full overflow-y-auto overflow-x-hidden bg-black px-3 sm:px-6 lg:px-8 pt-3 sm:pt-5 pb-4 sm:pb-6 space-y-6">
+          <main
+            style={{ backgroundColor: 'transparent', color: 'var(--ytm-text)' }}
+            className="flex-1 min-w-0 h-full overflow-y-auto overflow-x-hidden px-3 sm:px-6 lg:px-8 pt-3 sm:pt-5 pb-4 sm:pb-6 space-y-6"
+          >
             {/* ==================== VIEW A: HOME PAGE ==================== */}
             {ytmView !== 'search' && (
               <div className="max-w-6xl mx-auto space-y-6 pb-2">
@@ -5270,8 +5439,13 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                       triggerHaptic(16);
                       setIsKashishHubOpen(true);
                     }}
-                    style={{ whiteSpace: 'nowrap' }}
-                    className="pl-1.5 pr-3 py-1 rounded-full text-xs sm:text-sm font-bold whitespace-nowrap transition-all cursor-pointer shrink-0 flex items-center gap-2 bg-gradient-to-r from-[#280917] to-[#1a121f] text-white border border-pink-500/40 hover:border-pink-400 shadow-[0_0_12px_rgba(255,0,51,0.25)]"
+                    style={{
+                      whiteSpace: 'nowrap',
+                      backgroundColor: 'var(--ytm-surface)',
+                      borderColor: 'var(--ytm-accent)',
+                      color: 'var(--ytm-text)',
+                    }}
+                    className="pl-1.5 pr-3 py-1 rounded-full text-xs sm:text-sm font-bold whitespace-nowrap transition-all cursor-pointer shrink-0 flex items-center gap-2 border shadow-xs"
                   >
                     <span
                       style={{ width: '22px', height: '22px', minWidth: '22px', minHeight: '22px' }}
@@ -5317,20 +5491,31 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                           triggerHaptic(12);
                           setHomeMood(chip.id);
                         }}
-                        style={{ whiteSpace: 'nowrap' }}
-                        className={`px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold whitespace-nowrap transition-all cursor-pointer shrink-0 ${
-                          isActive
-                            ? 'bg-white text-black shadow-sm'
-                            : 'bg-[#181818] text-neutral-200 hover:bg-[#262626] border border-white/10'
-                        }`}
+                        style={{
+                          whiteSpace: 'nowrap',
+                          backgroundColor: isActive
+                            ? 'var(--ytm-chip-active-bg)'
+                            : 'var(--ytm-chip-bg)',
+                          color: isActive
+                            ? 'var(--ytm-chip-active-text)'
+                            : 'var(--ytm-chip-text)',
+                          borderColor: isActive ? 'var(--ytm-chip-active-bg)' : 'var(--ytm-border)',
+                        }}
+                        className="px-3.5 py-1.5 rounded-xl border text-xs sm:text-sm font-semibold whitespace-nowrap transition-all cursor-pointer shrink-0"
                       >
                         {chip.label}
                       </button>
                     );
                   })}
                   {isLoadingMood && (
-                    <div className="flex items-center gap-1.5 text-xs text-neutral-400 pl-2 shrink-0 whitespace-nowrap">
-                      <Loader2 className="w-3.5 h-3.5 animate-spin text-[#ff0033] shrink-0" />
+                    <div
+                      style={{ color: 'var(--ytm-text-muted)' }}
+                      className="flex items-center gap-1.5 text-xs pl-2 shrink-0 whitespace-nowrap"
+                    >
+                      <Loader2
+                        className="w-3.5 h-3.5 animate-spin shrink-0"
+                        style={{ color: 'var(--ytm-accent)' }}
+                      />
                       <span className="whitespace-nowrap">Updating...</span>
                     </div>
                   )}
@@ -5340,10 +5525,16 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                 <section className="space-y-3">
                   <div className="flex items-end justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400 truncate">
+                      <p
+                        style={{ color: 'var(--ytm-text-muted)' }}
+                        className="text-[11px] font-semibold uppercase tracking-wider truncate"
+                      >
                         {homeMood === 'All' ? 'Jump back in' : `${homeMood} mix`}
                       </p>
-                      <h2 className="text-lg sm:text-2xl font-extrabold tracking-tight text-white truncate">
+                      <h2
+                        style={{ color: 'var(--ytm-text)' }}
+                        className="text-lg sm:text-2xl font-extrabold tracking-tight truncate"
+                      >
                         Listen again
                       </h2>
                     </div>
@@ -5354,11 +5545,17 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                           handleSelectTrack(
                             homeListenAgain[0],
                             homeListenAgain,
-                            `LISTEN_AGAIN_${homeMood.toUpperCase()}`
+                            `LISTEN_AGAIN_${homeMood.toUpperCase()}`,
+                            true
                           );
                         }
                       }}
-                      className="px-3 py-1 rounded-full border border-white/15 hover:border-white/30 text-xs font-semibold text-white whitespace-nowrap shrink-0 hover:bg-white/5 transition-colors cursor-pointer"
+                      style={{
+                        borderColor: 'var(--ytm-border)',
+                        color: 'var(--ytm-text)',
+                        backgroundColor: 'var(--ytm-surface)',
+                      }}
+                      className="px-3 py-1 rounded-full border text-xs font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer"
                     >
                       Play all
                     </button>
@@ -5367,84 +5564,39 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   <div className="-mx-3 px-3 sm:mx-0 sm:px-0 flex items-stretch gap-3 sm:gap-4 overflow-x-auto overflow-y-hidden pb-2 no-scrollbar touch-pan-x snap-x snap-mandatory scroll-pl-3 sm:scroll-pl-0">
                     {homeListenAgain.map((item) => {
                       const isCurrent = displayTrack.videoId === item.videoId;
-                      const isFav = favoriteIds.has(item.videoId);
                       return (
-                        <div
+                        <MemoTrackCard
                           key={`listen-again-${item.videoId}`}
-                          onMouseEnter={() => handlePreCueTrack(item)}
-                          onTouchStart={() => handlePreCueTrack(item)}
-                          onClick={() =>
-                            handleSelectTrack(
-                              item,
-                              homeListenAgain,
-                              `LISTEN_AGAIN_${homeMood.toUpperCase()}`
-                            )
-                          }
-                          className="snap-start group w-[142px] min-w-[142px] max-w-[142px] sm:w-[172px] sm:min-w-[172px] sm:max-w-[172px] shrink-0 rounded-2xl bg-[#121212] hover:bg-[#1a1a1a] p-2.5 sm:p-3 border border-white/5 hover:border-white/15 transition-all cursor-pointer flex flex-col justify-between overflow-hidden"
-                        >
-                          <div className="relative w-full aspect-square rounded-xl overflow-hidden bg-[#1f1f1f] mb-2.5 shadow-md shrink-0">
-                            <HighResThumbnail
-                              videoId={item.videoId}
-                              rawThumbnail={item.thumbnail}
-                              alt={item.title}
-                              aspect="square"
-                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                            />
-                            <div
-                              className={`absolute inset-0 bg-black/40 flex items-center justify-center transition-opacity ${
-                                isCurrent ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                              }`}
-                            >
-                              <div className="w-10 h-10 rounded-full bg-[#ff0033] text-white flex items-center justify-center shadow-lg transform group-hover:scale-105 transition-transform">
-                                {isCurrent && isPlaying ? (
-                                  <Pause className="w-5 h-5 fill-white" />
-                                ) : (
-                                  <Play className="w-5 h-5 fill-white ml-0.5" />
-                                )}
-                              </div>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleToggleFavorite(item);
-                              }}
-                              className="absolute top-2 right-2 w-7 h-7 rounded-full bg-black/65 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:scale-110"
-                              aria-label="Like track"
-                            >
-                              <Heart
-                                className={`w-3.5 h-3.5 ${
-                                  isFav ? 'fill-[#ff0033] text-[#ff0033]' : 'text-white'
-                                }`}
-                              />
-                            </button>
-                          </div>
-                          <div className="min-w-0 w-full overflow-hidden">
-                            <p
-                              className={`block text-xs sm:text-sm font-bold truncate whitespace-nowrap ${
-                                isCurrent ? 'text-[#ff0033]' : 'text-white'
-                              }`}
-                            >
-                              {item.title}
-                            </p>
-                            <p className="block text-[11px] text-neutral-400 truncate whitespace-nowrap mt-0.5">
-                              {item.artist}
-                            </p>
-                          </div>
-                        </div>
+                          song={item}
+                          isCurrent={isCurrent}
+                          isRowPlaying={isCurrent && isPlaying}
+                          isFav={favoriteIds.has(item.videoId)}
+                          queueContext={homeListenAgain}
+                          queueLabel={`LISTEN_AGAIN_${homeMood.toUpperCase()}`}
+                          variant="carousel"
+                          onPreCue={handlePreCueTrack}
+                          onSelect={handleSelectTrack}
+                          onToggleFavorite={handleToggleFavorite}
+                        />
                       );
                     })}
                   </div>
                 </section>
 
-                {/* 3. "Quick picks" Vertical Song List */}
+                {/* 3. "Quick picks" Responsive Thumbnail Grid */}
                 <section className="space-y-3">
                   <div className="flex items-end justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400 truncate">
+                      <p
+                        style={{ color: 'var(--ytm-text-muted)' }}
+                        className="text-[11px] font-semibold uppercase tracking-wider truncate"
+                      >
                         Start radio from a song
                       </p>
-                      <h2 className="text-lg sm:text-2xl font-extrabold tracking-tight text-white truncate">
+                      <h2
+                        style={{ color: 'var(--ytm-text)' }}
+                        className="text-lg sm:text-2xl font-extrabold tracking-tight truncate"
+                      >
                         Quick picks
                       </h2>
                     </div>
@@ -5455,31 +5607,74 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                           handleSelectTrack(
                             homeQuickPicks[0],
                             homeQuickPicks,
-                            `QUICK_PICKS_${homeMood.toUpperCase()}`
+                            `QUICK_PICKS_${homeMood.toUpperCase()}`,
+                            true
                           );
                         }
                       }}
-                      className="px-3 py-1 rounded-full border border-white/15 hover:border-white/30 text-xs font-semibold text-white whitespace-nowrap shrink-0 hover:bg-white/5 transition-colors cursor-pointer"
+                      style={{
+                        borderColor: 'var(--ytm-border)',
+                        color: 'var(--ytm-text)',
+                        backgroundColor: 'var(--ytm-surface)',
+                      }}
+                      className="px-3 py-1 rounded-full border text-xs font-semibold whitespace-nowrap shrink-0 transition-colors cursor-pointer"
                     >
                       Play all
                     </button>
                   </div>
 
-                  <div className="bg-[#121212] border border-white/10 rounded-2xl p-2 sm:p-3 divide-y divide-white/5">
-                    {homeQuickPicks.map((song, idx) =>
-                      renderSongRow(
-                        song,
-                        idx,
-                        homeQuickPicks,
-                        `QUICK_PICKS_${homeMood.toUpperCase()}`
-                      )
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                    {isLoadingMood && !(moodTracksCache[homeMood]?.length) ? (
+                      Array.from({ length: 8 }).map((_, idx) => (
+                        <div
+                          key={`qp-skel-${idx}`}
+                          style={{
+                            backgroundColor: 'var(--ytm-surface)',
+                            borderColor: 'var(--ytm-border)',
+                          }}
+                          className="rounded-2xl border p-2.5 animate-pulse flex flex-col"
+                        >
+                          <div
+                            style={{ backgroundColor: 'var(--ytm-surface-elevated)' }}
+                            className="w-full aspect-square rounded-xl mb-2"
+                          />
+                          <div
+                            style={{ backgroundColor: 'var(--ytm-surface-elevated)' }}
+                            className="h-3.5 w-3/4 rounded mb-1.5"
+                          />
+                          <div
+                            style={{ backgroundColor: 'var(--ytm-surface-elevated)' }}
+                            className="h-2.5 w-1/2 rounded"
+                          />
+                        </div>
+                      ))
+                    ) : (
+                      homeQuickPicks.map((song) => {
+                        const isCurrent = displayTrack.videoId === song.videoId;
+                        return (
+                          <MemoTrackCard
+                            key={`quick-pick-grid-${song.videoId}`}
+                            song={song}
+                            isCurrent={isCurrent}
+                            isRowPlaying={isCurrent && isPlaying}
+                            isFav={favoriteIds.has(song.videoId)}
+                            queueContext={homeQuickPicks}
+                            queueLabel={`QUICK_PICKS_${homeMood.toUpperCase()}`}
+                            forceSongCatalog
+                            variant="grid"
+                            onPreCue={handlePreCueTrack}
+                            onSelect={handleSelectTrack}
+                            onToggleFavorite={handleToggleFavorite}
+                          />
+                        );
+                      })
                     )}
                   </div>
                 </section>
               </div>
             )}
 
-            {/* ==================== VIEW D: SEARCH RESULTS (SONGS & VIDEOS) ==================== */}
+            {/* ==================== VIEW D: FALLBACK SEARCH RESULTS ==================== */}
             {ytmView === 'search' && (
               <div className="max-w-6xl mx-auto space-y-5 pb-6">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -5487,15 +5682,26 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     <button
                       type="button"
                       onClick={() => setYtmView('home')}
-                      className="px-3 py-1.5 rounded-full bg-white/10 hover:bg-white/15 text-xs font-bold text-white cursor-pointer transition-colors"
+                      style={{
+                        backgroundColor: 'var(--ytm-surface)',
+                        borderColor: 'var(--ytm-border)',
+                        color: 'var(--ytm-text)',
+                      }}
+                      className="px-3 py-1.5 rounded-full border text-xs font-bold cursor-pointer transition-colors"
                     >
                       ← Back
                     </button>
                     <div>
-                      <p className="text-[11px] font-semibold uppercase tracking-wider text-neutral-400">
+                      <p
+                        style={{ color: 'var(--ytm-text-muted)' }}
+                        className="text-[11px] font-semibold uppercase tracking-wider"
+                      >
                         Music Catalog
                       </p>
-                      <h2 className="text-lg sm:text-xl font-extrabold text-white">
+                      <h2
+                        style={{ color: 'var(--ytm-text)' }}
+                        className="text-lg sm:text-xl font-extrabold"
+                      >
                         {searchQuery.trim()
                           ? `Results for "${searchQuery.trim()}"`
                           : 'Featured Search Results'}
@@ -5504,18 +5710,28 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   </div>
 
                   {/* Songs vs Videos Tab Switcher */}
-                  <div className="flex items-center gap-2 bg-[#121212] p-1 rounded-full border border-white/10">
+                  <div
+                    style={{
+                      backgroundColor: 'var(--ytm-surface)',
+                      borderColor: 'var(--ytm-border)',
+                    }}
+                    className="flex items-center gap-2 p-1 rounded-full border"
+                  >
                     <button
                       type="button"
                       onClick={() => {
                         setActiveResultSection('songs');
                         activeResultSectionRef.current = 'songs';
                       }}
-                      className={`px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
-                        activeResultSection !== 'videos'
-                          ? 'bg-[#ff0033] text-white'
-                          : 'text-neutral-400 hover:text-white'
-                      }`}
+                      style={{
+                        backgroundColor:
+                          activeResultSection !== 'videos' ? 'var(--ytm-accent)' : 'transparent',
+                        color:
+                          activeResultSection !== 'videos'
+                            ? 'var(--ytm-accent-text)'
+                            : 'var(--ytm-text-muted)',
+                      }}
+                      className="px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
                     >
                       <Music className="w-3.5 h-3.5" />
                       <span>Songs ({tracks.length})</span>
@@ -5526,11 +5742,15 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                         setActiveResultSection('videos');
                         activeResultSectionRef.current = 'videos';
                       }}
-                      className={`px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
-                        activeResultSection === 'videos'
-                          ? 'bg-[#ff0033] text-white'
-                          : 'text-neutral-400 hover:text-white'
-                      }`}
+                      style={{
+                        backgroundColor:
+                          activeResultSection === 'videos' ? 'var(--ytm-accent)' : 'transparent',
+                        color:
+                          activeResultSection === 'videos'
+                            ? 'var(--ytm-accent-text)'
+                            : 'var(--ytm-text-muted)',
+                      }}
+                      className="px-3.5 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
                     >
                       <Film className="w-3.5 h-3.5" />
                       <span>Videos ({videoTracks.length})</span>
@@ -5539,12 +5759,23 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                 </div>
 
                 {searchError && (
-                  <div className="p-4 rounded-2xl bg-[#181818] border border-[#ff0033]/40 flex items-center justify-between gap-3 text-xs text-neutral-200">
+                  <div
+                    style={{
+                      backgroundColor: 'var(--ytm-surface)',
+                      borderColor: 'var(--ytm-accent)',
+                      color: 'var(--ytm-text)',
+                    }}
+                    className="p-4 rounded-2xl border flex items-center justify-between gap-3 text-xs"
+                  >
                     <span>{searchError}</span>
                     <button
                       type="button"
                       onClick={() => void runSearch(searchQuery || 'Bollywood hits', false)}
-                      className="px-3 py-1.5 rounded-full bg-[#ff0033] text-white font-bold flex items-center gap-1 cursor-pointer shrink-0"
+                      style={{
+                        backgroundColor: 'var(--ytm-accent)',
+                        color: 'var(--ytm-accent-text)',
+                      }}
+                      className="px-3 py-1.5 rounded-full font-bold flex items-center gap-1 cursor-pointer shrink-0"
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
                       <span>Retry</span>
@@ -5563,11 +5794,17 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                             setShowVideoViewport(true);
                             showVideoViewportRef.current = true;
                             setIsNowPlayingOpen(true);
-                            handleSelectTrack(vid, videoTracks, 'VIDEOS');
+                            handleSelectTrack(
+                              { ...vid, mediaType: 'video', catalogSource: 'youtube_video' },
+                              videoTracks,
+                              'VIDEOS'
+                            );
                           }}
-                          className={`group rounded-2xl bg-[#121212] hover:bg-[#1a1a1a] border p-2.5 transition-all cursor-pointer ${
-                            isCurrent ? 'border-[#ff0033]' : 'border-white/10'
-                          }`}
+                          style={{
+                            backgroundColor: 'var(--ytm-surface)',
+                            borderColor: isCurrent ? 'var(--ytm-accent)' : 'var(--ytm-border)',
+                          }}
+                          className="group rounded-2xl border p-2.5 transition-all cursor-pointer"
                         >
                           <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black mb-2.5">
                             <HighResThumbnail
@@ -5578,7 +5815,10 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                               className="w-full h-full object-cover group-hover:scale-105 transition-transform"
                             />
                             <div className="absolute inset-0 bg-black/35 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                              <div className="w-10 h-10 rounded-full bg-[#ff0033] text-white flex items-center justify-center shadow-lg">
+                              <div
+                                style={{ backgroundColor: 'var(--ytm-accent)' }}
+                                className="w-10 h-10 rounded-full text-white flex items-center justify-center shadow-lg"
+                              >
                                 <Play className="w-5 h-5 fill-white ml-0.5" />
                               </div>
                             </div>
@@ -5588,10 +5828,16 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                               </span>
                             )}
                           </div>
-                          <p className="text-xs sm:text-sm font-bold text-white truncate">
+                          <p
+                            style={{ color: 'var(--ytm-text)' }}
+                            className="text-xs sm:text-sm font-bold truncate"
+                          >
                             {vid.title}
                           </p>
-                          <p className="text-[11px] text-neutral-400 truncate mt-0.5">
+                          <p
+                            style={{ color: 'var(--ytm-text-muted)' }}
+                            className="text-[11px] truncate mt-0.5"
+                          >
                             {vid.artist}
                           </p>
                         </div>
@@ -5599,7 +5845,13 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     })}
                   </div>
                 ) : (
-                  <div className="bg-[#121212] border border-white/10 rounded-2xl p-2 sm:p-3 divide-y divide-white/5">
+                  <div
+                    style={{
+                      backgroundColor: 'var(--ytm-surface)',
+                      borderColor: 'var(--ytm-border)',
+                    }}
+                    className="border rounded-2xl p-2 sm:p-3 space-y-0.5"
+                  >
                     {tracks.map((song, idx) =>
                       renderSongRow(song, idx, tracks, 'SEARCH_RESULTS')
                     )}
@@ -5615,19 +5867,22 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
           style={
             isMelodiesPage && isNowPlayingOpen
               ? {
-                  background: `radial-gradient(120% 90% at 50% 0%, rgba(${coverAmbientRgb}, 0.72) 0%, rgba(${coverAmbientRgb}, 0.36) 45%, rgba(12, 12, 16, 0.96) 100%), linear-gradient(180deg, rgba(${coverAmbientRgb}, 0.45) 0%, #09090c 100%)`,
+                  background: isLightTheme
+                    ? `radial-gradient(120% 90% at 50% 0%, rgba(${coverAmbientRgb}, 0.28) 0%, rgba(${coverAmbientRgb}, 0.12) 48%, transparent 100%), var(--ytm-bg)`
+                    : `radial-gradient(120% 90% at 50% 0%, rgba(${coverAmbientRgb}, 0.68) 0%, rgba(${coverAmbientRgb}, 0.34) 45%, rgba(12, 12, 16, 0.96) 100%), linear-gradient(180deg, rgba(${coverAmbientRgb}, 0.42) 0%, var(--ytm-bg) 100%)`,
+                  color: 'var(--ytm-text)',
                 }
               : undefined
           }
           className={
             isMelodiesPage && isNowPlayingOpen
-              ? 'fixed inset-0 z-[130] w-screen h-[var(--stable-vh,100dvh)] pt-[max(0.5rem,env(safe-area-inset-top,0px))] pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] flex flex-col overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] opacity-100 translate-y-0 pointer-events-auto bg-[#09090c] backdrop-blur-3xl will-change-[opacity,transform]'
+              ? 'fixed inset-0 z-[130] w-screen h-[var(--stable-vh,100dvh)] pt-[max(0.5rem,env(safe-area-inset-top,0px))] pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] flex flex-col overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] opacity-100 translate-y-0 pointer-events-auto backdrop-blur-3xl will-change-[opacity,transform]'
               : 'fixed -top-[9999px] -left-[9999px] w-px h-px opacity-0 translate-y-6 pointer-events-none overflow-hidden z-[-1] transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]'
           }
         >
           {/* Single Continuous Full-Screen Player Container */}
           <div className="w-full max-w-xl mx-auto flex-1 min-h-0 flex flex-col justify-between overflow-hidden px-4 sm:px-8 pt-1.5 pb-2">
-            {/* TOP BAR: Minimize Chevron + YouTube Music Segmented Song | Video Toggle Pill + Add to Playlist */}
+            {/* TOP BAR: Minimize Chevron + Smart Song | Video Toggle Pill (Video Tracks Only) + Actions */}
             {isMelodiesPage && isNowPlayingOpen && (
               <div className="w-full flex flex-col items-center shrink-0 pb-1 z-20">
                 {/* Sheet Grabber Handle */}
@@ -5637,57 +5892,77 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   aria-label="Minimize Now Playing"
                   className="py-1 px-6 cursor-pointer group focus:outline-none"
                 >
-                  <div className="w-10 h-1.5 rounded-full bg-white/35 group-hover:bg-white/60 transition-colors" />
+                  <div
+                    style={{ backgroundColor: 'var(--ytm-text-muted)', opacity: 0.45 }}
+                    className="w-10 h-1.5 rounded-full group-hover:opacity-80 transition-opacity"
+                  />
                 </button>
 
                 <div className="w-full flex items-center justify-between gap-2 mt-0.5">
                   <button
                     type="button"
                     onClick={() => setIsNowPlayingOpen(false)}
-                    className="w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 text-white flex items-center justify-center cursor-pointer transition-colors shrink-0"
+                    style={{
+                      backgroundColor: 'var(--ytm-surface)',
+                      borderColor: 'var(--ytm-border)',
+                      color: 'var(--ytm-text)',
+                    }}
+                    className="w-9 h-9 rounded-full border flex items-center justify-center cursor-pointer transition-all active:scale-90 shrink-0"
                     title="Minimize player"
                     aria-label="Minimize player"
                   >
                     <ChevronDown className="w-5 h-5" />
                   </button>
 
-                  {/* YouTube Music Style Top Segmented Song | Video Toggle Pill */}
-                  <div className="flex items-center bg-black/50 backdrop-blur-md border border-white/20 rounded-full p-1 shadow-lg">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (showVideoViewport) handleToggleVideoViewport();
+                  {/* Smart Song | Video Toggle Pill — ONLY rendered when a video song is playing */}
+                  {isVideoAvailableForCurrentTrack ? (
+                    <div
+                      style={{
+                        backgroundColor: 'var(--ytm-surface)',
+                        borderColor: 'var(--ytm-border)',
                       }}
-                      className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer ${
-                        !showVideoViewport
-                          ? 'bg-white text-black shadow-sm'
-                          : 'text-white/80 hover:text-white'
-                      }`}
+                      className="flex items-center backdrop-blur-md border rounded-full p-1 shadow-lg"
                     >
-                      <Music className="w-3.5 h-3.5" />
-                      <span>Song</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!isVideoAvailableForCurrentTrack) {
-                          showNativeToast('Video is not available for this track');
-                          return;
-                        }
-                        if (!showVideoViewport) handleToggleVideoViewport();
-                      }}
-                      className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer ${
-                        showVideoViewport && isVideoAvailableForCurrentTrack
-                          ? 'bg-white text-black shadow-sm'
-                          : isVideoAvailableForCurrentTrack
-                          ? 'text-white/80 hover:text-white'
-                          : 'text-white/40 cursor-not-allowed'
-                      }`}
-                    >
-                      <Film className="w-3.5 h-3.5" />
-                      <span>Video</span>
-                    </button>
-                  </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (showVideoViewport) handleToggleVideoViewport();
+                        }}
+                        style={{
+                          backgroundColor: !showVideoViewport
+                            ? 'var(--ytm-chip-active-bg)'
+                            : 'transparent',
+                          color: !showVideoViewport
+                            ? 'var(--ytm-chip-active-text)'
+                            : 'var(--ytm-text-muted)',
+                        }}
+                        className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer"
+                      >
+                        <Music className="w-3.5 h-3.5" />
+                        <span>Song</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!showVideoViewport) handleToggleVideoViewport();
+                        }}
+                        style={{
+                          backgroundColor: showVideoViewport
+                            ? 'var(--ytm-chip-active-bg)'
+                            : 'transparent',
+                          color: showVideoViewport
+                            ? 'var(--ytm-chip-active-text)'
+                            : 'var(--ytm-text-muted)',
+                        }}
+                        className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer"
+                      >
+                        <Film className="w-3.5 h-3.5" />
+                        <span>Video</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex-1" />
+                  )}
 
                   <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                     <button
@@ -5697,24 +5972,41 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                         ensureWebAudioEqGraph();
                         setIsEqMenuOpen(true);
                       }}
-                      className={`relative w-9 h-9 rounded-full flex items-center justify-center cursor-pointer transition-colors shrink-0 ${
+                      style={
                         activeEqPreset !== 'Flat'
-                          ? 'bg-[#ff0033]/25 text-[#ff0033] border border-[#ff0033]/50 shadow-[0_0_10px_rgba(255,0,51,0.35)]'
-                          : 'bg-white/15 hover:bg-white/25 text-white'
-                      }`}
+                          ? {
+                              backgroundColor: 'var(--ytm-accent-soft)',
+                              color: 'var(--ytm-accent)',
+                              borderColor: 'var(--ytm-accent)',
+                            }
+                          : {
+                              backgroundColor: 'var(--ytm-surface)',
+                              color: 'var(--ytm-text)',
+                              borderColor: 'var(--ytm-border)',
+                            }
+                      }
+                      className="relative w-9 h-9 rounded-full border flex items-center justify-center cursor-pointer transition-all active:scale-90 shrink-0"
                       title={`Studio Equalizer (${activeEqPreset})`}
                       aria-label="Studio Equalizer"
                     >
                       <Sliders className="w-4 h-4" />
                       {activeEqPreset !== 'Flat' && (
-                        <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-[#ff0033] border border-black" />
+                        <span
+                          style={{ backgroundColor: 'var(--ytm-accent)' }}
+                          className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border border-white/60"
+                        />
                       )}
                     </button>
 
                     <button
                       type="button"
                       onClick={() => setTrackForPlaylistModal(displayTrack)}
-                      className="w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 text-white flex items-center justify-center cursor-pointer transition-colors shrink-0"
+                      style={{
+                        backgroundColor: 'var(--ytm-surface)',
+                        borderColor: 'var(--ytm-border)',
+                        color: 'var(--ytm-text)',
+                      }}
+                      className="w-9 h-9 rounded-full border flex items-center justify-center cursor-pointer transition-all active:scale-90 shrink-0"
                       title="Add to playlist"
                       aria-label="Add to playlist"
                     >
@@ -5728,7 +6020,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                         setIsKashishHubOpen(true);
                       }}
                       style={{ width: '36px', height: '36px', minWidth: '36px', minHeight: '36px' }}
-                      className="relative flex items-center justify-center rounded-full p-[1.5px] bg-gradient-to-tr from-[#ff0033] via-pink-500 to-amber-300 shadow-[0_0_12px_rgba(255,0,51,0.5)] cursor-pointer active:scale-90 transition-transform shrink-0"
+                      className="relative flex items-center justify-center rounded-full p-[1.5px] bg-gradient-to-tr from-[#ff0033] via-pink-500 to-amber-300 shadow-[0_0_12px_rgba(255,0,51,0.4)] cursor-pointer active:scale-90 transition-transform shrink-0"
                       title={`${recipientName}'s Music Library`}
                       aria-label={`${recipientName}'s Music Library`}
                     >
@@ -5765,7 +6057,10 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                           }}
                         />
                       </span>
-                      <span className="absolute -bottom-0.5 -right-0.5 z-10 w-3.5 h-3.5 rounded-full bg-[#ff0033] border border-black flex items-center justify-center">
+                      <span
+                        style={{ backgroundColor: 'var(--ytm-accent)' }}
+                        className="absolute -bottom-0.5 -right-0.5 z-10 w-3.5 h-3.5 rounded-full border border-black/40 flex items-center justify-center"
+                      >
                         <Library className="w-2 h-2 text-white" />
                       </span>
                     </button>
@@ -5787,7 +6082,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                         ? 'fixed inset-0 z-50 w-screen h-screen max-h-none rounded-none'
                         : isAppleSheetDrawerOpen
                         ? 'max-h-[18dvh] rounded-2xl shadow-xl my-1'
-                        : 'max-h-[32dvh] sm:max-h-[36dvh] rounded-2xl shadow-[0_24px_50px_rgba(0,0,0,0.65)] my-1.5'
+                        : 'max-h-[32dvh] sm:max-h-[36dvh] rounded-2xl shadow-[0_24px_50px_rgba(0,0,0,0.45)] my-1.5'
                     } overflow-hidden bg-black shrink-0 mx-auto group select-none transition-all duration-300`
                   : 'fixed -top-[9999px] -left-[9999px] w-px h-px opacity-0 pointer-events-none overflow-hidden z-[-1]'
               }
@@ -5857,14 +6152,19 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
             {/* 2A. MAIN ARTWORK & CONTROLS SCREEN (WHEN UP NEXT / LYRICS / RELATED DRAWER IS CLOSED) */}
             {isMelodiesPage && isNowPlayingOpen && !isAppleSheetDrawerOpen && (
               <div className="flex-1 min-h-0 flex flex-col justify-evenly py-1 overflow-hidden">
-                {/* Responsive 1:1 Square Album Artwork (scales to both viewport width and height so controls never clip) */}
+                {/* Responsive 1:1 Square Album Artwork */}
                 {(!showVideoViewport || !isVideoAvailableForCurrentTrack) && (
                   <div className="w-full flex items-center justify-center my-auto py-1">
                     <div
                       onClick={handleTogglePlayPause}
-                      className={`relative w-[min(76vw,36dvh)] sm:w-[min(76vw,40dvh)] max-w-[320px] aspect-square rounded-[24px] overflow-hidden bg-[#18181b] cursor-pointer transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${
+                      style={{ backgroundColor: 'var(--ytm-surface)' }}
+                      className={`relative w-[min(76vw,36dvh)] sm:w-[min(76vw,40dvh)] max-w-[320px] aspect-square rounded-[24px] overflow-hidden cursor-pointer transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] ${
                         isPlaying
-                          ? 'scale-100 shadow-[0_24px_50px_rgba(0,0,0,0.75)] ring-1 ring-white/15'
+                          ? isLightTheme
+                            ? 'scale-100 shadow-[0_22px_48px_rgba(0,0,0,0.22)] ring-1 ring-black/10'
+                            : 'scale-100 shadow-[0_24px_50px_rgba(0,0,0,0.72)] ring-1 ring-white/15'
+                          : isLightTheme
+                          ? 'scale-[0.88] opacity-90 shadow-[0_12px_24px_rgba(0,0,0,0.14)] ring-1 ring-black/5'
                           : 'scale-[0.88] opacity-90 shadow-[0_12px_28px_rgba(0,0,0,0.45)] ring-1 ring-white/10'
                       }`}
                     >
@@ -5882,10 +6182,16 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                 {/* Track Title, Artist & Action Buttons */}
                 <div className="w-full flex items-center justify-between gap-3 pt-1">
                   <div className="min-w-0 flex-1 overflow-hidden">
-                    <h2 className="block text-lg sm:text-2xl font-bold tracking-tight text-white truncate whitespace-nowrap">
+                    <h2
+                      style={{ color: 'var(--ytm-text)' }}
+                      className="block text-lg sm:text-2xl font-bold tracking-tight truncate whitespace-nowrap"
+                    >
                       {displayTrack.title}
                     </h2>
-                    <p className="block text-xs sm:text-base font-medium text-white/70 truncate whitespace-nowrap mt-0.5">
+                    <p
+                      style={{ color: 'var(--ytm-text-muted)' }}
+                      className="block text-xs sm:text-base font-medium truncate whitespace-nowrap mt-0.5"
+                    >
                       {displayTrack.artist}
                     </p>
                   </div>
@@ -5894,7 +6200,12 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     <button
                       type="button"
                       onClick={() => handleToggleFavorite(displayTrack)}
-                      className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-white/12 hover:bg-white/20 backdrop-blur-md text-white flex items-center justify-center cursor-pointer active:scale-90 transition-all"
+                      style={{
+                        backgroundColor: 'var(--ytm-surface)',
+                        borderColor: 'var(--ytm-border)',
+                        color: 'var(--ytm-text)',
+                      }}
+                      className="w-9 h-9 sm:w-10 sm:h-10 rounded-full border backdrop-blur-md flex items-center justify-center cursor-pointer active:scale-90 transition-all"
                       title="Favorite song"
                       aria-label="Favorite song"
                     >
@@ -5902,18 +6213,23 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                         className={`w-4.5 h-4.5 ${
                           favoriteIds.has(displayTrack.videoId)
                             ? 'fill-[#fa2d48] text-[#fa2d48]'
-                            : 'text-white/90'
+                            : ''
                         }`}
                       />
                     </button>
                     <button
                       type="button"
                       onClick={() => setTrackForPlaylistModal(displayTrack)}
-                      className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-white/12 hover:bg-white/20 backdrop-blur-md text-white flex items-center justify-center cursor-pointer active:scale-90 transition-all"
+                      style={{
+                        backgroundColor: 'var(--ytm-surface)',
+                        borderColor: 'var(--ytm-border)',
+                        color: 'var(--ytm-text)',
+                      }}
+                      className="w-9 h-9 sm:w-10 sm:h-10 rounded-full border backdrop-blur-md flex items-center justify-center cursor-pointer active:scale-90 transition-all"
                       title="Add to playlist"
                       aria-label="Add to playlist"
                     >
-                      <FolderPlus className="w-4.5 h-4.5 text-white/90" />
+                      <FolderPlus className="w-4.5 h-4.5" />
                     </button>
                   </div>
                 </div>
@@ -5927,9 +6243,9 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     isPlaying={isPlaying}
                     trackId={displayTrack.videoId}
                     fallbackDurationSec={displayTrack.durationSeconds || 215}
-                    accentColor="rgba(255,255,255,0.95)"
-                    trackBg="rgba(255,255,255,0.22)"
-                    textColor="rgba(255,255,255,0.65)"
+                    accentColor={isLightTheme ? 'var(--ytm-accent)' : 'rgba(255,255,255,0.95)'}
+                    trackBg={isLightTheme ? 'rgba(0,0,0,0.14)' : 'rgba(255,255,255,0.22)'}
+                    textColor={isLightTheme ? 'rgba(26,16,20,0.68)' : 'rgba(255,255,255,0.68)'}
                   />
                 </div>
 
@@ -5938,11 +6254,11 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   <button
                     type="button"
                     onClick={handleToggleShuffle}
-                    className={`p-2 rounded-full transition-all cursor-pointer active:scale-90 ${
-                      isShuffle
-                        ? 'bg-white/20 text-white'
-                        : 'text-white/55 hover:text-white'
-                    }`}
+                    style={{
+                      backgroundColor: isShuffle ? 'var(--ytm-accent-soft)' : 'transparent',
+                      color: isShuffle ? 'var(--ytm-accent)' : 'var(--ytm-text-muted)',
+                    }}
+                    className="p-2 rounded-full transition-all cursor-pointer active:scale-90"
                     title={isShuffle ? 'Shuffle On' : 'Shuffle Off'}
                     aria-label="Toggle shuffle"
                   >
@@ -5952,47 +6268,53 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   <button
                     type="button"
                     onClick={playPrevTrack}
-                    className="p-2.5 rounded-full text-white hover:bg-white/10 active:scale-90 transition-all cursor-pointer"
+                    style={{ color: 'var(--ytm-text)' }}
+                    className="p-2.5 rounded-full active:scale-90 transition-all cursor-pointer"
                     title="Previous"
                     aria-label="Previous track"
                   >
-                    <SkipBack className="w-7 h-7 sm:w-8 sm:h-8 fill-white" />
+                    <SkipBack className="w-7 h-7 sm:w-8 sm:h-8 fill-current" />
                   </button>
 
                   <button
                     type="button"
                     onClick={handleTogglePlayPause}
-                    className="w-14 h-14 sm:w-16 sm:h-16 rounded-full text-white flex items-center justify-center hover:bg-white/10 active:scale-90 transition-all cursor-pointer"
+                    style={{
+                      backgroundColor: isLightTheme ? 'var(--ytm-accent)' : 'rgba(255,255,255,0.14)',
+                      color: isLightTheme ? 'var(--ytm-accent-text)' : '#ffffff',
+                    }}
+                    className="w-14 h-14 sm:w-16 sm:h-16 rounded-full flex items-center justify-center shadow-lg active:scale-90 transition-all cursor-pointer"
                     title={isPlaying ? 'Pause' : 'Play'}
                     aria-label={isPlaying ? 'Pause' : 'Play'}
                   >
                     {isBuffering ? (
-                      <Loader2 className="w-9 h-9 animate-spin text-white" />
+                      <Loader2 className="w-8 h-8 animate-spin" />
                     ) : isPlaying ? (
-                      <Pause className="w-10 h-10 sm:w-11 sm:h-11 fill-white" />
+                      <Pause className="w-8 h-8 sm:w-9 sm:h-9 fill-current" />
                     ) : (
-                      <Play className="w-10 h-10 sm:w-11 sm:h-11 fill-white ml-1" />
+                      <Play className="w-8 h-8 sm:w-9 sm:h-9 fill-current ml-1" />
                     )}
                   </button>
 
                   <button
                     type="button"
                     onClick={playNextTrack}
-                    className="p-2.5 rounded-full text-white hover:bg-white/10 active:scale-90 transition-all cursor-pointer"
+                    style={{ color: 'var(--ytm-text)' }}
+                    className="p-2.5 rounded-full active:scale-90 transition-all cursor-pointer"
                     title="Next"
                     aria-label="Next track"
                   >
-                    <SkipForward className="w-7 h-7 sm:w-8 sm:h-8 fill-white" />
+                    <SkipForward className="w-7 h-7 sm:w-8 sm:h-8 fill-current" />
                   </button>
 
                   <button
                     type="button"
                     onClick={handleToggleRepeat}
-                    className={`p-2 rounded-full transition-all cursor-pointer active:scale-90 ${
-                      repeatMode !== 'off'
-                        ? 'bg-white/20 text-white'
-                        : 'text-white/55 hover:text-white'
-                    }`}
+                    style={{
+                      backgroundColor: repeatMode !== 'off' ? 'var(--ytm-accent-soft)' : 'transparent',
+                      color: repeatMode !== 'off' ? 'var(--ytm-accent)' : 'var(--ytm-text-muted)',
+                    }}
+                    className="p-2 rounded-full transition-all cursor-pointer active:scale-90"
                     title={`Repeat: ${repeatMode}`}
                     aria-label="Toggle repeat mode"
                   >
@@ -6010,14 +6332,20 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
             {isMelodiesPage && isNowPlayingOpen && isAppleSheetDrawerOpen && (
               <div className="flex-1 min-h-0 flex flex-col overflow-hidden pt-1">
                 {/* Compact Mini-Header (Tap thumbnail/title to return to full Artwork view) */}
-                <div className="w-full flex items-center justify-between gap-3 pb-2.5 border-b border-white/10 shrink-0">
+                <div
+                  style={{ borderColor: 'var(--ytm-border)' }}
+                  className="w-full flex items-center justify-between gap-3 pb-2.5 border-b shrink-0"
+                >
                   <button
                     type="button"
                     onClick={() => setIsAppleSheetDrawerOpen(false)}
                     className="flex items-center gap-3 min-w-0 flex-1 text-left cursor-pointer group"
                     title="Return to full artwork player"
                   >
-                    <div className="relative w-11 h-11 rounded-xl overflow-hidden shadow-lg bg-[#18181b] ring-1 ring-white/15 shrink-0 group-hover:scale-105 transition-transform">
+                    <div
+                      style={{ backgroundColor: 'var(--ytm-surface)' }}
+                      className="relative w-11 h-11 rounded-xl overflow-hidden shadow-md ring-1 ring-black/10 shrink-0 group-hover:scale-105 transition-transform"
+                    >
                       <HighResThumbnail
                         videoId={displayTrack.videoId}
                         rawThumbnail={displayTrack.thumbnail}
@@ -6027,10 +6355,16 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                       />
                     </div>
                     <div className="min-w-0 flex-1 overflow-hidden">
-                      <p className="block text-sm sm:text-base font-bold text-white truncate whitespace-nowrap">
+                      <p
+                        style={{ color: 'var(--ytm-text)' }}
+                        className="block text-sm sm:text-base font-bold truncate whitespace-nowrap"
+                      >
                         {displayTrack.title}
                       </p>
-                      <p className="block text-xs text-white/65 truncate whitespace-nowrap">
+                      <p
+                        style={{ color: 'var(--ytm-text-muted)' }}
+                        className="block text-xs truncate whitespace-nowrap"
+                      >
                         {displayTrack.artist}
                       </p>
                     </div>
@@ -6040,46 +6374,63 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     <button
                       type="button"
                       onClick={handleTogglePlayPause}
-                      className="w-9 h-9 rounded-full bg-white/15 hover:bg-white/25 text-white flex items-center justify-center cursor-pointer active:scale-90 transition-all"
+                      style={{
+                        backgroundColor: 'var(--ytm-surface)',
+                        borderColor: 'var(--ytm-border)',
+                        color: 'var(--ytm-text)',
+                      }}
+                      className="w-9 h-9 rounded-full border flex items-center justify-center cursor-pointer active:scale-90 transition-all"
                       aria-label={isPlaying ? 'Pause' : 'Play'}
                     >
                       {isBuffering ? (
                         <Loader2 className="w-4 h-4 animate-spin" />
                       ) : isPlaying ? (
-                        <Pause className="w-4 h-4 fill-white" />
+                        <Pause className="w-4 h-4 fill-current" />
                       ) : (
-                        <Play className="w-4 h-4 fill-white ml-0.5" />
+                        <Play className="w-4 h-4 fill-current ml-0.5" />
                       )}
                     </button>
                     <button
                       type="button"
                       onClick={playNextTrack}
-                      className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center cursor-pointer active:scale-90 transition-all"
+                      style={{
+                        backgroundColor: 'var(--ytm-surface)',
+                        borderColor: 'var(--ytm-border)',
+                        color: 'var(--ytm-text)',
+                      }}
+                      className="w-9 h-9 rounded-full border flex items-center justify-center cursor-pointer active:scale-90 transition-all"
                       aria-label="Next track"
                     >
-                      <SkipForward className="w-4 h-4 fill-white" />
+                      <SkipForward className="w-4 h-4 fill-current" />
                     </button>
                   </div>
                 </div>
 
                 {/* Scrollable Content Area inside Unified Player */}
                 <div className="flex-1 min-h-0 flex flex-col overflow-hidden pt-2">
-                  {/* Tab 1: UP NEXT Queue */}
+                  {/* Tab 1: UP NEXT Queue (Vibe-Matched Radio) */}
                   {nowPlayingTab === 'upnext' && (
                     <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-                      <div className="shrink-0 py-1.5 text-xs text-white/70 flex items-center justify-between">
-                        <span className="font-bold text-white tracking-tight">
+                      <div className="shrink-0 py-1.5 text-xs flex items-center justify-between">
+                        <span
+                          style={{ color: 'var(--ytm-text)' }}
+                          className="font-bold tracking-tight"
+                        >
                           Up Next • {activeQueueList.length}
                         </span>
                         <div className="flex items-center gap-1.5">
                           <button
                             type="button"
                             onClick={handleToggleShuffle}
-                            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-colors ${
-                              isShuffle
-                                ? 'bg-white/25 text-white'
-                                : 'bg-white/10 text-white/70 hover:text-white'
-                            }`}
+                            style={{
+                              backgroundColor: isShuffle
+                                ? 'var(--ytm-chip-active-bg)'
+                                : 'var(--ytm-surface)',
+                              color: isShuffle
+                                ? 'var(--ytm-chip-active-text)'
+                                : 'var(--ytm-text-muted)',
+                            }}
+                            className="px-2.5 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-colors"
                           >
                             <Shuffle className="w-3 h-3" />
                             <span>Shuffle</span>
@@ -6087,11 +6438,17 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                           <button
                             type="button"
                             onClick={handleToggleRepeat}
-                            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-colors ${
-                              repeatMode !== 'off'
-                                ? 'bg-white/25 text-white'
-                                : 'bg-white/10 text-white/70 hover:text-white'
-                            }`}
+                            style={{
+                              backgroundColor:
+                                repeatMode !== 'off'
+                                  ? 'var(--ytm-chip-active-bg)'
+                                  : 'var(--ytm-surface)',
+                              color:
+                                repeatMode !== 'off'
+                                  ? 'var(--ytm-chip-active-text)'
+                                  : 'var(--ytm-text-muted)',
+                            }}
+                            className="px-2.5 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-colors"
                           >
                             {repeatMode === 'one' ? (
                               <Repeat1 className="w-3 h-3" />
@@ -6117,24 +6474,39 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   {nowPlayingTab === 'lyrics' && (
                     <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y py-3 pb-6 space-y-4">
                       {isLoadingLyrics ? (
-                        <div className="h-40 flex flex-col items-center justify-center gap-2 text-white/70">
-                          <Loader2 className="w-6 h-6 animate-spin text-white" />
+                        <div
+                          style={{ color: 'var(--ytm-text-muted)' }}
+                          className="h-40 flex flex-col items-center justify-center gap-2"
+                        >
+                          <Loader2 className="w-6 h-6 animate-spin" style={{ color: 'var(--ytm-accent)' }} />
                           <span className="text-xs">Loading lyrics for {displayTrack.title}...</span>
                         </div>
                       ) : lyricsData?.plainLyrics ? (
                         <div className="space-y-3">
-                          <div className="flex items-center justify-between gap-2 text-[11px] text-white/50 border-b border-white/10 pb-2">
+                          <div
+                            style={{
+                              color: 'var(--ytm-text-muted)',
+                              borderColor: 'var(--ytm-border)',
+                            }}
+                            className="flex items-center justify-between gap-2 text-[11px] border-b pb-2"
+                          >
                             <span className="truncate">{displayTrack.title}</span>
                             <span className="whitespace-nowrap shrink-0">
                               Source: {lyricsData.source}
                             </span>
                           </div>
-                          <pre className="whitespace-pre-wrap font-sans text-lg sm:text-xl font-bold leading-relaxed tracking-tight text-white/95">
+                          <pre
+                            style={{ color: 'var(--ytm-text)' }}
+                            className="whitespace-pre-wrap font-sans text-lg sm:text-xl font-bold leading-relaxed tracking-tight"
+                          >
                             {lyricsData.plainLyrics}
                           </pre>
                         </div>
                       ) : (
-                        <div className="h-40 flex flex-col items-center justify-center text-center text-white/60 text-sm font-medium">
+                        <div
+                          style={{ color: 'var(--ytm-text-muted)' }}
+                          className="h-40 flex flex-col items-center justify-center text-center text-sm font-medium"
+                        >
                           Lyrics unavailable for this track.
                         </div>
                       )}
@@ -6152,12 +6524,16 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                               key={chip.id}
                               type="button"
                               onClick={() => setRelatedMoodFilter(chip.id)}
-                              style={{ whiteSpace: 'nowrap' }}
-                              className={`px-3 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap cursor-pointer transition-colors flex items-center gap-1 shrink-0 ${
-                                active
-                                  ? 'bg-white text-black'
-                                  : 'bg-white/12 text-white/80 hover:bg-white/20'
-                              }`}
+                              style={{
+                                whiteSpace: 'nowrap',
+                                backgroundColor: active
+                                  ? 'var(--ytm-chip-active-bg)'
+                                  : 'var(--ytm-chip-bg)',
+                                color: active
+                                  ? 'var(--ytm-chip-active-text)'
+                                  : 'var(--ytm-chip-text)',
+                              }}
+                              className="px-3 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap cursor-pointer transition-colors flex items-center gap-1 shrink-0"
                             >
                               <span className="shrink-0">{chip.emoji}</span>
                               <span className="whitespace-nowrap">{chip.name}</span>
@@ -6176,8 +6552,11 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                         )}
 
                         {isLoadingRelated && (
-                          <div className="py-3 flex items-center justify-center gap-2 text-xs text-white/70">
-                            <Loader2 className="w-4 h-4 animate-spin text-white" />
+                          <div
+                            style={{ color: 'var(--ytm-text-muted)' }}
+                            className="py-3 flex items-center justify-center gap-2 text-xs"
+                          >
+                            <Loader2 className="w-4 h-4 animate-spin" style={{ color: 'var(--ytm-accent)' }} />
                             <span>Finding more related songs...</span>
                           </div>
                         )}
@@ -6190,7 +6569,10 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
 
             {/* 3. YOUTUBE MUSIC BOTTOM TAB BAR (UP NEXT | LYRICS | RELATED) */}
             {isMelodiesPage && isNowPlayingOpen && (
-              <div className="w-full grid grid-cols-3 gap-2 pt-2 pb-1 shrink-0 border-t border-white/15 z-20">
+              <div
+                style={{ borderColor: 'var(--ytm-border)' }}
+                className="w-full grid grid-cols-3 gap-2 pt-2 pb-1 shrink-0 border-t z-20"
+              >
                 {/* Up Next Button */}
                 <button
                   type="button"
@@ -6203,11 +6585,17 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                       setIsAppleSheetDrawerOpen(true);
                     }
                   }}
-                  className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
-                    isAppleSheetDrawerOpen && nowPlayingTab === 'upnext'
-                      ? 'bg-white text-black shadow-md'
-                      : 'bg-white/10 text-white/85 hover:text-white hover:bg-white/20'
-                  }`}
+                  style={{
+                    backgroundColor:
+                      isAppleSheetDrawerOpen && nowPlayingTab === 'upnext'
+                        ? 'var(--ytm-chip-active-bg)'
+                        : 'var(--ytm-surface)',
+                    color:
+                      isAppleSheetDrawerOpen && nowPlayingTab === 'upnext'
+                        ? 'var(--ytm-chip-active-text)'
+                        : 'var(--ytm-text)',
+                  }}
+                  className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer shadow-xs"
                   title="Up Next Queue"
                   aria-label="Toggle Up Next Queue"
                 >
@@ -6227,11 +6615,17 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                       setIsAppleSheetDrawerOpen(true);
                     }
                   }}
-                  className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
-                    isAppleSheetDrawerOpen && nowPlayingTab === 'lyrics'
-                      ? 'bg-white text-black shadow-md'
-                      : 'bg-white/10 text-white/85 hover:text-white hover:bg-white/20'
-                  }`}
+                  style={{
+                    backgroundColor:
+                      isAppleSheetDrawerOpen && nowPlayingTab === 'lyrics'
+                        ? 'var(--ytm-chip-active-bg)'
+                        : 'var(--ytm-surface)',
+                    color:
+                      isAppleSheetDrawerOpen && nowPlayingTab === 'lyrics'
+                        ? 'var(--ytm-chip-active-text)'
+                        : 'var(--ytm-text)',
+                  }}
+                  className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer shadow-xs"
                   title="Lyrics"
                   aria-label="Toggle Lyrics"
                 >
@@ -6251,11 +6645,17 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                       setIsAppleSheetDrawerOpen(true);
                     }
                   }}
-                  className={`flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
-                    isAppleSheetDrawerOpen && nowPlayingTab === 'related'
-                      ? 'bg-white text-black shadow-md'
-                      : 'bg-white/10 text-white/85 hover:text-white hover:bg-white/20'
-                  }`}
+                  style={{
+                    backgroundColor:
+                      isAppleSheetDrawerOpen && nowPlayingTab === 'related'
+                        ? 'var(--ytm-chip-active-bg)'
+                        : 'var(--ytm-surface)',
+                    color:
+                      isAppleSheetDrawerOpen && nowPlayingTab === 'related'
+                        ? 'var(--ytm-chip-active-text)'
+                        : 'var(--ytm-text)',
+                  }}
+                  className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all cursor-pointer shadow-xs"
                   title="Related Songs"
                   aria-label="Toggle Related Songs"
                 >
@@ -6268,16 +6668,20 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
         </div>
       </div>
 
-      {/* ==================== 4. APPLE MUSIC FLOATING PILL MINI-PLAYER (ONLY VISIBLE WHEN EXPANDED PLAYER IS MINIMIZED) ==================== */}
+      {/* ==================== 4. FLOATING PILL MINI-PLAYER (THEME-ADAPTIVE) ==================== */}
       {isMelodiesPage && !isNowPlayingOpen && (
         <footer
           onClick={() => setIsNowPlayingOpen(true)}
           style={{
-            background: `linear-gradient(90deg, rgba(${coverAmbientRgb}, 0.28) 0%, rgba(28, 28, 30, 0.92) 60%)`,
+            background: isLightTheme
+              ? `linear-gradient(90deg, rgba(${coverAmbientRgb}, 0.16) 0%, var(--ytm-surface-elevated) 65%)`
+              : `linear-gradient(90deg, rgba(${coverAmbientRgb}, 0.28) 0%, var(--ytm-surface-elevated) 65%)`,
+            borderColor: 'var(--ytm-border)',
+            color: 'var(--ytm-text)',
           }}
-          className="relative h-14 sm:h-16 mx-2 mb-1 sm:mx-3 sm:mb-1.5 rounded-2xl bg-[#1c1c1e]/90 backdrop-blur-2xl border border-white/15 shadow-[0_10px_30px_rgba(0,0,0,0.65)] px-3 sm:px-4 flex items-center justify-between gap-2.5 sm:gap-4 shrink-0 z-40 cursor-pointer transition-all duration-200 ease-out hover:border-white/25 overflow-hidden"
+          className="relative h-14 sm:h-16 mx-2 mb-1 sm:mx-3 sm:mb-1.5 rounded-2xl backdrop-blur-2xl border shadow-lg px-3 sm:px-4 flex items-center justify-between gap-2.5 sm:gap-4 shrink-0 z-40 cursor-pointer transition-all duration-200 ease-out overflow-hidden"
         >
-          {/* Thin Subtle Progress Bar at the Bottom Edge of the Apple Music Pill */}
+          {/* Thin Subtle Progress Bar at the Top Edge of the Mini-Player Pill */}
           <PlayerProgressBar
             variant="top-edge"
             getPlaybackMetrics={getPlaybackMetrics}
@@ -6285,13 +6689,16 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
             isPlaying={isPlaying}
             trackId={displayTrack.videoId}
             fallbackDurationSec={displayTrack.durationSeconds || 215}
-            accentColor="rgba(255,255,255,0.85)"
-            trackBg="rgba(255,255,255,0.12)"
+            accentColor="var(--ytm-accent)"
+            trackBg={isLightTheme ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.14)'}
           />
 
           {/* LEFT: Rounded Album Art + Song Title & Artist */}
           <div className="flex items-center gap-3 min-w-0 flex-1 overflow-hidden">
-            <div className="relative w-10 h-10 sm:w-11 sm:h-11 rounded-xl overflow-hidden bg-[#2c2c2e] shadow-md ring-1 ring-white/10 shrink-0">
+            <div
+              style={{ backgroundColor: 'var(--ytm-surface)' }}
+              className="relative w-10 h-10 sm:w-11 sm:h-11 rounded-xl overflow-hidden shadow-md ring-1 ring-black/10 shrink-0"
+            >
               <HighResThumbnail
                 videoId={displayTrack.videoId}
                 rawThumbnail={displayTrack.thumbnail}
@@ -6302,16 +6709,22 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
             </div>
 
             <div className="min-w-0 flex-1 overflow-hidden">
-              <p className="block text-xs sm:text-sm font-bold text-white truncate whitespace-nowrap">
+              <p
+                style={{ color: 'var(--ytm-text)' }}
+                className="block text-xs sm:text-sm font-bold truncate whitespace-nowrap"
+              >
                 {displayTrack.title}
               </p>
-              <p className="block text-[11px] sm:text-xs text-white/65 truncate whitespace-nowrap">
+              <p
+                style={{ color: 'var(--ytm-text-muted)' }}
+                className="block text-[11px] sm:text-xs truncate whitespace-nowrap"
+              >
                 {displayTrack.artist}
               </p>
             </div>
           </div>
 
-          {/* RIGHT: Apple Music Clean Controls (Favorite, Play/Pause, Next) */}
+          {/* RIGHT: Clean Controls (Favorite, Play/Pause, Next) */}
           <div
             className="flex items-center gap-1 sm:gap-2 shrink-0"
             onClick={(e) => e.stopPropagation()}
@@ -6319,7 +6732,8 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
             <button
               type="button"
               onClick={() => handleToggleFavorite(displayTrack)}
-              className="p-2 rounded-full text-white/80 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+              style={{ color: 'var(--ytm-text-muted)' }}
+              className="p-2 rounded-full transition-colors cursor-pointer"
               title="Favorite song"
               aria-label="Like current song"
             >
@@ -6327,7 +6741,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                 className={`w-4 h-4 sm:w-5 sm:h-5 ${
                   favoriteIds.has(displayTrack.videoId)
                     ? 'fill-[#fa2d48] text-[#fa2d48]'
-                    : 'text-white/80'
+                    : ''
                 }`}
               />
             </button>
@@ -6335,27 +6749,29 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
             <button
               type="button"
               onClick={handleTogglePlayPause}
-              className="p-2 rounded-full text-white hover:bg-white/10 active:scale-90 transition-all cursor-pointer"
+              style={{ color: 'var(--ytm-text)' }}
+              className="p-2 rounded-full active:scale-90 transition-all cursor-pointer"
               title={isPlaying ? 'Pause (Space)' : 'Play (Space)'}
               aria-label={isPlaying ? 'Pause' : 'Play'}
             >
               {isBuffering ? (
                 <Loader2 className="w-5 h-5 sm:w-6 sm:h-6 animate-spin" />
               ) : isPlaying ? (
-                <Pause className="w-5 h-5 sm:w-6 sm:h-6 fill-white" />
+                <Pause className="w-5 h-5 sm:w-6 sm:h-6 fill-current" />
               ) : (
-                <Play className="w-5 h-5 sm:w-6 sm:h-6 fill-white ml-0.5" />
+                <Play className="w-5 h-5 sm:w-6 sm:h-6 fill-current ml-0.5" />
               )}
             </button>
 
             <button
               type="button"
               onClick={playNextTrack}
-              className="p-2 rounded-full text-white hover:bg-white/10 active:scale-90 transition-all cursor-pointer"
+              style={{ color: 'var(--ytm-text)' }}
+              className="p-2 rounded-full active:scale-90 transition-all cursor-pointer"
               title="Next (Right Arrow)"
               aria-label="Next track"
             >
-              <SkipForward className="w-5 h-5 sm:w-6 sm:h-6 fill-white" />
+              <SkipForward className="w-5 h-5 sm:w-6 sm:h-6 fill-current" />
             </button>
           </div>
         </footer>
@@ -6366,18 +6782,25 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       {isMelodiesPage && isCreatePlaylistOpen && (
         <div
           onClick={() => setIsCreatePlaylistOpen(false)}
-          className="fixed inset-0 z-[170] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4"
+          style={{ backgroundColor: 'var(--ytm-backdrop)' }}
+          className="fixed inset-0 z-[170] backdrop-blur-xs flex items-center justify-center p-4"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-sm rounded-2xl bg-[#181818] border border-white/15 p-5 space-y-4 shadow-2xl"
+            style={{
+              backgroundColor: 'var(--ytm-sheet-bg)',
+              borderColor: 'var(--ytm-border)',
+              color: 'var(--ytm-text)',
+            }}
+            className="w-full max-w-sm rounded-2xl border p-5 space-y-4 shadow-2xl liquid-sheet-in"
           >
             <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold text-white">New playlist</h3>
+              <h3 className="text-base font-bold">New playlist</h3>
               <button
                 type="button"
                 onClick={() => setIsCreatePlaylistOpen(false)}
-                className="text-neutral-400 hover:text-white cursor-pointer"
+                style={{ color: 'var(--ytm-text-muted)' }}
+                className="cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -6389,20 +6812,30 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                 onChange={(e) => setNewPlaylistName(e.target.value)}
                 placeholder="Playlist title (e.g. Late Night Vibes)"
                 autoFocus
-                className="w-full px-3.5 py-2.5 rounded-xl bg-[#121212] border border-white/15 text-sm text-white placeholder-neutral-500 focus:border-[#ff0033] outline-none"
+                style={{
+                  backgroundColor: 'var(--ytm-input-bg)',
+                  borderColor: 'var(--ytm-border)',
+                  color: 'var(--ytm-text)',
+                }}
+                className="w-full px-3.5 py-2.5 rounded-xl border text-sm outline-none"
               />
               <div className="flex items-center justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setIsCreatePlaylistOpen(false)}
-                  className="px-4 py-2 rounded-full text-xs font-semibold text-neutral-300 hover:bg-white/10 cursor-pointer"
+                  style={{ color: 'var(--ytm-text-muted)' }}
+                  className="px-4 py-2 rounded-full text-xs font-semibold cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={!newPlaylistName.trim()}
-                  className="px-5 py-2 rounded-full bg-[#ff0033] hover:bg-[#e6002e] disabled:opacity-40 text-white text-xs font-bold cursor-pointer"
+                  style={{
+                    backgroundColor: 'var(--ytm-accent)',
+                    color: 'var(--ytm-accent-text)',
+                  }}
+                  className="px-5 py-2 rounded-full disabled:opacity-40 text-xs font-bold cursor-pointer"
                 >
                   Create
                 </button>
@@ -6416,23 +6849,30 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       {isMelodiesPage && trackForPlaylistModal && (
         <div
           onClick={() => setTrackForPlaylistModal(null)}
-          className="fixed inset-0 z-[170] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4"
+          style={{ backgroundColor: 'var(--ytm-backdrop)' }}
+          className="fixed inset-0 z-[170] backdrop-blur-xs flex items-center justify-center p-4"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-sm rounded-2xl bg-[#181818] border border-white/15 p-5 space-y-4 shadow-2xl"
+            style={{
+              backgroundColor: 'var(--ytm-sheet-bg)',
+              borderColor: 'var(--ytm-border)',
+              color: 'var(--ytm-text)',
+            }}
+            className="w-full max-w-sm rounded-2xl border p-5 space-y-4 shadow-2xl liquid-sheet-in"
           >
             <div className="flex items-center justify-between">
               <div className="min-w-0">
-                <h3 className="text-base font-bold text-white">Save to playlist</h3>
-                <p className="text-xs text-neutral-400 truncate">
+                <h3 className="text-base font-bold">Save to playlist</h3>
+                <p style={{ color: 'var(--ytm-text-muted)' }} className="text-xs truncate">
                   {trackForPlaylistModal.title}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setTrackForPlaylistModal(null)}
-                className="text-neutral-400 hover:text-white cursor-pointer"
+                style={{ color: 'var(--ytm-text-muted)' }}
+                className="cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -6440,7 +6880,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
 
             <div className="max-h-56 overflow-y-auto space-y-1.5">
               {playlists.length === 0 ? (
-                <p className="text-xs text-neutral-400 py-3 text-center">
+                <p style={{ color: 'var(--ytm-text-muted)' }} className="text-xs py-3 text-center">
                   No custom playlists yet. Create one below!
                 </p>
               ) : (
@@ -6449,15 +6889,22 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     key={pl.id}
                     type="button"
                     onClick={() => handleAddTrackToPlaylist(pl.id, trackForPlaylistModal)}
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-[#121212] hover:bg-[#222222] flex items-center justify-between text-left transition-colors cursor-pointer"
+                    style={{
+                      backgroundColor: 'var(--ytm-surface)',
+                      borderColor: 'var(--ytm-border)',
+                    }}
+                    className="w-full px-3.5 py-2.5 rounded-xl border flex items-center justify-between text-left transition-colors cursor-pointer"
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
-                      <ListMusic className="w-4 h-4 text-[#ff0033] shrink-0" />
-                      <span className="text-xs sm:text-sm font-semibold text-white truncate">
+                      <ListMusic
+                        className="w-4 h-4 shrink-0"
+                        style={{ color: 'var(--ytm-accent)' }}
+                      />
+                      <span className="text-xs sm:text-sm font-semibold truncate">
                         {pl.name}
                       </span>
                     </div>
-                    <span className="text-[11px] text-neutral-400">
+                    <span style={{ color: 'var(--ytm-text-muted)' }} className="text-[11px]">
                       {pl.tracks.length} songs
                     </span>
                   </button>
@@ -6470,7 +6917,11 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
               onClick={() => {
                 setIsCreatePlaylistOpen(true);
               }}
-              className="w-full py-2.5 rounded-full bg-[#ff0033] hover:bg-[#e6002e] text-white text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+              style={{
+                backgroundColor: 'var(--ytm-accent)',
+                color: 'var(--ytm-accent-text)',
+              }}
+              className="w-full py-2.5 rounded-full text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
             >
               <Plus className="w-4 h-4" />
               <span>New playlist</span>
@@ -6479,23 +6930,32 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
         </div>
       )}
 
-      {/* 3-Band Equalizer Modal */}
+      {/* 3-Band Equalizer Modal (Defaults to Flat on fresh install) */}
       {isMelodiesPage && isEqMenuOpen && (
         <div
           onClick={() => setIsEqMenuOpen(false)}
-          className="fixed inset-0 z-[170] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4"
+          style={{ backgroundColor: 'var(--ytm-backdrop)' }}
+          className="fixed inset-0 z-[170] backdrop-blur-xs flex items-center justify-center p-4"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md rounded-2xl bg-[#181818] border border-white/15 p-5 space-y-4 shadow-2xl"
+            style={{
+              backgroundColor: 'var(--ytm-sheet-bg)',
+              borderColor: 'var(--ytm-border)',
+              color: 'var(--ytm-text)',
+            }}
+            className="w-full max-w-md rounded-2xl border p-5 space-y-4 shadow-2xl liquid-sheet-in"
           >
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Sliders className="w-4 h-4 text-[#ff0033]" />
+                <Sliders className="w-4 h-4" style={{ color: 'var(--ytm-accent)' }} />
                 <div>
-                  <h3 className="text-base font-bold text-white leading-tight">Studio Equalizer</h3>
-                  <p className="text-[11px] text-neutral-400">
-                    Active: <span className="text-[#ff0033] font-semibold">{activeEqPreset}</span>
+                  <h3 className="text-base font-bold leading-tight">Studio Equalizer</h3>
+                  <p style={{ color: 'var(--ytm-text-muted)' }} className="text-[11px]">
+                    Active:{' '}
+                    <span style={{ color: 'var(--ytm-accent)' }} className="font-semibold">
+                      {activeEqPreset}
+                    </span>
                   </p>
                 </div>
               </div>
@@ -6504,7 +6964,12 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   <button
                     type="button"
                     onClick={() => handleSelectEqPreset('Flat')}
-                    className="px-2.5 py-1 rounded-full bg-white/10 hover:bg-white/15 text-[11px] font-semibold text-neutral-200 cursor-pointer"
+                    style={{
+                      backgroundColor: 'var(--ytm-surface)',
+                      color: 'var(--ytm-text)',
+                      borderColor: 'var(--ytm-border)',
+                    }}
+                    className="px-2.5 py-1 rounded-full border text-[11px] font-semibold cursor-pointer"
                   >
                     Reset
                   </button>
@@ -6512,7 +6977,8 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsEqMenuOpen(false)}
-                  className="text-neutral-400 hover:text-white cursor-pointer"
+                  style={{ color: 'var(--ytm-text-muted)' }}
+                  className="cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -6525,11 +6991,17 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   key={preset}
                   type="button"
                   onClick={() => handleSelectEqPreset(preset)}
-                  className={`px-3 py-1 rounded-full text-xs font-semibold cursor-pointer transition-colors ${
-                    activeEqPreset === preset
-                      ? 'bg-[#ff0033] text-white'
-                      : 'bg-[#121212] text-neutral-300 hover:bg-white/10'
-                  }`}
+                  style={{
+                    backgroundColor:
+                      activeEqPreset === preset ? 'var(--ytm-accent)' : 'var(--ytm-surface)',
+                    color:
+                      activeEqPreset === preset
+                        ? 'var(--ytm-accent-text)'
+                        : 'var(--ytm-text-muted)',
+                    borderColor:
+                      activeEqPreset === preset ? 'var(--ytm-accent)' : 'var(--ytm-border)',
+                  }}
+                  className="px-3 py-1 rounded-full border text-xs font-semibold cursor-pointer transition-colors"
                 >
                   {preset}
                 </button>
@@ -6546,8 +7018,10 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
               ).map((b) => (
                 <div key={b.key} className="space-y-1">
                   <div className="flex justify-between text-xs">
-                    <span className="text-neutral-300 font-medium">{b.label}</span>
-                    <span className="font-mono text-[#ff0033]">
+                    <span style={{ color: 'var(--ytm-text-muted)' }} className="font-medium">
+                      {b.label}
+                    </span>
+                    <span style={{ color: 'var(--ytm-accent)' }} className="font-mono font-bold">
                       {eqBands[b.key] > 0 ? `+${eqBands[b.key]}` : eqBands[b.key]} dB
                     </span>
                   </div>
@@ -6558,7 +7032,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     step={1}
                     value={eqBands[b.key]}
                     onChange={(e) => handleEqBandChange(b.key, Number(e.target.value))}
-                    style={{ accentColor: '#ff0033' }}
+                    style={{ accentColor: 'var(--ytm-accent)' }}
                     className="w-full h-1.5 rounded-lg cursor-pointer"
                   />
                 </div>
@@ -6572,21 +7046,28 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
       {isMelodiesPage && isSleepMenuOpen && (
         <div
           onClick={() => setIsSleepMenuOpen(false)}
-          className="fixed inset-0 z-[170] bg-black/75 backdrop-blur-xs flex items-center justify-center p-4"
+          style={{ backgroundColor: 'var(--ytm-backdrop)' }}
+          className="fixed inset-0 z-[170] backdrop-blur-xs flex items-center justify-center p-4"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-xs rounded-2xl bg-[#181818] border border-white/15 p-5 space-y-3 shadow-2xl"
+            style={{
+              backgroundColor: 'var(--ytm-sheet-bg)',
+              borderColor: 'var(--ytm-border)',
+              color: 'var(--ytm-text)',
+            }}
+            className="w-full max-w-xs rounded-2xl border p-5 space-y-3 shadow-2xl liquid-sheet-in"
           >
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Moon className="w-4 h-4 text-[#ff0033]" />
-                <h3 className="text-base font-bold text-white">Sleep Timer</h3>
+                <Moon className="w-4 h-4" style={{ color: 'var(--ytm-accent)' }} />
+                <h3 className="text-base font-bold">Sleep Timer</h3>
               </div>
               <button
                 type="button"
                 onClick={() => setIsSleepMenuOpen(false)}
-                className="text-neutral-400 hover:text-white cursor-pointer"
+                style={{ color: 'var(--ytm-text-muted)' }}
+                className="cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -6598,11 +7079,17 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   key={mins}
                   type="button"
                   onClick={() => handleSelectSleepTimer(mins)}
-                  className={`py-2 rounded-xl text-xs font-bold border cursor-pointer transition-colors ${
-                    sleepTimerMinutes === mins
-                      ? 'bg-[#ff0033] text-white border-[#ff0033]'
-                      : 'bg-[#121212] text-neutral-200 border-white/10 hover:bg-white/10'
-                  }`}
+                  style={{
+                    backgroundColor:
+                      sleepTimerMinutes === mins ? 'var(--ytm-accent)' : 'var(--ytm-surface)',
+                    color:
+                      sleepTimerMinutes === mins
+                        ? 'var(--ytm-accent-text)'
+                        : 'var(--ytm-text)',
+                    borderColor:
+                      sleepTimerMinutes === mins ? 'var(--ytm-accent)' : 'var(--ytm-border)',
+                  }}
+                  className="py-2 rounded-xl text-xs font-bold border cursor-pointer transition-colors"
                 >
                   {mins} minutes
                 </button>
@@ -6610,7 +7097,12 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
               <button
                 type="button"
                 onClick={() => handleSelectSleepTimer(null)}
-                className="py-2 rounded-xl text-xs font-bold bg-[#121212] text-neutral-400 border border-white/10 hover:text-white cursor-pointer"
+                style={{
+                  backgroundColor: 'var(--ytm-surface)',
+                  color: 'var(--ytm-text-muted)',
+                  borderColor: 'var(--ytm-border)',
+                }}
+                className="py-2 rounded-xl text-xs font-bold border cursor-pointer"
               >
                 Off
               </button>
@@ -6619,24 +7111,49 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
         </div>
       )}
 
-      {/* Kashish Logo Music Hub Drawer / Modal (Playlists, Liked Songs, Song History, Active Queue & Studio Options) */}
+      {/* ==================== 7. FULL-SCREEN KASHISH MUSIC LIBRARY (EDGE-TO-EDGE TOP TO BOTTOM) ==================== */}
       {isMelodiesPage && isKashishHubOpen && (
         <div
-          onClick={() => setIsKashishHubOpen(false)}
-          className="fixed inset-0 z-[160] bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+          style={{
+            backgroundColor: 'var(--ytm-bg)',
+            color: 'var(--ytm-text)',
+            paddingTop: 'max(0.5rem, env(safe-area-inset-top, 0px))',
+            paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom, 0px))',
+          }}
+          className="fixed inset-0 z-[165] w-screen h-[var(--stable-vh,100dvh)] flex flex-col overflow-hidden liquid-overlay-in"
         >
+          {/* Sticky Top Header */}
           <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full sm:max-w-lg max-h-[84dvh] rounded-t-3xl sm:rounded-3xl bg-[#141417] border-t sm:border border-white/15 flex flex-col overflow-hidden shadow-[0_-12px_40px_rgba(0,0,0,0.85)]"
+            style={{
+              backgroundColor: 'var(--ytm-surface-elevated)',
+              borderColor: 'var(--ytm-border)',
+            }}
+            className="w-full border-b backdrop-blur-xl shrink-0"
           >
-            {/* Top Grabber & Header */}
-            <div className="px-4 pt-3 pb-3 border-b border-white/10 bg-[#1a1a1f] shrink-0">
-              <div className="w-10 h-1 rounded-full bg-white/25 mx-auto mb-2.5 sm:hidden" />
-              <div className="flex items-center justify-between gap-3">
+            <div className="max-w-3xl mx-auto px-3 sm:px-5 pt-2.5 pb-3">
+              <div className="flex items-center justify-between gap-2.5">
                 <div className="flex items-center gap-2.5 min-w-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      triggerHaptic(10);
+                      setIsKashishHubOpen(false);
+                    }}
+                    style={{
+                      backgroundColor: 'var(--ytm-surface)',
+                      borderColor: 'var(--ytm-border)',
+                      color: 'var(--ytm-text)',
+                    }}
+                    className="w-9 h-9 rounded-full border flex items-center justify-center cursor-pointer active:scale-90 transition-transform shrink-0"
+                    aria-label="Back from Library"
+                    title="Back"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                  </button>
+
                   <div
                     style={{ width: '40px', height: '40px', minWidth: '40px', minHeight: '40px' }}
-                    className="relative flex items-center justify-center rounded-full p-[1.5px] bg-gradient-to-tr from-[#ff0033] via-pink-500 to-amber-300 shadow-[0_0_14px_rgba(255,0,51,0.45)] shrink-0"
+                    className="relative flex items-center justify-center rounded-full p-[1.5px] bg-gradient-to-tr from-[#ff0033] via-pink-500 to-amber-300 shadow-[0_0_14px_rgba(255,0,51,0.35)] shrink-0"
                   >
                     <div className="relative w-full h-full rounded-full overflow-hidden bg-gradient-to-br from-[#2d0a1a] to-[#12040a] flex items-center justify-center">
                       <Library className="w-4 h-4 text-amber-300 shrink-0" />
@@ -6671,15 +7188,24 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                         }}
                       />
                     </div>
-                    <span className="absolute -bottom-0.5 -right-0.5 z-10 w-4 h-4 rounded-full bg-[#ff0033] border border-black flex items-center justify-center shadow">
+                    <span
+                      style={{ backgroundColor: 'var(--ytm-accent)' }}
+                      className="absolute -bottom-0.5 -right-0.5 z-10 w-4 h-4 rounded-full border border-black/40 flex items-center justify-center shadow"
+                    >
                       <Library className="w-2.5 h-2.5 text-white" />
                     </span>
                   </div>
                   <div className="min-w-0">
-                    <h3 className="text-sm sm:text-base font-extrabold text-white truncate">
-                      {recipientName}&apos;s Music Library 💖
+                    <h3
+                      style={{ color: 'var(--ytm-text)' }}
+                      className="text-sm sm:text-base font-extrabold truncate"
+                    >
+                      {recipientName}&apos;s Music Library
                     </h3>
-                    <p className="text-[11px] text-neutral-400 truncate">
+                    <p
+                      style={{ color: 'var(--ytm-text-muted)' }}
+                      className="text-[11px] truncate"
+                    >
                       Playlists • Liked Songs • History • Up Next
                     </p>
                   </div>
@@ -6689,19 +7215,31 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   <button
                     type="button"
                     onClick={handleToggleHighQuality}
-                    className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider border cursor-pointer transition-all ${
-                      isHighQuality
-                        ? 'bg-[#ff0033] text-white border-[#ff0033]'
-                        : 'bg-white/5 text-neutral-300 border-white/15 hover:text-white'
-                    }`}
+                    style={{
+                      backgroundColor: isHighQuality
+                        ? 'var(--ytm-accent)'
+                        : 'var(--ytm-surface)',
+                      color: isHighQuality
+                        ? 'var(--ytm-accent-text)'
+                        : 'var(--ytm-text-muted)',
+                      borderColor: isHighQuality
+                        ? 'var(--ytm-accent)'
+                        : 'var(--ytm-border)',
+                    }}
+                    className="px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider border cursor-pointer transition-all"
                   >
                     {isHighQuality ? 'HD ON' : 'HD OFF'}
                   </button>
                   <button
                     type="button"
                     onClick={() => setIsKashishHubOpen(false)}
-                    className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-neutral-300 hover:text-white flex items-center justify-center cursor-pointer"
-                    aria-label="Close Music Hub"
+                    style={{
+                      backgroundColor: 'var(--ytm-surface)',
+                      borderColor: 'var(--ytm-border)',
+                      color: 'var(--ytm-text-muted)',
+                    }}
+                    className="w-8 h-8 rounded-full border flex items-center justify-center cursor-pointer"
+                    aria-label="Close Music Library"
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -6709,7 +7247,13 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
               </div>
 
               {/* 4-Tab Segmented Bar: Playlists | Liked | History | Queue */}
-              <div className="grid grid-cols-4 gap-1 bg-black/40 p-1 rounded-2xl mt-3 border border-white/10">
+              <div
+                style={{
+                  backgroundColor: 'var(--ytm-surface)',
+                  borderColor: 'var(--ytm-border)',
+                }}
+                className="grid grid-cols-4 gap-1 p-1 rounded-2xl mt-3 border"
+              >
                 {[
                   {
                     id: 'playlists' as const,
@@ -6746,36 +7290,35 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                         triggerHaptic(10);
                         setKashishHubTab(tab.id);
                       }}
-                      className={`py-2 px-1.5 rounded-xl text-[11px] font-bold flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
-                        active
-                          ? 'bg-[#ff0033] text-white shadow-sm'
-                          : 'text-neutral-300 hover:text-white hover:bg-white/5'
-                      }`}
+                      style={{
+                        backgroundColor: active ? 'var(--ytm-accent)' : 'transparent',
+                        color: active ? 'var(--ytm-accent-text)' : 'var(--ytm-text-muted)',
+                      }}
+                      className="py-2 px-1.5 rounded-xl text-[11px] font-bold flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer"
                     >
                       <div className="flex items-center gap-1">
                         <Icon className="w-3.5 h-3.5 shrink-0" />
                         <span className="truncate">{tab.label}</span>
                       </div>
-                      <span
-                        className={`text-[9px] font-mono ${
-                          active ? 'text-white/90' : 'text-neutral-400'
-                        }`}
-                      >
-                        {tab.count}
-                      </span>
+                      <span className="text-[9px] font-mono opacity-85">{tab.count}</span>
                     </button>
                   );
                 })}
               </div>
             </div>
+          </div>
 
-            {/* Scrollable Body Content for Selected Hub Tab */}
-            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-3.5 sm:p-4 space-y-3">
+          {/* Full-Height Scrollable Body Content */}
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+            <div className="max-w-3xl mx-auto p-3.5 sm:p-5 space-y-3 pb-10">
               {/* TAB 1: PLAYLISTS */}
               {kashishHubTab === 'playlists' && (
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-bold text-neutral-300">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <span
+                      style={{ color: 'var(--ytm-text-muted)' }}
+                      className="text-xs font-bold"
+                    >
                       Your Custom Playlists ({playlists.length})
                     </span>
                     <div className="flex items-center gap-1.5">
@@ -6785,9 +7328,17 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                           setIsKashishHubOpen(false);
                           setTrackForPlaylistModal(displayTrack);
                         }}
-                        className="px-2.5 py-1.5 rounded-full bg-white/10 hover:bg-white/15 text-[11px] font-semibold text-white flex items-center gap-1 cursor-pointer"
+                        style={{
+                          backgroundColor: 'var(--ytm-surface)',
+                          borderColor: 'var(--ytm-border)',
+                          color: 'var(--ytm-text)',
+                        }}
+                        className="px-2.5 py-1.5 rounded-full border text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
                       >
-                        <FolderPlus className="w-3.5 h-3.5 text-[#ff0033]" />
+                        <FolderPlus
+                          className="w-3.5 h-3.5"
+                          style={{ color: 'var(--ytm-accent)' }}
+                        />
                         <span>Save Current Song</span>
                       </button>
                       <button
@@ -6796,7 +7347,11 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                           setIsKashishHubOpen(false);
                           setIsCreatePlaylistOpen(true);
                         }}
-                        className="px-3 py-1.5 rounded-full bg-[#ff0033] hover:bg-[#e6002e] text-[11px] font-bold text-white flex items-center gap-1 cursor-pointer"
+                        style={{
+                          backgroundColor: 'var(--ytm-accent)',
+                          color: 'var(--ytm-accent-text)',
+                        }}
+                        className="px-3 py-1.5 rounded-full text-[11px] font-bold flex items-center gap-1 cursor-pointer"
                       >
                         <Plus className="w-3.5 h-3.5" />
                         <span>New Playlist</span>
@@ -6805,11 +7360,22 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                   </div>
 
                   {playlists.length === 0 ? (
-                    <div className="py-10 px-4 text-center rounded-2xl bg-white/5 border border-white/10 space-y-2">
-                      <ListMusic className="w-8 h-8 text-[#ff0033] mx-auto opacity-80" />
-                      <p className="text-sm font-bold text-white">No playlists created yet</p>
-                      <p className="text-xs text-neutral-400">
-                        Create your own custom playlists to organize your favorite romantic &amp; party tracks!
+                    <div
+                      style={{
+                        backgroundColor: 'var(--ytm-surface)',
+                        borderColor: 'var(--ytm-border)',
+                      }}
+                      className="py-12 px-4 text-center rounded-2xl border space-y-2"
+                    >
+                      <ListMusic
+                        className="w-8 h-8 mx-auto opacity-80"
+                        style={{ color: 'var(--ytm-accent)' }}
+                      />
+                      <p style={{ color: 'var(--ytm-text)' }} className="text-sm font-bold">
+                        No playlists created yet
+                      </p>
+                      <p style={{ color: 'var(--ytm-text-muted)' }} className="text-xs">
+                        Create your own custom playlists to organize your favorite tracks.
                       </p>
                     </div>
                   ) : (
@@ -6817,12 +7383,24 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                       {playlists.map((pl) => (
                         <div
                           key={pl.id}
-                          className="rounded-2xl bg-[#1c1c21] border border-white/10 p-3 space-y-2"
+                          style={{
+                            backgroundColor: 'var(--ytm-surface)',
+                            borderColor: 'var(--ytm-border)',
+                          }}
+                          className="rounded-2xl border p-3 space-y-2"
                         >
                           <div className="flex items-center justify-between gap-2">
                             <div className="min-w-0">
-                              <h4 className="text-sm font-bold text-white truncate">{pl.name}</h4>
-                              <p className="text-[11px] text-neutral-400">
+                              <h4
+                                style={{ color: 'var(--ytm-text)' }}
+                                className="text-sm font-bold truncate"
+                              >
+                                {pl.name}
+                              </h4>
+                              <p
+                                style={{ color: 'var(--ytm-text-muted)' }}
+                                className="text-[11px]"
+                              >
                                 {pl.tracks.length} {pl.tracks.length === 1 ? 'song' : 'songs'}
                               </p>
                             </div>
@@ -6834,16 +7412,21 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                                     handleSelectTrack(pl.tracks[0], pl.tracks, `PLAYLIST_${pl.name}`);
                                     setIsKashishHubOpen(false);
                                   }}
-                                  className="px-3 py-1.5 rounded-full bg-[#ff0033] text-white text-xs font-bold flex items-center gap-1 cursor-pointer"
+                                  style={{
+                                    backgroundColor: 'var(--ytm-accent)',
+                                    color: 'var(--ytm-accent-text)',
+                                  }}
+                                  className="px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1 cursor-pointer"
                                 >
-                                  <Play className="w-3 h-3 fill-white" />
+                                  <Play className="w-3 h-3 fill-current" />
                                   <span>Play</span>
                                 </button>
                               )}
                               <button
                                 type="button"
                                 onClick={() => handleDeletePlaylist(pl.id)}
-                                className="p-1.5 rounded-full text-neutral-400 hover:text-[#ff0033] hover:bg-white/10 cursor-pointer"
+                                style={{ color: 'var(--ytm-text-muted)' }}
+                                className="p-1.5 rounded-full cursor-pointer"
                                 title="Delete playlist"
                               >
                                 <Trash2 className="w-4 h-4" />
@@ -6852,7 +7435,7 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                           </div>
 
                           {pl.tracks.length > 0 && (
-                            <div className="divide-y divide-white/5 pt-1 max-h-44 overflow-y-auto">
+                            <div className="pt-1 space-y-0.5 max-h-60 overflow-y-auto">
                               {pl.tracks.map((song, idx) =>
                                 renderSongRow(song, idx, pl.tracks, `PLAYLIST_${pl.name}`, {
                                   showPlaylistRemoveId: pl.id,
@@ -6871,7 +7454,10 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
               {kashishHubTab === 'liked' && (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-bold text-neutral-300">
+                    <span
+                      style={{ color: 'var(--ytm-text-muted)' }}
+                      className="text-xs font-bold"
+                    >
                       Liked Songs ({favoriteTracks.length})
                     </span>
                     {favoriteTracks.length > 0 && (
@@ -6881,24 +7467,45 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                           handleSelectTrack(favoriteTracks[0], favoriteTracks, 'LIKED_SONGS');
                           setIsKashishHubOpen(false);
                         }}
-                        className="px-3 py-1.5 rounded-full bg-[#ff0033] text-white text-xs font-bold flex items-center gap-1 cursor-pointer"
+                        style={{
+                          backgroundColor: 'var(--ytm-accent)',
+                          color: 'var(--ytm-accent-text)',
+                        }}
+                        className="px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1 cursor-pointer"
                       >
-                        <Play className="w-3 h-3 fill-white" />
+                        <Play className="w-3 h-3 fill-current" />
                         <span>Play All</span>
                       </button>
                     )}
                   </div>
 
                   {favoriteTracks.length === 0 ? (
-                    <div className="py-10 px-4 text-center rounded-2xl bg-white/5 border border-white/10 space-y-2">
-                      <Heart className="w-8 h-8 text-[#ff0033] mx-auto opacity-80" />
-                      <p className="text-sm font-bold text-white">No liked songs yet</p>
-                      <p className="text-xs text-neutral-400">
-                        Tap the heart icon ❤️ on any song to save it to your Liked Songs!
+                    <div
+                      style={{
+                        backgroundColor: 'var(--ytm-surface)',
+                        borderColor: 'var(--ytm-border)',
+                      }}
+                      className="py-12 px-4 text-center rounded-2xl border space-y-2"
+                    >
+                      <Heart
+                        className="w-8 h-8 mx-auto opacity-80"
+                        style={{ color: 'var(--ytm-accent)' }}
+                      />
+                      <p style={{ color: 'var(--ytm-text)' }} className="text-sm font-bold">
+                        No liked songs yet
+                      </p>
+                      <p style={{ color: 'var(--ytm-text-muted)' }} className="text-xs">
+                        Tap the heart icon on any song to save it to your Liked Songs.
                       </p>
                     </div>
                   ) : (
-                    <div className="divide-y divide-white/5 rounded-2xl bg-[#1a1a1f] border border-white/10 p-1.5">
+                    <div
+                      style={{
+                        backgroundColor: 'var(--ytm-surface)',
+                        borderColor: 'var(--ytm-border)',
+                      }}
+                      className="rounded-2xl border p-1.5 space-y-0.5"
+                    >
                       {favoriteTracks.map((song, idx) =>
                         renderSongRow(song, idx, favoriteTracks, 'LIKED_SONGS')
                       )}
@@ -6911,7 +7518,10 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
               {kashishHubTab === 'history' && (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-bold text-neutral-300">
+                    <span
+                      style={{ color: 'var(--ytm-text-muted)' }}
+                      className="text-xs font-bold"
+                    >
                       Recently Played History ({recentPlayedTracks.length})
                     </span>
                     {recentPlayedTracks.length > 0 && (
@@ -6921,24 +7531,45 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                           handleSelectTrack(recentPlayedTracks[0], recentPlayedTracks, 'HISTORY');
                           setIsKashishHubOpen(false);
                         }}
-                        className="px-3 py-1.5 rounded-full bg-[#ff0033] text-white text-xs font-bold flex items-center gap-1 cursor-pointer"
+                        style={{
+                          backgroundColor: 'var(--ytm-accent)',
+                          color: 'var(--ytm-accent-text)',
+                        }}
+                        className="px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1 cursor-pointer"
                       >
-                        <Play className="w-3 h-3 fill-white" />
+                        <Play className="w-3 h-3 fill-current" />
                         <span>Play All</span>
                       </button>
                     )}
                   </div>
 
                   {recentPlayedTracks.length === 0 ? (
-                    <div className="py-10 px-4 text-center rounded-2xl bg-white/5 border border-white/10 space-y-2">
-                      <Clock className="w-8 h-8 text-[#ff0033] mx-auto opacity-80" />
-                      <p className="text-sm font-bold text-white">No listening history yet</p>
-                      <p className="text-xs text-neutral-400">
+                    <div
+                      style={{
+                        backgroundColor: 'var(--ytm-surface)',
+                        borderColor: 'var(--ytm-border)',
+                      }}
+                      className="py-12 px-4 text-center rounded-2xl border space-y-2"
+                    >
+                      <Clock
+                        className="w-8 h-8 mx-auto opacity-80"
+                        style={{ color: 'var(--ytm-accent)' }}
+                      />
+                      <p style={{ color: 'var(--ytm-text)' }} className="text-sm font-bold">
+                        No listening history yet
+                      </p>
+                      <p style={{ color: 'var(--ytm-text-muted)' }} className="text-xs">
                         Songs you play will automatically appear here in your listening history.
                       </p>
                     </div>
                   ) : (
-                    <div className="divide-y divide-white/5 rounded-2xl bg-[#1a1a1f] border border-white/10 p-1.5">
+                    <div
+                      style={{
+                        backgroundColor: 'var(--ytm-surface)',
+                        borderColor: 'var(--ytm-border)',
+                      }}
+                      className="rounded-2xl border p-1.5 space-y-0.5"
+                    >
                       {recentPlayedTracks.map((song, idx) =>
                         renderSongRow(song, idx, recentPlayedTracks, 'HISTORY')
                       )}
@@ -6951,18 +7582,28 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
               {kashishHubTab === 'queue' && (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-bold text-neutral-300">
+                    <span
+                      style={{ color: 'var(--ytm-text-muted)' }}
+                      className="text-xs font-bold"
+                    >
                       Playing Next Queue ({activeQueueList.length})
                     </span>
                     <div className="flex items-center gap-1.5">
                       <button
                         type="button"
                         onClick={handleToggleShuffle}
-                        className={`px-2.5 py-1 rounded-full text-[11px] font-semibold flex items-center gap-1 cursor-pointer ${
-                          isShuffle
-                            ? 'bg-[#ff0033] text-white'
-                            : 'bg-white/10 text-neutral-300 hover:text-white'
-                        }`}
+                        style={{
+                          backgroundColor: isShuffle
+                            ? 'var(--ytm-accent)'
+                            : 'var(--ytm-surface)',
+                          color: isShuffle
+                            ? 'var(--ytm-accent-text)'
+                            : 'var(--ytm-text-muted)',
+                          borderColor: isShuffle
+                            ? 'var(--ytm-accent)'
+                            : 'var(--ytm-border)',
+                        }}
+                        className="px-2.5 py-1 rounded-full border text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
                       >
                         <Shuffle className="w-3 h-3" />
                         <span>Shuffle</span>
@@ -6970,11 +7611,21 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                       <button
                         type="button"
                         onClick={handleToggleRepeat}
-                        className={`px-2.5 py-1 rounded-full text-[11px] font-semibold flex items-center gap-1 cursor-pointer ${
-                          repeatMode !== 'off'
-                            ? 'bg-[#ff0033] text-white'
-                            : 'bg-white/10 text-neutral-300 hover:text-white'
-                        }`}
+                        style={{
+                          backgroundColor:
+                            repeatMode !== 'off'
+                              ? 'var(--ytm-accent)'
+                              : 'var(--ytm-surface)',
+                          color:
+                            repeatMode !== 'off'
+                              ? 'var(--ytm-accent-text)'
+                              : 'var(--ytm-text-muted)',
+                          borderColor:
+                            repeatMode !== 'off'
+                              ? 'var(--ytm-accent)'
+                              : 'var(--ytm-border)',
+                        }}
+                        className="px-2.5 py-1 rounded-full border text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
                       >
                         <Repeat className="w-3 h-3" />
                         <span>Repeat: {repeatMode}</span>
@@ -6982,7 +7633,13 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
                     </div>
                   </div>
 
-                  <div className="divide-y divide-white/5 rounded-2xl bg-[#1a1a1f] border border-white/10 p-1.5">
+                  <div
+                    style={{
+                      backgroundColor: 'var(--ytm-surface)',
+                      borderColor: 'var(--ytm-border)',
+                    }}
+                    className="rounded-2xl border p-1.5 space-y-0.5"
+                  >
                     {activeQueueList.map((song, idx) =>
                       renderSongRow(song, idx, activeQueueList, activeQueueLabel, {
                         showQueueControls: true,
@@ -6996,6 +7653,57 @@ export const DarlingMusicPlayer: React.FC<DarlingMusicPlayerProps> = ({
           </div>
         </div>
       )}
+
+      {/* ==================== 8. FULL-SCREEN 3-STAGE YOUTUBE MUSIC SEARCH OVERLAY ==================== */}
+      <MusicSearchOverlay
+        isOpen={isMelodiesPage && isFullSearchOpen}
+        initialQuery={searchQuery}
+        recentSearches={recentSearches}
+        currentTrackId={displayTrack.videoId}
+        isPlaying={isPlaying}
+        favoriteIds={favoriteIds}
+        onClose={() => setIsFullSearchOpen(false)}
+        onAddRecentSearch={(q) => {
+          const trimmed = q.trim();
+          if (!trimmed) return;
+          setSearchQuery(trimmed);
+          const next = saveUserRecentSearch(userIdRef.current, trimmed);
+          setRecentSearches(next);
+        }}
+        onRemoveRecentSearch={(q) => {
+          const next = removeUserRecentSearch(userIdRef.current, q);
+          setRecentSearches(next);
+        }}
+        onClearRecentSearches={() => {
+          recentSearches.forEach((item) => {
+            removeUserRecentSearch(userIdRef.current, item);
+          });
+          setRecentSearches([]);
+        }}
+        onPlaySong={(song) => {
+          setIsFullSearchOpen(false);
+          setShowVideoViewport(false);
+          showVideoViewportRef.current = false;
+          setIsNowPlayingOpen(true);
+          handleSelectTrack(
+            { ...song, mediaType: 'song', catalogSource: 'youtube_music' },
+            [],
+            'SEARCH_RESULTS'
+          );
+        }}
+        onPlayVideo={(video) => {
+          setIsFullSearchOpen(false);
+          setShowVideoViewport(true);
+          showVideoViewportRef.current = true;
+          setIsNowPlayingOpen(true);
+          handleSelectTrack(
+            { ...video, mediaType: 'video', catalogSource: 'youtube_video' },
+            [video],
+            'VIDEOS'
+          );
+        }}
+        onToggleFavorite={handleToggleFavorite}
+      />
     </div>
   );
 };

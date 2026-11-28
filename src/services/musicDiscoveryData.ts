@@ -626,13 +626,16 @@ export const CANONICAL_TRACKS_BY_ID: ReadonlyMap<string, YouTubeTrack> = new Map
 export function resolveCanonicalTrack<T extends YouTubeTrack>(track: T): T {
   const canonical = CANONICAL_TRACKS_BY_ID.get(track.videoId);
   if (!canonical) return track;
+  const hasOfficialYtmArt =
+    Boolean(track.thumbnail) &&
+    (track.thumbnail.includes('googleusercontent.com') || track.thumbnail.includes('ggpht.com'));
   return {
     ...track,
     videoId: canonical.videoId,
     title: canonical.title,
     artist: canonical.artist,
     album: canonical.album,
-    thumbnail: canonical.thumbnail,
+    thumbnail: hasOfficialYtmArt ? track.thumbnail : canonical.thumbnail,
     durationText: canonical.durationText,
     durationSeconds: canonical.durationSeconds,
   };
@@ -2051,6 +2054,9 @@ export function getVibeMatchedQuickPicks(
   const seenTitles = new Set<string>();
   const result: YouTubeTrack[] = [];
 
+  const isOfficialYtmArt = (thumb?: string) =>
+    Boolean(thumb) && (thumb!.includes('googleusercontent.com') || thumb!.includes('ggpht.com'));
+
   const pushSong = (t: YouTubeTrack | undefined | null) => {
     if (!t || !t.videoId || !t.title) return;
     if (!isGenuineYouTubeMusicSong(t)) return;
@@ -2068,19 +2074,34 @@ export function getVibeMatchedQuickPicks(
     });
   };
 
+  // PRIORITY #1: Always prioritize live YouTube Music songs (especially those with official square YTM album art)
+  if (fetchedMoodTracks.length > 0) {
+    const withOfficialArt = fetchedMoodTracks.filter((t) => isOfficialYtmArt(t.thumbnail));
+    const withoutOfficialArt = fetchedMoodTracks.filter((t) => !isOfficialYtmArt(t.thumbnail));
+    for (const song of withOfficialArt) {
+      pushSong(song);
+      if (result.length >= 20) return result.slice(0, 20);
+    }
+    for (const song of withoutOfficialArt) {
+      pushSong(song);
+      if (result.length >= 20) return result.slice(0, 20);
+    }
+    if (result.length >= 12) {
+      return result.slice(0, 20);
+    }
+  }
+
+  // Fallback only if live YouTube Music songs are unavailable (offline) or returned fewer than 12 tracks
   if (mood && mood !== 'All') {
     const curatedForMood = VIBE_CURATED_POOLS[mood] || VIBE_CURATED_POOLS.Romantic;
-    // Place curated beloved hits for this vibe first, interleaved with fresh live YTMusic songs for this mood
-    const maxLen = Math.max(curatedForMood.length, fetchedMoodTracks.length);
-    for (let i = 0; i < maxLen; i++) {
-      if (i < curatedForMood.length) pushSong(curatedForMood[i]);
-      if (i < fetchedMoodTracks.length) pushSong(fetchedMoodTracks[i]);
-      if (result.length >= 24) break;
+    for (const song of curatedForMood) {
+      pushSong(song);
+      if (result.length >= 20) break;
     }
     return result.slice(0, 20);
   }
 
-  // When mood === 'All', adapt to the currently playing / active song's vibe!
+  // When mood === 'All' and offline/fallback, adapt to the currently playing song's vibe
   if (seedTrack?.videoId) {
     const ctx = inferTrackMusicalContext(seedTrack);
     let primaryPool: YouTubeTrack[] = VIBE_CURATED_POOLS.Romantic;
@@ -2121,16 +2142,14 @@ export function getVibeMatchedQuickPicks(
       ];
     }
 
-    // Also include instant related songs for the seedTrack so Quick Picks feels personally tailored to what's playing
     const related = getInstantRelatedTracks(seedTrack, 8, 'context', userId);
     for (const r of related) {
-      // Avoid injecting jarring workout songs into a non-workout vibe
       if (ctx.primaryGenre !== 'workout') {
         const rCtx = inferTrackMusicalContext(r);
         if (rCtx.primaryGenre === 'workout') continue;
       }
       pushSong(r);
-      if (result.length >= 6) break;
+      if (result.length >= 20) break;
     }
     for (const p of primaryPool) {
       pushSong(p);

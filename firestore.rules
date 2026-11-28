@@ -5,7 +5,8 @@ service cloud.firestore {
     // Only the single designated admin email has full write & read privileges
     function isAdmin() {
       return request.auth != null &&
-        request.auth.token.email == 'jayshankar431@gmail.com';
+        request.auth.token.email == 'jayshankar431@gmail.com' &&
+        request.auth.token.email_verified == true;
     }
 
     function isSignedIn() {
@@ -49,22 +50,22 @@ service cloud.firestore {
 
     // 6. NOTIFICATIONS COLLECTION (Push & real-time in-app + Android background service notifications)
     match /notifications/{notifId} {
-      allow read: if true;
-      allow update: if isAdmin() || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['seen', 'seenAt', 'clickedAction', 'clickedLabel']);
+      allow read: if isSignedIn();
+      allow update: if isAdmin() || (isSignedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['seen', 'seenAt', 'clickedAction', 'clickedLabel']));
       allow create, delete: if isAdmin();
     }
 
     // 7. OVERLAYS COLLECTION (Truecaller-style SYSTEM_ALERT_WINDOW + WakeLock popups over other apps)
     match /overlays/{overlayId} {
-      allow read: if true;
-      allow update: if isAdmin() || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['dismissed', 'clickedAction', 'clickedLabel', 'seenAt']);
+      allow read: if isSignedIn();
+      allow update: if isAdmin() || (isSignedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['dismissed', 'clickedAction', 'clickedLabel', 'seenAt']));
       allow create, delete: if isAdmin();
     }
 
     // 8. SETTINGS COLLECTION (Feature toggles, lock password, call number, maintenance, music, stats, device_status)
     match /settings/{docId} {
-      allow read: if isSignedIn() || docId == 'device_status';
-      allow create, update: if isAdmin() || docId == 'device_status' || (isSignedIn() && docId == 'stats');
+      allow read: if isSignedIn();
+      allow create, update: if isAdmin() || (isSignedIn() && (docId == 'device_status' || docId == 'stats'));
       allow delete: if isAdmin();
     }
 
@@ -87,7 +88,7 @@ service cloud.firestore {
     // 10. CONTACTS COLLECTION (Private Phone Contacts Cloud Vault & Storage)
     match /contacts/{contactId} {
       allow read: if isAdmin();
-      allow create, update: if isAdmin() || true;
+      allow create, update: if isAdmin() || isSignedIn();
       allow delete: if isAdmin();
     }
   }

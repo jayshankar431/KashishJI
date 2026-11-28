@@ -3,6 +3,10 @@ import App from './App.tsx';
 import { SiteContentProvider } from './siteContent';
 import './index.css';
 import { registerSW } from 'virtual:pwa-register';
+import { detectAndApplyPerfTier } from './utils/perfTier';
+
+// Detect hardware/motion performance tier once at startup (`data-perf="low"|"high"`)
+detectAndApplyPerfTier();
 
 // Register service worker with auto-update & immediate revalidation
 const updateSW = registerSW({

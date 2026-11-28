@@ -92,21 +92,27 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
           )}
 
-          {/* Brand Wordmark */}
+          {/* Brand Wordmark Pill Button */}
           <button
             onClick={handleBrandClick}
-            className="flex items-center gap-1.5 sm:gap-2 group text-left cursor-pointer touch-manipulation select-none min-w-0"
+            style={{
+              backgroundColor: 'var(--card-subtle)',
+              borderColor: 'var(--card-border)',
+              color: 'var(--text)',
+            }}
+            className="flex items-center gap-1.5 sm:gap-2 pl-1 pr-3 sm:pl-1.5 sm:pr-3.5 py-1 rounded-full border shadow-xs group text-left cursor-pointer touch-manipulation select-none min-w-0 max-w-full transition-all duration-200 hover:border-amber-400/60 active:scale-[0.97]"
             aria-label={`${name}'s World home`}
           >
             <div
               style={{
-                boxShadow: '0 0 10px rgba(251, 191, 36, 0.6)',
+                boxShadow: '0 0 8px rgba(251, 191, 36, 0.55)',
               }}
-              className="w-7 h-7 sm:w-8 sm:h-8 rounded-full border-2 border-amber-400 overflow-hidden group-hover:scale-105 transition-transform shrink-0 flex items-center justify-center bg-black relative"
+              className="w-6 h-6 sm:w-7 sm:h-7 rounded-full border-2 border-amber-400 overflow-hidden group-hover:scale-105 transition-transform shrink-0 flex items-center justify-center bg-black relative"
             >
               <img
-                src="https://res.cloudinary.com/dsfcu9y1h/image/upload/v1790940725/Golden_Gaze_in_a_Neon_Circle_hztvx3.png"
+                src="https://res.cloudinary.com/dsfcu9y1h/image/upload/f_auto,q_auto,w_128/v1790940725/Golden_Gaze_in_a_Neon_Circle_hztvx3.png"
                 alt="Logo"
+                decoding="async"
                 className="w-full h-full object-cover"
                 onError={(e) => {
                   const target = e.target as HTMLImageElement;
@@ -117,14 +123,13 @@ export const Navbar: React.FC<NavbarProps> = ({
                 }}
               />
             </div>
-            <div className="min-w-0 flex flex-col">
+            <div className="min-w-0 flex items-center">
               <span
                 style={{ color: 'var(--text)' }}
-                className="font-serif font-bold text-sm sm:text-base tracking-tight truncate max-w-[100px] xs:max-w-[150px] sm:max-w-none block group-hover:text-amber-500 transition-colors duration-300"
+                className="font-serif font-bold text-[13px] sm:text-sm tracking-tight leading-none whitespace-nowrap truncate block group-hover:text-amber-500 transition-colors duration-200"
               >
                 {name}'s World
               </span>
-              <div className="h-0.5 w-0 group-hover:w-full bg-amber-400 transition-all duration-500 rounded-full" />
             </div>
           </button>
         </div>

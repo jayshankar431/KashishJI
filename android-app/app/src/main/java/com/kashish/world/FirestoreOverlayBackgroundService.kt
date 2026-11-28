@@ -55,6 +55,14 @@ class FirestoreOverlayBackgroundService : Service() {
         const val ACTION_SILENT_HEARTBEAT = "com.kashish.world.ACTION_SILENT_HEARTBEAT"
         const val ACTION_PROMOTE_MUSIC_FOREGROUND = "com.kashish.world.ACTION_PROMOTE_MUSIC_FOREGROUND"
         const val ACTION_DEMOTE_MUSIC_FOREGROUND = "com.kashish.world.ACTION_DEMOTE_MUSIC_FOREGROUND"
+        private const val EXTRA_STARTED_AS_FOREGROUND = "extra_started_as_foreground"
+
+        private const val POLL_INTERVAL_INTERACTIVE_SEC = 60L
+        private const val POLL_INTERVAL_IDLE_SEC = 150L
+        private const val IMMEDIATE_POLL_DEBOUNCE_MS = 1_500L
+        private const val HEARTBEAT_INTERVAL_MS = 15L * 60L * 1000L
+        private const val MUSIC_WAKELOCK_TIMEOUT_MS = 20L * 60L * 1000L
+        private const val MUSIC_WAKELOCK_RENEW_MS = 15L * 60L * 1000L
 
         @Volatile
         var isRunning: Boolean = false
@@ -67,21 +75,43 @@ class FirestoreOverlayBackgroundService : Service() {
         private var pendingMusicNotification: android.app.Notification? = null
 
         @Volatile
+        private var isMusicActivelyPlaying: Boolean = false
+
+        @Volatile
         private var sharedScheduler: ScheduledExecutorService? = null
+
+        @Volatile
+        private var fallbackLoopScheduled: Boolean = false
+
+        @Volatile
+        private var lastPollElapsedMs: Long = 0L
 
         private val mainHandler = Handler(Looper.getMainLooper())
 
-        fun promoteForMusicNotification(context: Context, notification: android.app.Notification) {
-            pendingMusicNotification = notification
+        fun promoteForMusicNotification(
+            context: Context,
+            notification: android.app.Notification,
+            isPlaying: Boolean = (notification.flags and android.app.Notification.FLAG_ONGOING_EVENT) != 0
+        ) {
+            isMusicActivelyPlaying = isPlaying
+            pendingMusicNotification = if (isPlaying) notification else null
             val svc = activeServiceInstance
             if (svc != null) {
-                svc.applyMusicForegroundNotification(notification)
+                if (isPlaying) {
+                    svc.applyMusicForegroundNotification(notification)
+                } else {
+                    svc.pauseMusicForegroundNotification()
+                }
+                return
+            }
+            if (!isPlaying) {
                 return
             }
             try {
                 val appCtx = context.applicationContext
                 val intent = Intent(appCtx, FirestoreOverlayBackgroundService::class.java).apply {
                     action = ACTION_PROMOTE_MUSIC_FOREGROUND
+                    putExtra(EXTRA_STARTED_AS_FOREGROUND, true)
                 }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     appCtx.startForegroundService(intent)
@@ -92,6 +122,7 @@ class FirestoreOverlayBackgroundService : Service() {
         }
 
         fun demoteMusicNotification(context: Context) {
+            isMusicActivelyPlaying = false
             pendingMusicNotification = null
             val svc = activeServiceInstance
             if (svc != null) {
@@ -123,27 +154,92 @@ class FirestoreOverlayBackgroundService : Service() {
         }
 
         @Synchronized
-        fun ensureWatcherRunning(context: Context) {
-            val appCtx = context.applicationContext
-            isRunning = true
+        private fun getOrCreateScheduler(): ScheduledExecutorService {
             val current = sharedScheduler
             if (current != null && !current.isShutdown && !current.isTerminated) {
-                return
+                return current
             }
             val exec = Executors.newSingleThreadScheduledExecutor()
             sharedScheduler = exec
-            exec.scheduleWithFixedDelay(
-                {
+            return exec
+        }
+
+        private fun computeNextFallbackPollDelaySec(appCtx: Context): Long {
+            val pm = appCtx.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            val isScreenInteractive = try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT_WATCH) {
+                    pm?.isInteractive == true
+                } else {
+                    @Suppress("DEPRECATION")
+                    pm?.isScreenOn == true
+                }
+            } catch (_: Exception) {
+                false
+            }
+            return if (isScreenInteractive && !NativeMusicPlayerEngine.isAppInBackground) {
+                POLL_INTERVAL_INTERACTIVE_SEC
+            } else {
+                POLL_INTERVAL_IDLE_SEC
+            }
+        }
+
+        private fun scheduleNextFallbackPoll(appCtx: Context, delaySec: Long) {
+            try {
+                val exec = getOrCreateScheduler()
+                exec.schedule(
+                    {
+                        try {
+                            pollFirestoreOnce(appCtx)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Fallback poll note: ${e.message}")
+                        } finally {
+                            if (isRunning) {
+                                scheduleNextFallbackPoll(appCtx, computeNextFallbackPollDelaySec(appCtx))
+                            }
+                        }
+                    },
+                    delaySec,
+                    TimeUnit.SECONDS
+                )
+            } catch (e: Exception) {
+                fallbackLoopScheduled = false
+                Log.w(TAG, "Unable to schedule fallback poll: ${e.message}")
+            }
+        }
+
+        @Synchronized
+        fun ensureWatcherRunning(context: Context) {
+            val appCtx = context.applicationContext
+            isRunning = true
+            getOrCreateScheduler()
+            if (fallbackLoopScheduled) {
+                return
+            }
+            fallbackLoopScheduled = true
+            // Low-power fallback loop (60s interactive / 150s idle); real-time delivery is driven by FCM pushes.
+            scheduleNextFallbackPoll(appCtx, 10L)
+        }
+
+        /**
+         * Executes an immediate one-shot Firestore check when an FCM message arrives so overlays
+         * and notifications appear instantaneously without needing aggressive background polling.
+         */
+        fun triggerImmediateCheckAsync(context: Context) {
+            val appCtx = context.applicationContext
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastPollElapsedMs < IMMEDIATE_POLL_DEBOUNCE_MS) {
+                return
+            }
+            try {
+                val exec = getOrCreateScheduler()
+                exec.execute {
                     try {
                         pollFirestoreOnce(appCtx)
                     } catch (e: Exception) {
-                        Log.w(TAG, "Poll cycle note: ${e.message}")
+                        Log.w(TAG, "Immediate FCM sync check note: ${e.message}")
                     }
-                },
-                1L,
-                4L,
-                TimeUnit.SECONDS
-            )
+                }
+            } catch (_: Exception) {}
         }
 
         fun scheduleSilentHeartbeatAlarm(context: Context) {
@@ -156,7 +252,7 @@ class FirestoreOverlayBackgroundService : Service() {
                 val flags = PendingIntent.FLAG_UPDATE_CURRENT or
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
                 val pi = PendingIntent.getBroadcast(appCtx, 7709, intent, flags)
-                val triggerAt = SystemClock.elapsedRealtime() + 90_000L
+                val triggerAt = SystemClock.elapsedRealtime() + HEARTBEAT_INTERVAL_MS
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     am.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, triggerAt, pi)
                 } else {
@@ -166,6 +262,7 @@ class FirestoreOverlayBackgroundService : Service() {
         }
 
         private fun pollFirestoreOnce(appCtx: Context) {
+            lastPollElapsedMs = SystemClock.elapsedRealtime()
             val pm = appCtx.getSystemService(Context.POWER_SERVICE) as? PowerManager
             val wl = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "kashish:bg_poll_wl")?.apply {
                 setReferenceCounted(false)
@@ -740,11 +837,20 @@ class FirestoreOverlayBackgroundService : Service() {
 
     private var musicWakeLock: PowerManager.WakeLock? = null
     private var musicWifiLock: android.net.wifi.WifiManager.WifiLock? = null
+    private val wakeLockRenewalRunnable = object : Runnable {
+        override fun run() {
+            if (!isMusicActivelyPlaying) {
+                releaseMusicPlaybackLocks()
+                return
+            }
+            renewMusicWakeLockWindow()
+            mainHandler.postDelayed(this, MUSIC_WAKELOCK_RENEW_MS)
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    @Suppress("DEPRECATION")
-    private fun acquireMusicPlaybackLocks() {
+    private fun renewMusicWakeLockWindow() {
         try {
             if (musicWakeLock == null) {
                 val pm = applicationContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
@@ -755,10 +861,20 @@ class FirestoreOverlayBackgroundService : Service() {
                     setReferenceCounted(false)
                 }
             }
-            if (musicWakeLock?.isHeld == false) {
-                musicWakeLock?.acquire(4 * 60 * 60 * 1000L) // Up to 4 hours continuous session
-            }
+            // Bounded 20-minute WakeLock window, renewed only while music is actively playing
+            musicWakeLock?.acquire(MUSIC_WAKELOCK_TIMEOUT_MS)
         } catch (_: Exception) {}
+    }
+
+    @Suppress("DEPRECATION")
+    private fun acquireMusicPlaybackLocks() {
+        if (!isMusicActivelyPlaying) {
+            releaseMusicPlaybackLocks()
+            return
+        }
+        renewMusicWakeLockWindow()
+        mainHandler.removeCallbacks(wakeLockRenewalRunnable)
+        mainHandler.postDelayed(wakeLockRenewalRunnable, MUSIC_WAKELOCK_RENEW_MS)
 
         try {
             if (musicWifiLock == null) {
@@ -779,6 +895,7 @@ class FirestoreOverlayBackgroundService : Service() {
     }
 
     private fun releaseMusicPlaybackLocks() {
+        mainHandler.removeCallbacks(wakeLockRenewalRunnable)
         try {
             if (musicWakeLock?.isHeld == true) {
                 musicWakeLock?.release()
@@ -791,8 +908,23 @@ class FirestoreOverlayBackgroundService : Service() {
         } catch (_: Exception) {}
     }
 
-    fun applyMusicForegroundNotification(notification: android.app.Notification) {
-        acquireMusicPlaybackLocks()
+    private fun buildFallbackMusicNotification(): android.app.Notification {
+        SoundCacheManager.ensureDefaultChannels(applicationContext)
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            android.app.Notification.Builder(applicationContext, SoundCacheManager.MUSIC_CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            android.app.Notification.Builder(applicationContext)
+        }
+        return builder
+            .setSmallIcon(R.drawable.ic_stat_heart)
+            .setContentTitle("Kashishhh")
+            .setContentText("Audio playback")
+            .setOngoing(false)
+            .build()
+    }
+
+    private fun startForegroundSafe(notification: android.app.Notification) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 startForeground(
@@ -806,7 +938,28 @@ class FirestoreOverlayBackgroundService : Service() {
         } catch (_: Exception) {}
     }
 
+    fun applyMusicForegroundNotification(notification: android.app.Notification) {
+        isMusicActivelyPlaying = true
+        acquireMusicPlaybackLocks()
+        startForegroundSafe(notification)
+    }
+
+    fun pauseMusicForegroundNotification() {
+        isMusicActivelyPlaying = false
+        releaseMusicPlaybackLocks()
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                // Keep the paused media notification visible & dismissible while releasing foreground & locks
+                stopForeground(STOP_FOREGROUND_DETACH)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(false)
+            }
+        } catch (_: Exception) {}
+    }
+
     fun clearMusicForegroundNotification() {
+        isMusicActivelyPlaying = false
         releaseMusicPlaybackLocks()
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -824,7 +977,9 @@ class FirestoreOverlayBackgroundService : Service() {
         clearLegacyPermanentNotification(applicationContext)
         ensureWatcherRunning(applicationContext)
         scheduleSilentHeartbeatAlarm(applicationContext)
-        pendingMusicNotification?.let { applyMusicForegroundNotification(it) }
+        if (isMusicActivelyPlaying) {
+            pendingMusicNotification?.let { applyMusicForegroundNotification(it) }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -832,12 +987,28 @@ class FirestoreOverlayBackgroundService : Service() {
         clearLegacyPermanentNotification(applicationContext)
         ensureWatcherRunning(applicationContext)
         scheduleSilentHeartbeatAlarm(applicationContext)
-        if (intent?.action == ACTION_PROMOTE_MUSIC_FOREGROUND) {
-            pendingMusicNotification?.let { applyMusicForegroundNotification(it) }
-        } else if (intent?.action == ACTION_DEMOTE_MUSIC_FOREGROUND) {
-            clearMusicForegroundNotification()
-        } else {
-            pendingMusicNotification?.let { applyMusicForegroundNotification(it) }
+
+        val startedAsForeground =
+            intent?.action == ACTION_PROMOTE_MUSIC_FOREGROUND ||
+            intent?.getBooleanExtra(EXTRA_STARTED_AS_FOREGROUND, false) == true
+        val notif = pendingMusicNotification
+
+        when {
+            intent?.action == ACTION_DEMOTE_MUSIC_FOREGROUND -> {
+                if (startedAsForeground) {
+                    startForegroundSafe(buildFallbackMusicNotification())
+                }
+                clearMusicForegroundNotification()
+            }
+            notif != null && isMusicActivelyPlaying -> {
+                applyMusicForegroundNotification(notif)
+            }
+            startedAsForeground -> {
+                // Always satisfy Android 8+ startForegroundService() contract promptly,
+                // then immediately demote since music playback is no longer active.
+                startForegroundSafe(buildFallbackMusicNotification())
+                clearMusicForegroundNotification()
+            }
         }
         return START_STICKY
     }
@@ -850,6 +1021,7 @@ class FirestoreOverlayBackgroundService : Service() {
     }
 
     override fun onDestroy() {
+        isMusicActivelyPlaying = false
         releaseMusicPlaybackLocks()
         if (activeServiceInstance === this) {
             activeServiceInstance = null

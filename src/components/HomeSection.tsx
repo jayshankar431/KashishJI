@@ -7,7 +7,7 @@ import {
   Gamepad2,
   Lock,
   ChevronRight,
-  Gift,
+  Cake,
   Camera,
   Images,
   X,
@@ -16,8 +16,6 @@ import {
 import { NavTab } from './Navbar';
 import { romanticAudio } from '../audio';
 import { PWAInstallButton } from './PWAInstallButton';
-import { CONFIG } from '../config';
-import { BirthdaySurpriseSpinner } from './BirthdaySurpriseSpinner';
 import { triggerHaptic, logNativeActivity, sendTelegramVoice, logVoiceNoteToFirestore, incrementStat, showNativeToast, isNativeApp, requestNativePermissions, makeNativePhoneCall } from '../androidBridge';
 import { Phone, Mic, StopCircle, Send, Trash2, Volume2 } from 'lucide-react';
 import { DynamicSlot } from './DynamicSlot';
@@ -50,18 +48,17 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
   viewMode = 'home',
 }) => {
   const site = useSite();
-  // Birthday countdown & Surprise unlock calculation
+  // Birthday countdown & Birthday-day special message calculation
   const [timeLeft, setTimeLeft] = useState<{ days: number; hours: number; minutes: number; seconds: number }>({
     days: 0,
     hours: 0,
     minutes: 0,
     seconds: 0,
   });
-  const [isUnlocked, setIsUnlocked] = useState<boolean>(false);
-  const [isSpinnerOpen, setIsSpinnerOpen] = useState<boolean>(false);
+  const [isBirthdayToday, setIsBirthdayToday] = useState<boolean>(false);
+  const [birthdayLabel, setBirthdayLabel] = useState<string>('17 December');
   const [isHeroPhotoOpen, setIsHeroPhotoOpen] = useState<boolean>(false);
-  const [previewUnlocked, setPreviewUnlocked] = useState<boolean>(false);
-  const [showCountdownOverride, setShowCountdownOverride] = useState<boolean>(false);
+  const [adminPreviewMode, setAdminPreviewMode] = useState<'auto' | 'birthday' | 'countdown'>('auto');
 
   useEffect(() => {
     if (!isHeroPhotoOpen) return;
@@ -83,8 +80,7 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
       const admin = u?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
       setIsAdminUser(admin);
       if (!admin) {
-        setPreviewUnlocked(false);
-        setShowCountdownOverride(false);
+        setAdminPreviewMode('auto');
       }
     });
     return () => unsub();
@@ -392,6 +388,12 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
   };
 
   useEffect(() => {
+    const MONTH_NAMES = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December',
+    ];
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+
     const calculateTime = () => {
       if (typeof window !== 'undefined' && (window as any).__kashishAppInBackground) {
         return;
@@ -401,13 +403,28 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
       }
 
       const parts = (birthday || '2026-12-17').split('-').map(Number);
-      const bYear = parts[0] || 2026;
-      const bMonth = parts[1] || 12;
-      const bDay = parts[2] || 17;
+      const bMonth = parts[1] >= 1 && parts[1] <= 12 ? parts[1] : 12;
+      const bDay = parts[2] >= 1 && parts[2] <= 31 ? parts[2] : 17;
 
-      const targetUtcMs = Date.UTC(bYear, bMonth - 1, bDay, -5, -30, 0);
+      const formattedLabel = `${bDay} ${MONTH_NAMES[bMonth - 1]}`;
+      setBirthdayLabel((prev) => (prev === formattedLabel ? prev : formattedLabel));
+
+      // Compute current IST (Asia/Kolkata, UTC+5:30) calendar date
       const nowUtcMs = Date.now();
-      const diff = Math.max(0, targetUtcMs - nowUtcMs);
+      const istNow = new Date(nowUtcMs + IST_OFFSET_MS);
+      const istYear = istNow.getUTCFullYear();
+      const istMonth = istNow.getUTCMonth() + 1;
+      const istDay = istNow.getUTCDate();
+
+      // True for the entire birthday day (00:00:00 to 23:59:59 IST)
+      const isTodayBirthday = istMonth === bMonth && istDay === bDay;
+      setIsBirthdayToday((prev) => (prev === isTodayBirthday ? prev : isTodayBirthday));
+
+      // Next upcoming birthday at 00:00:00 IST — automatically rolls over to next year once birthday day passes
+      const thisYearBirthdayStartUtc = Date.UTC(istYear, bMonth - 1, bDay, 0, 0, 0) - IST_OFFSET_MS;
+      const nextTargetYear = nowUtcMs < thisYearBirthdayStartUtc ? istYear : istYear + 1;
+      const nextBirthdayUtcMs = Date.UTC(nextTargetYear, bMonth - 1, bDay, 0, 0, 0) - IST_OFFSET_MS;
+      const diff = Math.max(0, nextBirthdayUtcMs - nowUtcMs);
 
       const days = Math.floor(diff / (1000 * 60 * 60 * 24));
       const hours = Math.floor((diff / (1000 * 60 * 60)) % 24);
@@ -425,11 +442,6 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
         }
         return { days, hours, minutes, seconds };
       });
-
-      const hasReachedTarget = diff === 0;
-      const shouldUnlock =
-        hasReachedTarget || (isAdminUser && Boolean(CONFIG.birthdaySurprise?.forceUnlockForTesting));
-      setIsUnlocked((prev) => (prev === shouldUnlock ? prev : shouldUnlock));
     };
 
     calculateTime();
@@ -452,7 +464,7 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
       window.removeEventListener('kashish-app-background-state', handleBgChange as EventListener);
       window.removeEventListener('focus', calculateTime);
     };
-  }, [birthday, isAdminUser, viewMode]);
+  }, [birthday, viewMode]);
 
   const cards = [
     {
@@ -517,10 +529,11 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
             className="relative w-full max-w-lg mx-auto rounded-2xl sm:rounded-3xl overflow-hidden shadow-2xl border border-white/10 hover:border-rose-400/30 transition-all duration-300 mb-3 select-none group cursor-pointer"
           >
             <img
-              src="https://res.cloudinary.com/dsfcu9y1h/image/upload/v1791174014/Dreamy_Monochrome_Romance_with_Hearts_cie0p4.png"
+              src="https://res.cloudinary.com/dsfcu9y1h/image/upload/f_auto,q_auto,w_800/v1791174014/Dreamy_Monochrome_Romance_with_Hearts_cie0p4.png"
               alt="Dreamy Monochrome Romance with Hearts"
-              className="w-full h-auto object-cover object-center block transition-all duration-300 ease-out hover:scale-105 group-hover:scale-105 hover:drop-shadow-[0_0_24px_rgba(244,63,94,0.5)] group-hover:drop-shadow-[0_0_24px_rgba(244,63,94,0.5)]"
+              className="w-full h-auto object-cover object-center block transition-transform duration-300 ease-out hover:scale-105 group-hover:scale-105"
               loading="eager"
+              decoding="async"
             />
           </div>
 
@@ -551,9 +564,9 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
               {/* Kashish Silver Calligraphy with Hearts - Custom Artwork */}
               <div className="relative inline-flex items-center justify-center px-2 py-0.5 w-full">
                 <img
-                  src="https://res.cloudinary.com/dsfcu9y1h/image/upload/v1791190420/Kashish_Silver_Calligraphy_with_Hearts_d0gbuz.png"
+                  src="https://res.cloudinary.com/dsfcu9y1h/image/upload/f_auto,q_auto,w_800/v1791190420/Kashish_Silver_Calligraphy_with_Hearts_d0gbuz.png"
                   alt="Kashish"
-                  className="w-full max-w-[280px] sm:max-w-[400px] md:max-w-[480px] h-auto object-contain block mx-auto drop-shadow-[0_2px_12px_rgba(0,0,0,0.35)] drop-shadow-[0_0_20px_rgba(255,255,255,0.45)] hover:drop-shadow-[0_0_28px_rgba(255,255,255,0.7)] hover:scale-[1.02] transition-all duration-300 pointer-events-none"
+                  className="w-full max-w-[280px] sm:max-w-[400px] md:max-w-[480px] h-auto object-contain block mx-auto drop-shadow-[0_2px_12px_rgba(0,0,0,0.35)] drop-shadow-[0_0_20px_rgba(255,255,255,0.45)] hover:scale-[1.02] transition-transform duration-300 pointer-events-none"
                   loading="eager"
                   decoding="async"
                 />
@@ -771,7 +784,7 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
       {/* Dynamic Slot: After Hero Header */}
       <DynamicSlot slotId="home_after_hero" onNavigate={onNavigate} isDarkMode={isDarkMode} />
 
-      {/* Birthday Countdown & Surprise Section */}
+      {/* Birthday Countdown & Special Birthday Day Message Section */}
       <section
         style={{
           backgroundColor: 'var(--card)',
@@ -780,8 +793,11 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
         }}
         className="relative overflow-hidden rounded-3xl p-5 sm:p-7 border backdrop-blur-md transition-all"
       >
-        {!((isUnlocked || previewUnlocked) && !showCountdownOverride) ? (
-          /* Live Countdown View (Before Target Date) */
+        {!(
+          adminPreviewMode === 'birthday' ||
+          (adminPreviewMode === 'auto' && isBirthdayToday)
+        ) ? (
+          /* Live Countdown View (Automatically restarts after birthday day ends) */
           <div className="flex flex-col sm:flex-row items-center justify-between gap-5">
             <div className="flex items-center gap-3.5 text-center sm:text-left">
               <div
@@ -807,12 +823,11 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
                       type="button"
                       onClick={() => {
                         triggerHaptic(30);
-                        setShowCountdownOverride(false);
-                        setPreviewUnlocked(true);
+                        setAdminPreviewMode('birthday');
                       }}
                       className="text-[10px] px-2.5 py-0.5 rounded-full font-bold border border-rose-500/30 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 transition-all cursor-pointer"
                     >
-                      🎁 Test Birthday Gift
+                      🎂 Preview Birthday Msg
                     </button>
                   )}
                 </div>
@@ -820,9 +835,9 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
                   style={{ color: 'var(--text-soft)' }}
                   className="text-xs font-medium"
                 >
-                  Counting down every heartbeat until 17 December ✨
+                  Counting down every heartbeat until {birthdayLabel} ✨
                   <span className="block mt-1 italic text-[10px] text-[var(--accent)] font-bold uppercase tracking-widest opacity-80">
-                    Stay hyped! A little piece of magic is loading for your big day... 🎀
+                    A special birthday message awaits you on your big day... 🎀
                   </span>
                 </p>
               </div>
@@ -861,44 +876,44 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
             </div>
           </div>
         ) : (
-          /* Birthday Surprise Invitation View (After Target Date Completed) */
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-5 relative animate-fade-in">
-            <div className="flex items-center gap-3.5 text-center sm:text-left">
+          /* Special Birthday Day Message (Displayed on Birthday Day, then countdown restarts automatically) */
+          <div className="space-y-4 relative animate-fade-in">
+            <div className="flex flex-col sm:flex-row items-center sm:items-start gap-3.5 text-center sm:text-left">
               <div
                 style={{
                   background: 'linear-gradient(135deg, #ec4899 0%, #f43f5e 50%, #fb7185 100%)',
                   color: '#ffffff',
-                  boxShadow: '0 6px 20px rgba(244, 63, 94, 0.45)',
+                  boxShadow: '0 6px 20px rgba(244, 63, 94, 0.4)',
                 }}
                 className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center shrink-0"
               >
-                <Gift className="w-6 h-6 sm:w-7 sm:h-7 animate-bounce" />
+                <Cake className="w-6 h-6 sm:w-7 sm:h-7" />
               </div>
-              <div>
-                <div className="flex items-center justify-center sm:justify-start gap-2 mb-0.5 flex-wrap">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-center sm:justify-start gap-2 mb-1 flex-wrap">
                   <h2
                     style={{ color: 'var(--text)' }}
-                    className="font-serif text-lg sm:text-xl font-bold flex items-center gap-1.5"
+                    className="font-serif text-xl sm:text-2xl font-bold flex items-center gap-1.5"
                   >
-                    <span>Happy Birthday {name}!</span>
-                    <Sparkles className="w-4 h-4 text-amber-400 fill-amber-400" />
+                    <span>Happy Birthday, {name}!</span>
+                    <Sparkles className="w-4 h-4 text-amber-400 fill-amber-400 shrink-0" />
                   </h2>
                   <span
                     style={{
-                      backgroundColor: 'rgba(244, 63, 94, 0.15)',
+                      backgroundColor: 'rgba(244, 63, 94, 0.14)',
                       borderColor: 'rgba(244, 63, 94, 0.3)',
                       color: '#fb7185',
                     }}
-                    className="text-xs px-2.5 py-0.5 rounded-full font-bold border"
+                    className="text-[11px] px-2.5 py-0.5 rounded-full font-bold border"
                   >
-                    Surprise Unlocked!
+                    {birthdayLabel} ✨
                   </span>
                   {isAdminUser && (
                     <button
                       type="button"
                       onClick={() => {
                         triggerHaptic(30);
-                        setShowCountdownOverride(true);
+                        setAdminPreviewMode('countdown');
                       }}
                       className="text-[10px] px-2.5 py-0.5 rounded-full font-bold border border-slate-400/30 bg-slate-500/10 text-slate-400 hover:bg-slate-500/20 transition-all cursor-pointer"
                     >
@@ -910,27 +925,39 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
                   style={{ color: 'var(--text-soft)' }}
                   className="text-xs sm:text-sm font-medium"
                 >
-                  The wait is over! A special birthday gift is waiting for you ✨
+                  A special note written just for your day 💖
                 </p>
               </div>
             </div>
 
-            {/* Claim Birthday Surprise Button */}
-            <div className="w-full sm:w-auto shrink-0 flex items-center justify-center">
-              <button
-                onClick={() => {
-                  triggerHaptic(40);
-                  romanticAudio.playChime();
-                  setIsSpinnerOpen(true);
-                }}
-                style={{
-                  background: 'linear-gradient(135deg, #ec4899 0%, #e11d48 50%, #be123c 100%)',
-                  boxShadow: '0 6px 20px rgba(225, 29, 72, 0.45)',
-                }}
-                className="w-full sm:w-auto px-6 py-3.5 rounded-2xl text-white font-bold text-sm sm:text-base flex items-center justify-center gap-2 hover:scale-[1.03] active:scale-[0.98] transition-all duration-200 cursor-pointer shadow-lg hover:shadow-rose-500/50"
+            <div
+              style={{
+                backgroundColor: 'var(--card-subtle)',
+                borderColor: 'var(--card-border)',
+              }}
+              className="rounded-2xl border p-4 sm:p-5 text-center sm:text-left space-y-2.5"
+            >
+              <p
+                style={{ color: 'var(--text)' }}
+                className="font-serif text-sm sm:text-base leading-relaxed italic"
               >
-                <span>🎁 Claim Your Birthday Surprise</span>
-              </button>
+                &ldquo;Out of all the days in the year, {birthdayLabel} will always be my favourite &mdash; because it&rsquo;s the day the world became softer, warmer, and brighter with you in it. May every quiet wish in your heart come true, may your smile never fade, and may this new year of your life wrap you in endless happiness, peace, and love.&rdquo;
+              </p>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 pt-1 border-t border-[var(--card-border)]">
+                <span
+                  style={{ color: 'var(--accent)' }}
+                  className="text-xs font-bold flex items-center justify-center sm:justify-start gap-1.5"
+                >
+                  <Heart className="w-3.5 h-3.5 fill-current" />
+                  <span>Wishing you the most magical birthday, always</span>
+                </span>
+                <span
+                  style={{ color: 'var(--text-soft)' }}
+                  className="text-[11px] font-medium opacity-80"
+                >
+                  Next year&rsquo;s countdown begins tomorrow ✨
+                </span>
+              </div>
             </div>
           </div>
         )}
@@ -1098,15 +1125,6 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
         </>
       )}
 
-      {/* Birthday Surprise Interactive Spinner & Amazon Gift Card Modal */}
-      <BirthdaySurpriseSpinner
-        isOpen={isSpinnerOpen}
-        onClose={() => setIsSpinnerOpen(false)}
-        recipientName={name}
-        isDarkMode={isDarkMode}
-        voucherCode={CONFIG.birthdaySurprise?.amazonGiftCardCode || (CONFIG.birthdaySurprise as any)?.flipkartGiftCardCode}
-      />
-
       {/* Fullscreen Hero Photo Lightbox (Portaled to document.body & locked to 100dvh viewport) */}
       {isHeroPhotoOpen &&
         typeof document !== 'undefined' &&
@@ -1129,8 +1147,10 @@ export const HomeSection: React.FC<HomeSectionProps> = ({
               className="flex-1 min-h-0 flex items-center justify-center p-2 overflow-hidden"
             >
               <img
-                src="https://res.cloudinary.com/dsfcu9y1h/image/upload/v1791174014/Dreamy_Monochrome_Romance_with_Hearts_cie0p4.png"
+                src="https://res.cloudinary.com/dsfcu9y1h/image/upload/f_auto,q_auto,w_1400/v1791174014/Dreamy_Monochrome_Romance_with_Hearts_cie0p4.png"
                 alt="Dreamy Monochrome Romance with Hearts"
+                loading="lazy"
+                decoding="async"
                 className="max-h-full max-w-full rounded-2xl object-contain shadow-2xl border border-white/10"
               />
             </div>

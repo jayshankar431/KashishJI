@@ -92,6 +92,10 @@ class KashishFirebaseMessagingService : FirebaseMessagingService() {
                     imageUrl = imageUrl
                 )
             }
+
+            // Trigger an immediate one-shot Firestore sync check (deduplicated locally by docId)
+            // so any companion/queued overlay or notification delivers instantaneously without 4s polling.
+            FirestoreOverlayBackgroundService.triggerImmediateCheckAsync(applicationContext)
         } catch (e: Exception) {
             Log.e(TAG, "Error handling FCM data message: ${e.message}", e)
         } finally {
